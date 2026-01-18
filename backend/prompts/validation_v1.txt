@@ -1,0 +1,90 @@
+GÖREV: Sana bir elektrik faturası extraction JSON'u verilecek (bir önceki adımın çıktısı). Bu JSON'u kontrol et:
+- Birimler ve sayılar mantıklı mı?
+- Eksik alan var mı?
+- Hesap tutarlılığı yaklaşık sağlanıyor mu?
+Sonuç olarak SADECE aşağıdaki şemada JSON döndür.
+
+KURALLAR:
+- Yeni veri uydurma. Belgeden gelmeyen değeri tahminle doldurma.
+- Eğer bir alan null ise veya confidence düşükse (<0.6) ve bu alan hesap için kritikse, "questions" listesine ekle.
+- Eğer değerler mantıksız aralıkta ise "errors" listesine ekle.
+- "suggested_fixes" sadece hesap türetimi mümkünse öneri verir (örn dağıtım toplamı ve kWh varsa dağıtım birim fiyat öner).
+
+MANTIK KONTROLLERİ:
+
+1) consumption_kwh:
+   - null olmamalı (kritik).
+   - kWh <= 0 ise hata.
+   - Aşırı uç kontrol: 1 kWh ile milyonlar TL gibi saçma kombinasyonları yakala.
+
+2) current_active_unit_price_tl_per_kwh:
+   - null olmamalı (kritik).
+   - Makul aralık: 0.1 – 30 TL/kWh. Dışındaysa hata (ama vendor/kurumsal özel anlaşmalar olabilir: yine de flagle).
+
+3) distribution_unit_price_tl_per_kwh:
+   - null olabilir (bazı CK faturalarında).
+   - Makul aralık: 0 – 10 TL/kWh. Dışındaysa hata.
+
+4) demand:
+   - demand_qty varsa ama demand_unit_price yoksa, bu "eksik" sayılır (hesap için).
+   - demand_qty çok büyükse (örn > 100000) flagle.
+
+5) invoice_total_with_vat_tl:
+   - null olabilir ama varsa validasyon yap.
+   - Makul aralık: 0 – çok büyük olabilir; yalnızca negatif/0 ise hata.
+
+YAKLAŞIK TUTAR KONTROLÜ (eğer invoice_total_with_vat_tl var ise):
+- energy_est = consumption_kwh * current_active_unit_price_tl_per_kwh
+- dist_est = (distribution_unit_price_tl_per_kwh null değilse) consumption_kwh * distribution_unit_price_tl_per_kwh, değilse 0
+- demand_est = (demand_qty ve demand_unit_price doluysa) demand_qty * demand_unit_price, değilse 0
+- btv_est = (raw_breakdown.btv_tl varsa onu kullan; yoksa energy_est * 0.01)
+- matrah_est = energy_est + dist_est + demand_est + btv_est
+- vat_est = (raw_breakdown.vat_tl varsa onu kullan; yoksa matrah_est * 0.20)
+- total_est = matrah_est + vat_est
+
+- Eğer fatura vendor="enerjisa" veya "ekvator" ise: total_est ile invoice_total_with_vat_tl arasındaki fark %5'ten büyükse "warnings" ekle.
+- Eğer vendor="ck_bogazici" veya "yelden" ise: fark %10'a kadar tolere et (kalem parçalanması daha sık).
+
+SUGGESTED FIXES:
+- Eğer distribution_unit_price null ama raw_breakdown.distribution_total_tl ve consumption_kwh doluysa:
+  distribution_unit_price öner: distribution_total_tl / consumption_kwh (confidence=0.55 gibi düşük öner).
+- Eğer current_active_unit_price null ama raw_breakdown.energy_total_tl ve consumption_kwh doluysa:
+  current_active_unit_price öner: energy_total_tl / consumption_kwh.
+
+ÇIKTI ŞEMASI (harici anahtar yok):
+{
+  "is_ready_for_pricing": boolean,
+  "missing_fields": ["field_name", ...],
+  "questions": [
+    {"field_name": "string", "why_needed": "string", "example_answer_format": "string"}
+  ],
+  "errors": [
+    {"field_name": "string", "issue": "string"}
+  ],
+  "warnings": [
+    {"issue": "string"}
+  ],
+  "suggested_fixes": [
+    {"field_name": "string", "suggested_value": number, "basis": "string", "confidence": number}
+  ],
+  "sanity_check": {
+    "energy_est_tl": number|null,
+    "dist_est_tl": number|null,
+    "demand_est_tl": number|null,
+    "btv_est_tl": number|null,
+    "vat_est_tl": number|null,
+    "total_est_tl": number|null,
+    "invoice_total_with_vat_tl": number|null,
+    "delta_ratio": number|null
+  }
+}
+
+FIELD_NAME LİSTESİ (sabit isimler):
+- consumption_kwh
+- current_active_unit_price_tl_per_kwh
+- distribution_unit_price_tl_per_kwh
+- demand_qty
+- demand_unit_price_tl_per_unit
+- invoice_total_with_vat_tl
+
+ÇIKTI: Sadece JSON.

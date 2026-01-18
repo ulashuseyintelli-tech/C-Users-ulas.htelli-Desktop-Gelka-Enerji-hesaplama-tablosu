@@ -1,0 +1,25 @@
+Extract from Turkish electricity invoice. Turkish number format: 1.234,56 = 1234.56
+
+Return JSON with these fields:
+{
+  "vendor": "enerjisa|ck_bogazici|ekvator|yelden|unknown",
+  "invoice_period": "YYYY-MM",
+  "consumption_kwh": {"value": number, "confidence": 0-1, "evidence": "source"},
+  "current_active_unit_price_tl_per_kwh": {"value": number, "confidence": 0-1, "evidence": "source"},
+  "distribution_unit_price_tl_per_kwh": {"value": number, "confidence": 0-1, "evidence": "source"},
+  "invoice_total_with_vat_tl": {"value": number, "confidence": 0-1, "evidence": "source"},
+  "raw_breakdown": {
+    "energy_total_tl": {"value": number, "confidence": 0-1, "evidence": "source"},
+    "distribution_total_tl": {"value": number, "confidence": 0-1, "evidence": "source"},
+    "btv_tl": {"value": number|null, "confidence": 0-1, "evidence": "source"},
+    "vat_tl": {"value": number|null, "confidence": 0-1, "evidence": "source"}
+  },
+  "charges": {"yek_amount": {"value": number|null, "confidence": 0-1, "evidence": "source"}}
+}
+
+Rules:
+- TL/MWh to TL/kWh: divide by 1000
+- Unit prices: 0.5-10 TL/kWh range
+- Get total from "ÖDENECEK TUTAR" or "FATURA TUTARI"
+
+Return ONLY valid JSON.

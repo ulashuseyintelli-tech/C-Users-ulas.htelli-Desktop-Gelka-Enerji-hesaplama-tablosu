@@ -1,0 +1,7 @@
+﻿{
+    "fixture_version": 1,
+    "source": "synthetic",
+    "provider": "pba",
+    "invoice_month": "2025-01",
+    "notes": "EPDK tariff lookup failed; expect TARIFF_LOOKUP_FAILED"
+}

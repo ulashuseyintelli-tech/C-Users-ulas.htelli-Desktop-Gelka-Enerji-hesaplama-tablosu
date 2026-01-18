@@ -1,0 +1,13 @@
+﻿{
+    "primary_flag": "CONSUMPTION_MISSING",
+    "category": "CONSUMPTION_MISSING",
+    "severity": "S1",
+    "action": {
+        "type": "USER_FIX",
+        "owner": "user",
+        "code": "CONSUMPTION_MANUAL_ENTRY"
+    },
+    "all_flags": ["CONSUMPTION_MISSING"],
+    "secondary_flags": [],
+    "deduction_total": 50
+}

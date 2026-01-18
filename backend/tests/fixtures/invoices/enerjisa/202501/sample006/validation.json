@@ -1,0 +1,7 @@
+﻿{
+    "is_ready_for_pricing": false,
+    "missing_fields": ["consumption_kwh"],
+    "distribution_tariff_meta_missing": false,
+    "distribution_tariff_lookup_failed": false,
+    "distribution_line_mismatch": false
+}

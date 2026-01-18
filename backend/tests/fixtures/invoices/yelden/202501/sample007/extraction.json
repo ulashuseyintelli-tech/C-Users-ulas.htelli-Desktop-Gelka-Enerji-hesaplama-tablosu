@@ -1,0 +1,9 @@
+﻿{
+    "supplier_name": "Yelden Elektrik",
+    "invoice_no": "YEL2025000123456",
+    "invoice_date": "2025-01-18",
+    "period_start": "2025-01-01",
+    "period_end": "2025-01-31",
+    "consumption_kwh": {"value": 8500, "confidence": 0.55},
+    "total_amount_tl": {"value": 25000, "confidence": 0.60}
+}

@@ -1,0 +1,7 @@
+﻿{
+    "fixture_version": 1,
+    "source": "synthetic",
+    "provider": "yelden",
+    "invoice_month": "2025-01",
+    "notes": "Missing fields scenario - invoice_date and period missing; expect MISSING_FIELDS"
+}

@@ -1,0 +1,1 @@
+﻿{"primary_flag": "TARIFF_LOOKUP_FAILED", "category": "TARIFF_MISSING", "severity": "S1", "action": {"type": "RETRY_LOOKUP", "owner": "tariff", "code": "EPDK_TARIFF_LOOKUP"}, "all_flags": ["TARIFF_LOOKUP_FAILED"], "secondary_flags": [], "deduction_total": 40}

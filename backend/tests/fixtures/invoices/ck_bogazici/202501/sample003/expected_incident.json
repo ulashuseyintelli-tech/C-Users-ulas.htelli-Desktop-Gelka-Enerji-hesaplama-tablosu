@@ -1,0 +1,1 @@
+﻿{"primary_flag": "DISTRIBUTION_MISMATCH", "category": "MISMATCH", "severity": "S2", "action": {"type": "USER_FIX", "owner": "user", "code": "DISTRIBUTION_MISMATCH_REVIEW"}, "all_flags": ["DISTRIBUTION_MISMATCH"], "secondary_flags": [], "deduction_total": 15}

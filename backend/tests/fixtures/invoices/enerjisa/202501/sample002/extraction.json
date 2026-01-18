@@ -1,0 +1,9 @@
+﻿{
+    "supplier_name": "Enerjisa",
+    "invoice_no": "ES02025001847342",
+    "invoice_date": "2025-01-10",
+    "period_start": "2025-01-01",
+    "period_end": "2025-01-31",
+    "consumption_kwh": {"value": 25000, "confidence": 0.90},
+    "total_amount_tl": {"value": 75000, "confidence": 0.88}
+}

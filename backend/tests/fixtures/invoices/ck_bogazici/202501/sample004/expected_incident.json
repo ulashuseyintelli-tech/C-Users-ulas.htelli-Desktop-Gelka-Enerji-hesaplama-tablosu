@@ -1,0 +1,1 @@
+﻿{"primary_flag": "CALC_BUG", "category": "CALC_BUG", "severity": "S1", "action": {"type": "BUG_REPORT", "owner": "calc", "code": "ENGINE_REGRESSION"}, "all_flags": ["CALC_BUG"], "secondary_flags": [], "deduction_total": 50}

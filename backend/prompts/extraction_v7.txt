@@ -1,0 +1,24 @@
+Turkish electricity invoice. Extract as JSON:
+{
+  "vendor": "enerjisa|ck_bogazici|ekvator|yelden|unknown",
+  "invoice_period": "YYYY-MM",
+  "consumption_kwh": {"value": number, "confidence": 0.9, "evidence": "text"},
+  "current_active_unit_price_tl_per_kwh": {"value": number, "confidence": 0.9, "evidence": "text"},
+  "distribution_unit_price_tl_per_kwh": {"value": number|null, "confidence": 0.9, "evidence": "text"},
+  "invoice_total_with_vat_tl": {"value": number, "confidence": 0.9, "evidence": "text"},
+  "raw_breakdown": {
+    "energy_total_tl": {"value": number, "confidence": 0.9, "evidence": "text"},
+    "distribution_total_tl": {"value": number|null, "confidence": 0.9, "evidence": "text"},
+    "vat_tl": {"value": number, "confidence": 0.9, "evidence": "text"}
+  },
+  "charges": {"yek_amount": {"value": number|null, "confidence": 0.9, "evidence": "text"}}
+}
+
+CRITICAL RULES:
+1. consumption_kwh: From BILLING TABLE (kWh×price=amount), NOT from graphs
+2. current_active_unit_price_tl_per_kwh: ENERGY unit price (Aktif Enerji, Enerji Bedeli)
+3. distribution_unit_price_tl_per_kwh: DISTRIBUTION unit price (Dağıtım Bedeli) - DIFFERENT from energy price! Usually 0.3-2 TL/kWh. If not found, set null.
+4. raw_breakdown.distribution_total_tl: Total distribution amount in TL
+5. Format: 1.234,56 = 1234.56. TL/MWh÷1000=TL/kWh.
+
+IMPORTANT: Energy price and Distribution price are DIFFERENT values! Don't confuse them.

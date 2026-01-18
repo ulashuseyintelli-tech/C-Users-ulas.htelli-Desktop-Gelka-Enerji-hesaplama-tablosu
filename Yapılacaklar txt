@@ -1,0 +1,938 @@
+**2026-01-07 20:19 (İstanbul)**
+
+Elindeki Excel’e baktım: bu “Karşılaştırma Tablosu” aslında birkaç **girdi** alıp geri kalanını formülle hesaplıyor. Yani elle Excel doldurmak yerine hedef net:
+
+1. Fatura görselinden gerekli alanları çek
+2. Bu alanları Excel şablonundaki doğru hücrelere yaz
+3. Excel’i yeniden hesaplat / sonuçları çıkar (tasarruf, fark, teklif fatura tutarı vs.)
+4. Müşteriye PDF/HTML teklif çıktısı ver
+
+## 1) Excel’de otomatik doldurulması gereken kritik girdiler
+
+Şablondaki hesap mantığına göre pratikte şu alanlar “input”:
+
+* **B5:** Tüketim (kWh)  *(TEK TERİM / Aktif Enerji kWh)*
+* **C5:** Mevcut tedarikçi aktif enerji birim fiyatı (TL/kWh)
+* **C11:** Dağıtım birim fiyatı (TL/kWh)
+* **B12:** Demand miktarı (genelde kW / kVA / sözleşme gücü – faturada nasıl geçiyorsa)
+* **C12:** Demand birim fiyatı (TL/birim)
+* **G5:** Ağırlıklı PTF (TL/MWh) *(bu faturada olmayabilir; dışarıdan alıyor olabilirsin)*
+* **G6:** YEKDEM (TL/MWh) *(bazen faturada var, bazen yok; çoğu senin parametre tablon)*
+* **I9:** Anlaşma fiyatı (TL/kWh) *(senin teklif fiyatın)*
+
+Excel zaten bunlardan:
+
+* enerji bedeli + dağıtım + demand + BTV (%1) + KDV (%20) hesaplıyor
+* “FARK” ve “TASARRUF”u üretiyor.
+
+## 2) Zor kısım: Fatura görselleri standart değil
+
+Türkiye’de (ve dünyada) elektrik faturaları şirketten şirkete farklı düzen, farklı kelime, farklı tablo. Bu yüzden “klasik OCR + regex” ile başlarsın ama bir noktada patlar.
+
+En sağlam iki yol:
+
+* **A) LLM-Vision (görseli anlayan model) → JSON alanlar** (en pratik ve en az kırılan)
+* **B) OCR (Tesseract) + şablon bazlı kurallar** (ucuz ama format değişince ağlar)
+
+Ben direkt **A yolu** derim: sen zaten otomasyon seviyorsun; burada “fatura okuma” işi bildiğin *doküman anlama* problemi.
+
+## 3) Önerilen mimari (minimum ürün → büyütülebilir)
+
+**Backend (Python / FastAPI)**
+
+* `/analyze-invoice`
+
+  * input: fatura resmi (jpg/png) veya pdf
+  * output: çıkarılmış alanlar + güven skoru + “eksik alan” listesi
+* `/make-offer`
+
+  * input: alanlar + (PTF/YEKDEM/Anlaşma fiyatı parametreleri)
+  * output: hesap sonucu + teklif özeti (JSON) + Excel/PDF çıktısı
+
+**UI (web panel)**
+
+* Fatura yükle
+* Sistem alanları otomatik doldursun
+* Sen sadece “teklif fiyatı” ve gerekiyorsa PTF/YEKDEM’i seç
+* “Teklifi Oluştur” → müşteriye gidecek çıktı
+
+## 4) Uygulanabilir örnek akış (en hızlısı)
+
+### Adım 1 — Fatura görselinden alan çek (LLM-Vision ile)
+
+Çıktıyı **tek format JSON** yap:
+
+```json
+{
+  "consumption_kwh": 168330,
+  "active_unit_price_tl_kwh": 3.87927,
+  "distribution_unit_price_tl_kwh": 0.810595,
+  "demand_qty": 0,
+  "demand_unit_price": 0,
+  "invoice_total_tl": 0,
+  "currency": "TRY",
+  "notes": "hangi satırdan çektiğini yaz"
+}
+```
+
+Bu yaklaşımın güzelliği: fatura düzeni değişse bile model “kWh nerede, birim fiyat nerede” gibi semantik olarak yakalıyor.
+
+### Adım 2 — Excel şablonunu doldur (openpyxl)
+
+* Şablon dosyanı kopyala (her müşteri için yeni dosya üret)
+* Hücrelere yaz:
+
+  * B5 = consumption_kwh
+  * C5 = active_unit_price_tl_kwh
+  * C11 = distribution_unit_price_tl_kwh
+  * B12 = demand_qty
+  * C12 = demand_unit_price
+  * G5, G6, I9 = senin parametrelerin
+
+### Adım 3 — Sonuç hücrelerini oku
+
+Bu dosyada sonuçlar mantıken şuralarda:
+
+* **D16** (mevcut fatura KDV dahil toplam) formülle geliyor
+* **J16** (teklif fatura KDV dahil toplam)
+* **E18/E19** fark alanları
+* **E20** tasarruf oranı
+
+Not: `openpyxl` Excel formüllerini “Excel motoru gibi” hesaplamaz. İki seçenek var:
+
+* Windows ortamında **Excel COM** ile hesaplat (en doğru)
+* Ya da formülleri Python’da yeniden hesaplayan küçük bir hesap modülü yaz (bu tabloda kolay)
+* Alternatif: `libreoffice --calc --convert-to` gibi “headless recalc” numaraları (bazen naz yapar)
+
+Senin tablo basit: ben olsam **Python’da aynısını hesaplarım**. Böylece Excel bağımlılığın biter.
+
+## 5) “Excel’siz” saf hesap (daha sağlam)
+
+Hesap özeti (şablondaki mantık):
+
+* Enerji Bedeli = (kWh * aktif_birim_fiyat) + (kWh * (PTF+YEKDEM’den gelen teklif birim)) vs.
+* Dağıtım = kWh * dağıtım_birim
+* Demand = demand_qty * demand_unit_price
+* BTV = enerji_bedeli * 0.01
+* KDV matrah = enerji + dağıtım + demand + BTV
+* KDV = matrah * 0.20
+* Toplam = matrah + KDV
+
+Bu kadar. Bunu kodlayıp her şeyi deterministik yaparsın.
+
+## 6) Net “yapılacaklar listesi” (gerçekçi ve hızlı)
+
+1. **Fatura alan sözlüğü** çıkar: kWh, aktif birim fiyat, dağıtım birim fiyat, demand, toplam (opsiyonel)
+2. 20–30 farklı fatura örneği topla (farklı tedarikçilerden) → modelin şaşırdığı yerleri gör
+3. Vision → JSON çıkarma endpoint’i
+4. Hesap motoru (Python)
+5. Teklif çıktısı (PDF/HTML)
+6. Panel + müşteri kayıt + geçmiş teklif arşivi
+
+## 7) Sana direkt fayda sağlayacak bir gerçek: “eksik alan” tasarımı şart
+
+Çünkü bazı faturalar demand yazmaz, bazıları dağıtımı farklı kalemde toplar.
+Bu yüzden çıktı şunu da içersin:
+
+* `missing_fields: ["demand_qty", "demand_unit_price"]`
+* UI’da sadece eksikleri sana sorar, geri kalan otomatik akar.
+
+---
+
+İstersen bir sonraki adımda, **senin elindeki 2–3 farklı fatura görselini** burada paylaş; ben:
+
+* Hangi satır/etiketten hangi alanların çekileceğini,
+* JSON şemasını,
+* Ve “en az kırılan” extraction prompt’unu
+  net şekilde yazarım. Bu işin kaderi “hangi faturada nerede yazıyor?” detayında yatıyor.
+**2026-01-07 20:20 (İstanbul)**
+
+Süper. Görsel anlamlandırmayı OpenAI’ye bağlayacaksan, bu işi “OCR yap → metin bul → regex” gibi kırılgan bir şeye gömmeyip **doğrudan yapılandırılmış JSON** döndürterek yap. En az hata, en az bakım.
+
+## 1) Doğru strateji: Vision → “strict JSON schema” → hesap motoru
+
+Senin hedefin *metin okumak* değil; **faturadan alan çıkarmak**. O yüzden modeli şu şablona zorla:
+
+* Çıktı: **tek bir JSON**
+* Alanlar: senin hesap tablonun input’ları
+* Her alan: `value + confidence + evidence` (kanıt: faturadaki hangi ifade/satırdan çekti)
+
+OpenAI’nin Structured Outputs yaklaşımı tam buna göre: JSON schema’ya “tam uyum” üretmesini sağlıyorsun. ([OpenAI Platform][1])
+
+## 2) API tarafı: Responses + input_image
+
+Görseli “input_image” olarak gönderip tek çağrıda JSON alırsın. (Docs: Images & Vision + Responses API.) ([OpenAI Platform][2])
+
+### Minimum “çıkarılacak alanlar” (senin tablo için)
+
+* `consumption_kwh` (Aktif enerji tüketim kWh)
+* `active_unit_price_tl_per_kwh` (Enerji birim fiyatı)
+* `distribution_unit_price_tl_per_kwh` (Dağıtım birim fiyatı)
+* `demand_qty` ve `demand_unit_price` (varsa)
+* `invoice_total_tl` (KDV dahil toplam — doğrulama için çok işe yarar)
+* opsiyonel: dönem tarihleri, abone no, tesisat no (CRM için)
+
+PTF/YEKDEM/anlaşma fiyatı çoğu zaman faturadan değil **senin parametrelerinden** gelecek; onları extraction’a karıştırma.
+
+## 3) JSON şeması (pratik ve sağlam)
+
+Bunu schema’ya çevirip “strict” kullan: model *başka bir şey yazamasın*.
+
+Örnek mantık (özet):
+
+* `value`: sayı (kWh veya TL/kWh)
+* `confidence`: 0–1
+* `evidence`: faturadaki yakaladığı metin parçası (kısa)
+* `notes`: “şu satırdan aldım” gibi açıklama
+
+Bu sayede sen daha sonra:
+
+* confidence düşükse UI’da “insana sor” akışı açarsın
+* evidence ile kullanıcıya “bak buradan aldım” dersin (güven satışı)
+
+## 4) İki aşamalı doğrulama: en kritik hile
+
+Tek çağrıda bile yapabilirsin ama mantık şu:
+
+**A) Extraction**: Alanları çıkar
+**B) Validation**: “Toplamla tutuyor mu?” diye kontrol et
+
+Validasyon kuralları (gerçek dünyada hayat kurtarır):
+
+* `consumption_kwh > 0`
+* birim fiyatlar makul aralıkta (örn. 0.1–20 TL/kWh)
+* `invoice_total_tl` varsa, senin hesap motorunun ürettiği toplamla %0.5–%2 içinde mi?
+* faturada “Çok Zamanlı” (T1/T2/T3) varsa tek terime çevirmek için ayrı strateji (aşağıda)
+
+Validasyon patlarsa: “Eksik alanlar + düşük güven” listesi dön, UI’da sadece onları sor.
+
+## 5) Çıkarım kalitesini uçuran prompt taktiği
+
+Modele net rol ver:
+
+* “Bu bir elektrik faturası. Sadece istenen alanları çıkar. Emin değilsen null ver.”
+* “kWh/ TL/kWh / TL ayrımına dikkat et”
+* “Çok zamanlıysa: toplam kWh ve ağırlıklı ortalama birim fiyatı hesaplayıp yaz” (ya da “çok zamanlıyı ayrı döndür”)
+
+İki seçenek var:
+
+1. **Tek terime indir** (en hızlı, teklif için yeterli)
+2. **T1/T2/T3 ayrı** döndür (ileride daha rafine teklif için)
+
+## 6) Hesap motorunu Excel’den kopar: daha iyi ürün
+
+Excel’i “çıktı şablonu” olarak saklayabilirsin ama hesap motorunu Python/JS ile yaz:
+
+* Excel formül motoru bağımlılığın biter
+* mobil/web her yerde aynı sonuç
+* test yazarsın, hata bulursun
+
+Excel’i sadece “müşteriye sunum” için üret (istersen).
+
+## 7) Mobil entegrasyon için pratik öneriler
+
+* Görseli yüklemeden önce **otomatik crop + düzleştirme** (perspektif düzeltme) yap: başarı oranı dramatik artar.
+* PDF ise: ilk sayfa/ilgili sayfayı görsele çevir, sonra yolla.
+* Görsel boyutu: çok büyükse sıkıştır ama yazılar okunacak kalsın.
+* Aynı faturayı iki kez analiz etme: **hash + cache**.
+
+## 8) Gerçek hayatta en çok patlayan 3 vaka (önceden çöz)
+
+1. **Çok zamanlı tarifeler (T1/T2/T3):**
+   Ya ağırlıklı ortalama birim fiyat üret, ya da tablona “çok zamanlı” mod ekle.
+2. **Dağıtım bedeli tek satır değil:**
+   “Dağıtım sistemi kullanım bedeli, perakende satış hizmet bedeli…” gibi parçalara bölünebilir. Sen “dağıtım birim fiyatı” istiyorsan, modelden “dağıtım kalemlerini tanı ve toplam dağıtım/kWh” üretmesini iste.
+3. **Birim fiyat KDV hariç mi dahil mi?**
+   Çoğu fatura KDV’yi en sonda uygular. Modelden özellikle “KDV hariç birim fiyatları” çekmesini söyle.
+
+## 9) Güvenlik / veri tarafı (kısa ve net)
+
+Fatura PII içerir (abone no, adres vs.). O yüzden:
+
+* saklayacaksan maskele
+* log’larda görseli tutma (veya şifreli tut)
+* API çağrılarında gereksiz metin üretimini kapat: sadece JSON
+
+Responses API’de “store” gibi depolama davranışlarıyla ilgili doküman yönlendirmesi var; prod’da buna bilinçli karar ver. ([OpenAI Platform][3])
+
+---
+
+Bence bir sonraki hamle: **senin Excel tablonun hangi hücreleri “input”, hangileri “output”** netleşsin ve JSON şemasını tam ona kilitleyelim. Elindeki Excel’i zaten paylaşmışsın; istersen ben sana “tam saha” bir şema çıkarıp (kWh, birim fiyatlar, demand, çok zamanlı vb.) doğrudan entegrasyona uygun hale getiririm.
+
+[1]: https://platform.openai.com/docs/guides/structured-outputs?utm_source=chatgpt.com "Structured model outputs | OpenAI API"
+[2]: https://platform.openai.com/docs/guides/images-vision?utm_source=chatgpt.com "Images and vision | OpenAI API"
+[3]: https://platform.openai.com/docs/guides/migrate-to-responses?utm_source=chatgpt.com "Migrate to the Responses API"
+**2026-01-07 20:23 (İstanbul)**
+
+Tamam. Excel’ini açtım; tabloyu “otomasyon için” **net bir hücre haritasına** ve **JSON şemasına** çeviriyorum. Sen fatura görselinden sadece bu JSON’u çıkaracaksın; gerisini hesap motoru (veya Excel) halledecek.
+
+---
+
+## 1) Excel Hücre Haritası (Input / Output)
+
+### A) Mevcut Tedarikçi (faturadan otomatik gelecek INPUT’lar)
+
+Bu hücreleri doldurunca “mevcut fatura” tarafı çalışıyor:
+
+* **B5 = consumption_kwh** → TEK TERİM kWh (Aktif Enerji Tüketimi)
+* **C5 = current_active_unit_price_tl_per_kwh** → Mevcut aktif enerji birim fiyatı (TL/kWh)
+* **C11 = distribution_unit_price_tl_per_kwh** → Dağıtım birim fiyatı (TL/kWh)
+* **B12 = demand_qty** → Demand miktarı (varsa)
+* **C12 = demand_unit_price_tl_per_unit** → Demand birim fiyatı (varsa)
+
+> Not: Excel’de “YEKDEM / PTF” mevcut faturada ayrı satır olarak (A6/A7) tasarlanmış ama B6/C6/B7/C7 boş. Pratikte **C5 zaten faturadaki tek terim birim fiyatıysa** (çoğu kullanıcı böyle girer) bu iki satırı hiç kurcalamaya gerek yok.
+
+### B) Teklif (senin parametrelerinle gelecek INPUT’lar)
+
+Bunlar faturadan değil; teklif tarafı:
+
+* **G5 = weighted_ptf_tl_per_mwh** → AĞIRLIKLI PTF (TL/MWh)
+* **G6 = yekdem_tl_per_mwh** → YEKDEM (TL/MWh)
+* **I9 = agreement_multiplier** → “ANLAŞMA FİYATI” alanı Excel’de *çarpan* gibi kullanılmış (ör: 1.01)
+
+> Excel’in yaptığı şey:
+> PTF TL/kWh = `G5/1000`, YEKDEM TL/kWh = `G6/1000`, toplam = (PTF+YEKDEM)*kWh, sonra `* I9`.
+
+### C) Excel’in otomatik ürettiği OUTPUT’lar (sen ekrandan okuyacağın sonuçlar)
+
+* **D16 = current_total_with_vat** → mevcut fatura toplam (KDV dahil)
+* **J16 = offer_total_with_vat** → teklif fatura toplam (KDV dahil)
+* **E19 = difference_with_vat** → fark (KDV dahil)
+* **E20 = savings_ratio** → tasarruf oranı (`E19/D19`)
+* **E25 = active_unit_price_savings_ratio** → aktif enerji birim fiyat tasarrufu oranı
+  (mevcut birim fiyat C5 ile teklif birim fiyat I25 kıyas)
+
+---
+
+## 2) Otomasyona Uygun “Tek JSON Şeması” (faturadan + teklif parametreleri)
+
+Aşağıdaki şemayı “tek doğru veri modeli” yap. Görselden bunu çıkart, gerisini hesapla.
+
+### 2.1. Core fields (zorunlu)
+
+* `consumption_kwh`  → B5
+* `current_active_unit_price_tl_per_kwh` → C5
+* `distribution_unit_price_tl_per_kwh` → C11
+
+### 2.2. Optional (faturada varsa)
+
+* `demand_qty` → B12
+* `demand_unit_price_tl_per_unit` → C12
+* `invoice_total_with_vat_tl` → (doğrulama için çok değerli; Excel’e yazmak zorunda değilsin)
+
+### 2.3. Offer params (senin sistem parametrelerin)
+
+* `weighted_ptf_tl_per_mwh` → G5
+* `yekdem_tl_per_mwh` → G6
+* `agreement_multiplier` → I9
+
+### 2.4. Güven / kanıt alanları (prod’da şart)
+
+Her alan için:
+
+* `value`
+* `confidence` (0–1)
+* `evidence` (faturadaki kısa metin)
+* `page` (pdf ise)
+
+---
+
+## 3) “Strict JSON” için örnek çıktı formatı (modelin aynen bunu döndürsün)
+
+```json
+{
+  "invoice": {
+    "consumption_kwh": {"value": 168330, "confidence": 0.92, "evidence": "Aktif Enerji Tüketimi: 168.330 kWh", "page": 1},
+    "current_active_unit_price_tl_per_kwh": {"value": 3.87927, "confidence": 0.86, "evidence": "Birim Fiyat: 3,87927 TL/kWh", "page": 1},
+    "distribution_unit_price_tl_per_kwh": {"value": 0.810595, "confidence": 0.84, "evidence": "Dağıtım Birim Fiyatı: 0,810595", "page": 1},
+    "demand_qty": {"value": 0, "confidence": 0.60, "evidence": "DEMAND: -", "page": 1},
+    "demand_unit_price_tl_per_unit": {"value": 0, "confidence": 0.60, "evidence": "DEMAND Birim: -", "page": 1},
+    "invoice_total_with_vat_tl": {"value": 0, "confidence": 0.0, "evidence": "", "page": 1}
+  },
+  "offer_params": {
+    "weighted_ptf_tl_per_mwh": 2974.1,
+    "yekdem_tl_per_mwh": 364,
+    "agreement_multiplier": 1.01
+  },
+  "meta": {
+    "tariff_group_guess": "Sanayi",
+    "voltage_guess": "OG",
+    "term_type_guess": "Tek Terim"
+  }
+}
+```
+
+> Demand yoksa “0” dönmek yerine `null` da kullanabilirsin. Ben `null`’ı tercih ederim; UI’da “Eksik” diye işaretlemek daha temiz.
+
+---
+
+## 4) Excel’e yazacağın “tek mapping” (backend tarafında)
+
+JSON → Excel hücreleri:
+
+* `invoice.consumption_kwh.value` → **B5**
+* `invoice.current_active_unit_price_tl_per_kwh.value` → **C5**
+* `invoice.distribution_unit_price_tl_per_kwh.value` → **C11**
+* `invoice.demand_qty.value` → **B12**
+* `invoice.demand_unit_price_tl_per_unit.value` → **C12**
+
+Teklif parametreleri:
+
+* `offer_params.weighted_ptf_tl_per_mwh` → **G5**
+* `offer_params.yekdem_tl_per_mwh` → **G6**
+* `offer_params.agreement_multiplier` → **I9**
+
+Sonuçları oku:
+
+* **D16, J16, E19, E20, E25**
+
+---
+
+## 5) “Mevcut fatura” tarafındaki kritik varsayım (bunu netleştirirsen hata sıfıra iner)
+
+Sende **C5** şu mu olacak?
+
+**Seçenek A (önerdiğim):**
+C5 = faturadaki “aktif enerji birim fiyatı (TL/kWh)” *tek satır / tek terim*
+→ YEKDEM/PTF ayrıştırma yok, tablo sorunsuz.
+
+**Seçenek B (ileri seviye):**
+Faturadan PTF/YEKDEM gibi alt kırılımları okuyup B6/C6 vs. doldurmak
+→ Türkiye faturalarında format karmaşık; gereksiz bakım.
+
+Ben **A** ile yürü derim.
+
+---
+
+## 6) Bir cümlelik “model talimatı” (fatura görseli için)
+
+Model prompt’unun omurgası şu olsun:
+
+* “Elektrik faturasından sadece şu alanları çıkar: toplam tüketim kWh, aktif enerji birim fiyatı TL/kWh, dağıtım birim fiyatı TL/kWh, demand miktarı ve birim fiyatı (varsa), KDV dahil toplam (varsa). Emin değilsen null döndür. Her alan için kanıt metni ve confidence ekle. ÇIKTI YALNIZCA JSON.”
+
+---
+
+İstersen bir sonraki adımda işi daha da çivilerim: **senin fatura örneklerinden 3 farklı format** (Aydem/CK/BEDAŞ/ENERYA vs. her neyse) gönder, ben bu şemayı “tümünü kaldıracak” şekilde **alan adları + edge-case kuralları** ile finalize ederim. Bu işin gerçek düşmanı: “çok zamanlı (T1/T2/T3) faturalar” ve “dağıtım kalemlerinin parçalanması”; ikisini de baştan ele alırsak sistem taş gibi olur.
+**2026-01-07 20:31 (İstanbul)**
+
+Gördüm. Üç ayrı “fatura dili” var ve hepsi aynı Excel input’larına indirgenebiliyor; ama her biri farklı yerden okunuyor. Sana **kesin extraction kurallarını + tek JSON şemasını** veriyorum.
+
+---
+
+## 1) 3 Fatura Tipi ve Nereden Ne Çekilecek?
+
+### A) CK Boğaziçi (YELDEN) — çok zamanlı ama “tek zamanlı” da yazıyor
+
+Bu faturada “Fatura Detayı” kısmında tüketim ve birim fiyatlar iki kademede verilmiş:
+
+* **Enerji Bedeli-Yüksek Kademe:** 3.436,571 kWh × 5,146786 = 17.687,30 TL
+* **Enerji Bedeli-Düşük Kademe:** 960,000 kWh × 4,451390 = 4.273,33 TL 
+  Ayrıca “Çarpan/Demand/Anl.Gücü 1.00/23.092/10.00” var. 
+  Toplam fatura tutarı “27.173,32 TL” (ödenecek 27.175,00) 
+
+**Buradan Excel input’larına dönüşüm:**
+
+* `consumption_kwh` = **Yüksek + Düşük tüketim** = 3.436,571 + 960,000 = **4.396,571 kWh** (zaten “Tek Zamanlı … Fark 4396.571” diye de geçiyor) 
+* `current_active_unit_price_tl_per_kwh` = **(Toplam Enerji Bedeli) / (Toplam kWh)**
+
+  * Toplam Enerji Bedeli = 21.960,63 TL 
+  * Birim fiyat = 21.960,63 / 4.396,571 ≈ **4,994 TL/kWh** (ağırlıklı ortalama)
+* `demand_qty` = **23.092** (Demand alanı) 
+* `distribution_unit_price_tl_per_kwh` = bu CK faturada “dağıtım birim fiyatı” net TL/kWh olarak burada görünmüyor; yani **ya null** döneceksin ya da “dağıtım bedeli toplamı” ayrı bir satırdan alıp “/kWh” türeteceksin (bu sayfada o satır yok).
+
+> **Kural:** CK tipinde birim fiyat tek satır değilse “Toplam Enerji Bedeli / Toplam kWh” ile ağırlıklı ortalama üret.
+
+---
+
+### B) Enerjisa (çok örnekli PDF) — en kolay: zaten birim fiyatları “TOPLAM / kWh” veriyor
+
+Enerjisa faturalarında genellikle şu blok var:
+
+* `AKTİF TOPLAM` (kWh)
+* `TOPLAM` satırında bir **birim fiyat** ve **bedel** var (TL/kWh ve TL)
+  Örn Şubat 2025 sayfasında:
+* AKTİF TOPLAM = **257.628,060 kWh** 
+* TOPLAM birim fiyat = **2,69923623** (TL/kWh) 
+* Elk. Dağıtım birim fiyat = **0,66570400** (TL/kWh) 
+* Fatura tutarı ve ödenecek tutar: **1.052.741,38 / 1.052.740,00** 
+  Demand değeri “Sayaç Demand Değeri / Anl. Gücü” satırında bu örnekte “- / 1,000” gibi geliyor, yani çoğu zaman **demand yok**. 
+
+**Buradan Excel input’larına dönüşüm:**
+
+* `consumption_kwh` = AKTİF TOPLAM (kWh)
+* `current_active_unit_price_tl_per_kwh` = TOPLAM satırındaki **birim fiyat** (Enerjisa bunu direkt veriyor)
+* `distribution_unit_price_tl_per_kwh` = Elk. Dağıtım satırındaki **birim fiyat**
+* `demand_qty` = yoksa null
+* `invoice_total_with_vat_tl` = ÖDENECEK TUTAR veya FATURA TUTARI (ikisini de al; validasyon için süper)
+
+> **Kural:** Enerjisa tipinde “TOPLAM birim fiyat” ve “Elk. Dağıtım birim fiyat” hazır verildiği için **ağırlıklı ortalama hesaplama yapma**, direkt oku.
+
+---
+
+### C) Ekvator Enerji (EKV…) — üç zamanlı ama tek birim fiyat kullanmış
+
+Bu faturada tablo net:
+
+* AKTİF toplam tüketim = **38.819,10 kWh** 
+* Birim fiyat TL/kWh = **3,347564** (gündüz/puant/gece aynı) 
+* Dağıtım sistemi kullanım bedeli birim fiyat = **1,385324** (TL/kWh) ve toplamı 53.777,03 TL 
+* BTV %1 = 1.299,49 
+* KDV %20 = 37.005,18 
+* Fatura tutarı = **222.031,10 TL** 
+* Sözleşme gücü = 300,00   (Demand gibi davranmak istersen burada ipucu var ama “demand birim fiyatı” yok)
+
+**Buradan Excel input’larına dönüşüm:**
+
+* `consumption_kwh` = 38.819,10
+* `current_active_unit_price_tl_per_kwh` = 3,347564
+* `distribution_unit_price_tl_per_kwh` = 1,385324
+* `demand_qty` = null (istersen “sözleşme gücü”nü ayrı alanda sakla)
+* `invoice_total_with_vat_tl` = 222.031,10
+
+> **Kural:** Ekvator tipinde dağıtım birim fiyatı zaten “DAĞITIM SİSTEMİ KULLANIM BEDELİ” satırında TL/kWh olarak var.
+
+---
+
+## 2) Tek JSON Şeması (hepsini kaldıran)
+
+Bunu “strict” uygulat. Eksikse null.
+
+```json
+{
+  "vendor": "enerjisa|ck_bogazici|ekvator|unknown",
+  "invoice_period": "YYYY-MM",
+  "consumption_kwh": {"value": null, "confidence": 0, "evidence": "", "page": 1},
+  "current_active_unit_price_tl_per_kwh": {"value": null, "confidence": 0, "evidence": "", "page": 1},
+  "distribution_unit_price_tl_per_kwh": {"value": null, "confidence": 0, "evidence": "", "page": 1},
+  "demand_qty": {"value": null, "confidence": 0, "evidence": "", "page": 1},
+  "demand_unit_price_tl_per_unit": {"value": null, "confidence": 0, "evidence": "", "page": 1},
+  "invoice_total_with_vat_tl": {"value": null, "confidence": 0, "evidence": "", "page": 1},
+
+  "raw_breakdown": {
+    "energy_total_tl": {"value": null, "confidence": 0, "evidence": "", "page": 1},
+    "btv_tl": {"value": null, "confidence": 0, "evidence": "", "page": 1},
+    "vat_tl": {"value": null, "confidence": 0, "evidence": "", "page": 1},
+    "distribution_total_tl": {"value": null, "confidence": 0, "evidence": "", "page": 1}
+  }
+}
+```
+
+**Niye `raw_breakdown` ekledim?**
+Çünkü CK gibi tiplerde “dağıtım birim fiyatı” çıkmayabilir ama “vergi ve fonlar / toplam enerji bedeli / KDV matrahı” gibi şeyler var. Validasyon ve “insana sor” ekranı için altın.
+
+---
+
+## 3) Excel Input’a Map (tek yerden yönet)
+
+Senin şablona göre:
+
+* **B5** ← `consumption_kwh.value`
+* **C5** ← `current_active_unit_price_tl_per_kwh.value`
+* **C11** ← `distribution_unit_price_tl_per_kwh.value`
+* **B12** ← `demand_qty.value` (null ise 0 yaz)
+* **C12** ← `demand_unit_price_tl_per_unit.value` (null ise 0 yaz)
+
+---
+
+## 4) En kritik “hata önleyici” validasyon
+
+Extraction sonrası şunu yap:
+
+1. `energy_total_est = consumption_kwh * current_active_unit_price`
+2. `dist_total_est = consumption_kwh * distribution_unit_price` (null ise 0)
+3. `matrah_est ≈ energy_total_est + dist_total_est (+ demand_total varsa)`
+4. `vat_est = matrah_est * 0.20`
+5. `btv_est = energy_total_est * 0.01` (BTV varsa)
+6. `total_est ≈ matrah_est + vat_est (+ btv_est)`
+
+Sonra `invoice_total_with_vat_tl` ile kıyasla:
+
+* fark %2’den büyükse: **“bu faturada dağıtım/demand/başka kalem var; kullanıcıya eksik alan sor”**.
+
+Ekvator faturasında BTV %1 ve KDV %20 açıkça yazıyor; bunu da ayrıca çekebiliyorsun. 
+
+---
+
+## 5) Şu an senden istemeden bile söyleyeyim: CK faturası “kademeli”
+
+CK örneğinde enerji bedeli kademeli (yüksek/düşük) ve “Toplam Enerji Bedeli” var.  
+Bu yüzden CK için **ağırlıklı ortalama birim fiyat** hesabı standardın olmalı; yoksa C5’e hangi birimi yazacağını bilemezsin.
+
+---
+
+İstersen bir sonraki adımda ben sana “tek bir prompt” yazayım: fatura görselini verince bu JSON’u kusursuza yakın çıkaran, vendor’a göre otomatik karar veren prompt. Bu üç örnek onun eğitim datası gibi çalışır.
+**2026-01-07 20:36 (İstanbul)**
+
+Aşağıya “tek atımlık”, prod’a koymalık **fatura görseli → strict JSON** çıkaran ana prompt’u veriyorum. Bunu OpenAI Vision çağrısında **system + developer + user** şeklinde kullanabilirsin; ben burada tek parça halinde verdim (istersen sen katmanlara bölersin).
+
+---
+
+## 1) Ana Prompt (Fatura Görselinden Alan Çekme) — TEK PARÇA
+
+```text
+GÖREV:
+Yüklenen görsel/PDF sayfaları bir elektrik faturasıdır. Sadece aşağıdaki JSON şemasına uyan yapılandırılmış veriyi çıkar. 
+JSON DIŞINDA HİÇBİR ŞEY YAZMA. Açıklama, yorum, markdown, kod bloğu yazma.
+
+ÖNCELİK:
+1) Tüketim (kWh) doğru olsun.
+2) Mevcut aktif enerji birim fiyatı (TL/kWh) doğru olsun.
+3) Dağıtım birim fiyatı (TL/kWh) doğru olsun.
+4) Demand miktarı ve birim fiyatı varsa çıkar.
+5) KDV dahil toplam tutarı çıkar (validasyon için).
+Emin değilsen null dön.
+
+BİRİM KURALLARI:
+- Tüketim daima kWh cinsinden sayı.
+- Birim fiyatlar daima TL/kWh cinsinden sayı.
+- Toplam tutar TL cinsinden sayı.
+- Eğer birim fiyatlar TL/MWh görürsen TL/kWh'ye çevir (1 MWh = 1000 kWh).
+- TR sayı formatı olabilir (1.234,56). ÇIKTIDA nokta ondalık kullan: 1234.56
+
+VENDOR TESPİTİ:
+vendor alanını şu kümeye göre doldur:
+- "enerjisa" (Enerjisa logoları/ünvanı, Enerjisa Perakende vb.)
+- "ck_bogazici" (CK Boğaziçi / Boğaziçi Elektrik / CK vb.)
+- "ekvator" (Ekvator Enerji vb.)
+- "unknown" (emin değilsen)
+
+OKUMA STRATEJİSİ (VENDOR’A GÖRE):
+A) enerjisa:
+- consumption_kwh: "AKTİF TOPLAM" kWh değerini al.
+- current_active_unit_price_tl_per_kwh: "TOPLAM" satırında verilen birim fiyatı al (TL/kWh).
+- distribution_unit_price_tl_per_kwh: "Elk. Dağıtım" satırındaki birim fiyatı al (TL/kWh).
+- demand genelde yok; yoksa null.
+- invoice_total_with_vat_tl: "ÖDENECEK TUTAR" veya "FATURA TUTARI" al.
+
+B) ekvator:
+- consumption_kwh: "AKTİF" toplam tüketim.
+- current_active_unit_price_tl_per_kwh: enerji bedeli satırındaki TL/kWh (gündüz/puant/gece aynıysa direkt al).
+- distribution_unit_price_tl_per_kwh: "DAĞITIM SİSTEMİ KULLANIM BEDELİ" satırındaki TL/kWh.
+- BTV ve KDV tutarlarını mümkünse raw_breakdown içine al.
+- invoice_total_with_vat_tl: fatura/ödenecek toplam.
+
+C) ck_bogazici:
+- Bu tipte "Enerji Bedeli-Yüksek Kademe" ve "Enerji Bedeli-Düşük Kademe" ayrı olabilir.
+- consumption_kwh = (yüksek kademe kWh + düşük kademe kWh). Eğer "Tek Zamanlı ... Fark" gibi toplam kWh açıkça yazıyorsa onu kullan.
+- current_active_unit_price_tl_per_kwh:
+    1) Eğer "Toplam Enerji Bedeli" (TL) açıkça yazıyorsa: birim_fiyat = (Toplam Enerji Bedeli TL) / (Toplam kWh)
+    2) Yoksa: (yüksek_kademe_kWh*yüksek_birim + düşük_kademe_kWh*düşük_birim) / toplam_kWh
+- demand_qty: "Demand" alanında sayı varsa al.
+- distribution_unit_price_tl_per_kwh faturada doğrudan yoksa null; ama distribution_total_tl bulunabiliyorsa raw_breakdown.distribution_total_tl içine yaz.
+
+KANIT (EVIDENCE):
+Her alan için evidence, faturadaki ilgili satırın kısa metnidir (maks 120 karakter). 
+page: PDF ise sayfa numarası (1’den başla). Görsel ise 1.
+
+GÜVEN (CONFIDENCE):
+0.0–1.0 arası.
+- Direkt açık etiket + tek değer: 0.85–0.95
+- Hesapla türetilmiş (ağırlıklı ortalama vb.): 0.65–0.85
+- Tahmin/emin değil: 0.1–0.4 ve value null mümkün.
+
+ÇIKTI ŞEMASI (MUTLAK UY):
+Aşağıdaki anahtarlar harici anahtar kullanma.
+
+{
+  "vendor": "enerjisa|ck_bogazici|ekvator|unknown",
+  "invoice_period": "YYYY-MM",
+  "consumption_kwh": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+  "current_active_unit_price_tl_per_kwh": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+  "distribution_unit_price_tl_per_kwh": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+  "demand_qty": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+  "demand_unit_price_tl_per_unit": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+  "invoice_total_with_vat_tl": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+  "raw_breakdown": {
+    "energy_total_tl": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+    "distribution_total_tl": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+    "btv_tl": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+    "vat_tl": {"value": number|null, "confidence": number, "evidence": "string", "page": number}
+  }
+}
+
+NOTLAR:
+- invoice_period: faturada “dönem / son ödeme / fatura tarihi” gibi alanlardan YYYY-MM üret. Emin değilsen null değil "YYYY-MM" formatına uyduramıyorsan null ver (ama şemada string; o yüzden boş string "" ver).
+- Değerler bulunamazsa value null, confidence düşük, evidence boş olabilir.
+- JSON dışında hiçbir şey yazma.
+```
+
+---
+
+## 2) Uygulamada iki küçük ek (kaliteyi uçurur)
+
+### (a) “Tek sayfa mı / çok sayfa mı” kuralı
+
+PDF çok sayfaysa model bazen yanlış sayfadan alır. Çağrıda şunu yap:
+
+* faturanın **“tutarların olduğu sayfa”** genelde 1. sayfa.
+* sen backend’de PDF’i sayfalara çevirip **sadece 1. sayfayı** gönder (çok hız + az hata).
+
+### (b) “Hata yakalama” için ikinci mini-prompt (opsiyonel)
+
+Extraction geldikten sonra aynı modele (veya kodla) şunu yaptır:
+
+* “Bu JSON’daki değerler tutarlı mı? aşırı uç var mı? kWh=0 gibi saçmalık var mı?”
+  Ama bunu ayrı bir endpoint yap; extraction endpoint’i **saf** kalsın.
+
+---
+
+## 3) Excel’e mapping (senin sistem için tek satır kural)
+
+JSON → Excel:
+
+* B5 = consumption_kwh.value
+* C5 = current_active_unit_price_tl_per_kwh.value
+* C11 = distribution_unit_price_tl_per_kwh.value
+* B12 = demand_qty.value (null→0)
+* C12 = demand_unit_price_tl_per_unit.value (null→0)
+
+Sonra Excel’den:
+
+* D16 (mevcut toplam), J16 (teklif toplam), E19/E20 (tasarruf)
+
+---
+
+Bu prompt’u aynen koy; elindeki üç örnek faturayı zaten iyi kapsıyor. Sonraki hamlede istersen ben sana bunun “vendor’a göre otomatik iyileştirilmiş” versiyonunu da yazarım: örneğin Enerjisa’da “TOPLAM birim fiyat” yoksa alternatif etiketlere düşen bir rule set gibi.
+**2026-01-07 20:40 (İstanbul)**
+
+Aşağıdaki metin “bir tık daha akıllı” versiyon: **vendor’a göre otomatik fallback** (etiket yoksa alternatif etiketlerden arar), **çok zamanlı/kademeli** durumunda doğru şekilde **ağırlıklı ortalama** üretir, **dağıtım birim fiyatı yoksa toplamdan türetme** dener, yine de emin değilse **null** döner. Prod’a koymalık.
+
+---
+
+## Gelişmiş Ana Prompt (Vendor + Fallback + Çok Zamanlı/Kademeli)
+
+```text
+GÖREV:
+Yüklenen görsel/PDF sayfaları bir elektrik faturasıdır. Sadece aşağıdaki JSON şemasına uyan veriyi çıkar.
+JSON DIŞINDA HİÇBİR ŞEY YAZMA. Açıklama/yorum/markdown yok.
+
+HEDEF:
+Bu alanları çıkar:
+- consumption_kwh (kWh)
+- current_active_unit_price_tl_per_kwh (TL/kWh)
+- distribution_unit_price_tl_per_kwh (TL/kWh)
+- demand_qty (varsa)
+- demand_unit_price_tl_per_unit (varsa)
+- invoice_total_with_vat_tl (KDV dahil toplam)
+
+Ek olarak (validasyon için) raw_breakdown:
+- energy_total_tl
+- distribution_total_tl
+- btv_tl
+- vat_tl
+
+BİRİM VE FORMAT KURALLARI:
+- TR formatı (1.234,56) olabilir: ÇIKTIDA 1234.56 (nokta ondalık) kullan.
+- TL/MWh görürsen TL/kWh’ye çevir: TL/kWh = (TL/MWh) / 1000.
+- kWh ve TL/kWh birimlerini karıştırma.
+- Birim fiyat “Kr/kWh” geçiyorsa TL/kWh’ye çevir (Kr/100).
+- Bulduğun değer yanında “kWh, TL/kWh, TL” gibi bağlam aramadan sayı çekme.
+
+VENDOR TESPİTİ (KURAL):
+- “Enerjisa”, “Enerjisa Perakende”, “Toroslar/AYEDAŞ/BAŞKENT Enerjisa” vb. → vendor="enerjisa"
+- “CK”, “Boğaziçi Elektrik”, “CK Boğaziçi”, “Bedaş” ibareleri → vendor="ck_bogazici"
+- “Ekvator Enerji” → vendor="ekvator"
+- Emin değilsen vendor="unknown" (ama yine extraction yap)
+
+SAYFA SEÇİMİ:
+- Birden fazla sayfa varsa önce “Fatura Tutarı / Ödenecek Tutar / KDV” görünen sayfayı seç.
+- Eğer emin değilsen 1. sayfayı temel al; evidence ile sayfa belirt.
+
+FALLBACK ETİKET SÖZLÜĞÜ (en kritik kısım):
+Aşağıdaki alanları ararken sadece tek etikete bağlanma; listedeki alternatifleri dene.
+
+1) consumption_kwh (kWh) için olası etiketler:
+- “AKTİF TOPLAM”, “Aktif Toplam”, “AKTİF ENERJİ”, “Aktif Enerji”, “Toplam Tüketim”, “Tüketim (kWh)”, “Tek Zamanlı … Fark”
+- Çok zamanlı ise: “Gündüz”, “Puant”, “Gece” kWh’lerini topla.
+- Kademeli ise: “Yüksek Kademe” + “Düşük Kademe” kWh’lerini topla.
+
+2) current_active_unit_price_tl_per_kwh için olası kaynaklar (öncelik sırası):
+A) Eğer “TOPLAM” satırında TL/kWh birim fiyat açıkça yazıyorsa onu al.
+B) Eğer “Birim Fiyat” / “TL/kWh” yanında enerji satırı varsa onu al.
+C) Eğer birim fiyatlar kademeli/çok zamanlı farklıysa ağırlıklı ortalama üret:
+   - Öncelik: Eğer “Toplam Enerji Bedeli” (TL) yazıyorsa:
+       birim = ToplamEnerjiBedeliTL / consumption_kwh
+   - Yoksa, satır bazlı hesap:
+       birim = (Σ(kWh_i * birim_i)) / Σ(kWh_i)
+D) Eğer sadece enerji toplam tutarı (TL) var ama kWh yoksa: birim fiyatı çıkarma, null dön.
+
+3) distribution_unit_price_tl_per_kwh için olası etiketler:
+- “Elk. Dağıtım”, “Elektrik Dağıtım”, “Dağıtım Bedeli”, “Dağıtım Sistemi Kullanım Bedeli”, “DSKB”
+- Eğer TL/kWh birim fiyat doğrudan yazıyorsa onu al.
+- Eğer sadece dağıtım toplamı (TL) yazıyorsa ve consumption_kwh varsa:
+    dağıtım_birim = distribution_total_tl / consumption_kwh
+  (Bu durumda confidence düşür; evidence dağıtım toplam satırı olsun.)
+
+4) demand_qty ve demand_unit_price_tl_per_unit için olası etiketler:
+- “DEMAND”, “Demand”, “Sayaç Demand Değeri”, “Maksimum Demand”, “Güç Bedeli”, “Reaktif/Demand”
+- Demand miktarı tek başına yazabilir (ör. “Demand 23.092”).
+- Demand birim fiyatı (TL/birim) yoksa demand_unit_price null.
+- “Sözleşme Gücü” (kW/kVA) demand değildir; ayrı birim fiyat yoksa demand_qty olarak KULLANMA (null bırak), sadece evidence’a yazma.
+
+5) invoice_total_with_vat_tl için olası etiketler:
+- “ÖDENECEK TUTAR”, “FATURA TUTARI”, “GENEL TOPLAM”, “TOPLAM TUTAR”, “KDV DAHİL”
+- “Yuvarlama” gibi farklar olabilir; “ödenecek tutar” varsa onu tercih et.
+
+VERGİ/FON (raw_breakdown) için:
+- energy_total_tl: “Enerji Bedeli Toplam”, “Toplam Enerji Bedeli”, “Enerji Bedeli” toplam satırı
+- distribution_total_tl: “Dağıtım … Toplam”, “Dağıtım Bedeli” toplam satırı
+- btv_tl: “BTV”, “Belediye Tüketim Vergisi”
+- vat_tl: “KDV”, “Katma Değer Vergisi”
+Bulamazsan null.
+
+CONFIDENCE KURALLARI:
+- Etiket + tek değer + birim açık: 0.85–0.95
+- Fallback etiketle bulundu: 0.75–0.88
+- Ağırlıklı ortalama / türetilmiş (toplam/kWh): 0.65–0.82
+- Sadece tahmin: 0.1–0.4 ve mümkünse value null
+
+EVIDENCE KURALI:
+- Her alan için evidence: faturadaki ilgili satırın kısa kopyası (maks 120 karakter).
+- Sayfa numarası: PDF ise 1’den başla; görsel ise 1.
+
+invoice_period KURALI:
+- “Fatura Tarihi”, “Dönem”, “Tüketim Dönemi”, “Okuma Tarihi” gibi alanlardan YYYY-MM üret.
+- Bulamazsan invoice_period="" (boş string).
+
+ÇIKTI ŞEMASI (harici anahtar yok):
+{
+  "vendor": "enerjisa|ck_bogazici|ekvator|unknown",
+  "invoice_period": "YYYY-MM",
+  "consumption_kwh": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+  "current_active_unit_price_tl_per_kwh": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+  "distribution_unit_price_tl_per_kwh": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+  "demand_qty": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+  "demand_unit_price_tl_per_unit": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+  "invoice_total_with_vat_tl": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+  "raw_breakdown": {
+    "energy_total_tl": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+    "distribution_total_tl": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+    "btv_tl": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+    "vat_tl": {"value": number|null, "confidence": number, "evidence": "string", "page": number}
+  }
+}
+
+ÇIKTI:
+Yalnızca JSON.
+```
+
+---
+
+### Mini not (sahada işe yarar)
+
+* **Enerjisa**: genelde “AKTİF TOPLAM” + “TOPLAM birim fiyat” + “Elk. Dağıtım birim fiyat” hazır → confidence yüksek.
+* **CK**: kademeli satırlardan ağırlıklı ortalama üret → confidence orta.
+* **Ekvator**: dağıtım birim fiyatı “Dağıtım Sistemi Kullanım Bedeli” satırında → confidence yüksek.
+
+İstersen bir sonraki adımda bunun **backend tarafı için “eksik alan listesi”** üreten ikinci bir doğrulama prompt’u da yazarım (UI’da sadece eksik sorulsun diye).
+**2026-01-07 20:41 (İstanbul)**
+
+Tamam; senin panelde/uygulamada kullanacağın **2. doğrulama prompt’u** (Extraction JSON geldi → “eksik/hatalı alanları yakala → kullanıcıya sorulacakları üret”) aşağıda. Bu prompt **sadece JSON döndürür** ve UI akışını otomatikleştirir.
+
+---
+
+## 2. Prompt: Doğrulama + Eksik Alan Listesi + Düzeltme Önerisi (Sadece JSON)
+
+```text
+GÖREV:
+Sana bir elektrik faturası extraction JSON'u verilecek (bir önceki adımın çıktısı).
+Bu JSON'u kontrol et:
+- Birimler ve sayılar mantıklı mı?
+- Eksik alan var mı?
+- Hesap tutarlılığı yaklaşık sağlanıyor mu?
+Sonuç olarak SADECE aşağıdaki şemada JSON döndür.
+
+KURALLAR:
+- Yeni veri uydurma. Belgeden gelmeyen değeri tahminle doldurma.
+- Eğer bir alan null ise veya confidence düşükse (<0.6) ve bu alan hesap için kritikse, "questions" listesine ekle.
+- Eğer değerler mantıksız aralıkta ise "errors" listesine ekle.
+- "suggested_fixes" sadece hesap türetimi mümkünse öneri verir (örn dağıtım toplamı ve kWh varsa dağıtım birim fiyat öner).
+
+MANTIK KONTROLLERİ:
+1) consumption_kwh:
+- null olmamalı (kritik). 
+- kWh <= 0 ise hata.
+- Aşırı uç kontrol: 1 kWh ile milyonlar TL gibi saçma kombinasyonları yakala.
+
+2) current_active_unit_price_tl_per_kwh:
+- null olmamalı (kritik).
+- Makul aralık: 0.1 – 30 TL/kWh. Dışındaysa hata (ama vendor/kurumsal özel anlaşmalar olabilir: yine de flagle).
+
+3) distribution_unit_price_tl_per_kwh:
+- null olabilir (bazı CK faturalarında). 
+- Makul aralık: 0 – 10 TL/kWh. Dışındaysa hata.
+
+4) demand:
+- demand_qty varsa ama demand_unit_price yoksa, bu “eksik” sayılır (hesap için).
+- demand_qty çok büyükse (örn > 100000) flagle.
+
+5) invoice_total_with_vat_tl:
+- null olabilir ama varsa validasyon yap.
+- Makul aralık: 0 – çok büyük olabilir; yalnızca negatif/0 ise hata.
+
+YAKLAŞIK TUTAR KONTROLÜ (eğer invoice_total_with_vat_tl var ise):
+- energy_est = consumption_kwh * current_active_unit_price_tl_per_kwh
+- dist_est = (distribution_unit_price_tl_per_kwh null değilse) consumption_kwh * distribution_unit_price_tl_per_kwh, değilse 0
+- demand_est = (demand_qty ve demand_unit_price doluysa) demand_qty * demand_unit_price, değilse 0
+- btv_est = (raw_breakdown.btv_tl varsa onu kullan; yoksa energy_est * 0.01)
+- matrah_est = energy_est + dist_est + demand_est + btv_est
+- vat_est = (raw_breakdown.vat_tl varsa onu kullan; yoksa matrah_est * 0.20)
+- total_est = matrah_est + vat_est
+
+- Eğer fatura vendor="enerjisa" veya "ekvator" ise: total_est ile invoice_total_with_vat_tl arasındaki fark %5'ten büyükse "warnings" ekle.
+- Eğer vendor="ck_bogazici" ise: fark %10'a kadar tolere et (kalem parçalanması daha sık).
+
+SUGGESTED FIXES:
+- Eğer distribution_unit_price null ama raw_breakdown.distribution_total_tl ve consumption_kwh doluysa:
+  distribution_unit_price öner: distribution_total_tl / consumption_kwh (confidence=0.55 gibi düşük öner).
+- Eğer current_active_unit_price null ama raw_breakdown.energy_total_tl ve consumption_kwh doluysa:
+  current_active_unit_price öner: energy_total_tl / consumption_kwh.
+
+ÇIKTI ŞEMASI (harici anahtar yok):
+{
+  "is_ready_for_pricing": boolean,
+  "missing_fields": ["field_name", ...],
+  "questions": [
+    {"field_name": "string", "why_needed": "string", "example_answer_format": "string"}
+  ],
+  "errors": [
+    {"field_name": "string", "issue": "string"}
+  ],
+  "warnings": [
+    {"issue": "string"}
+  ],
+  "suggested_fixes": [
+    {"field_name": "string", "suggested_value": number, "basis": "string", "confidence": number}
+  ],
+  "sanity_check": {
+    "energy_est_tl": number|null,
+    "dist_est_tl": number|null,
+    "demand_est_tl": number|null,
+    "btv_est_tl": number|null,
+    "vat_est_tl": number|null,
+    "total_est_tl": number|null,
+    "invoice_total_with_vat_tl": number|null,
+    "delta_ratio": number|null
+  }
+}
+
+FIELD_NAME LİSTESİ (sabit isimler):
+- consumption_kwh
+- current_active_unit_price_tl_per_kwh
+- distribution_unit_price_tl_per_kwh
+- demand_qty
+- demand_unit_price_tl_per_unit
+- invoice_total_with_vat_tl
+
+ÇIKTI:
+Sadece JSON.
+```
+
+---
+
+### UI’da nasıl kullanacaksın (tek cümle)
+
+* `is_ready_for_pricing=true` ise “Teklifi Oluştur” butonunu aç.
+* değilse `questions` listesini modal’da sor, cevapları JSON’a patchle, tekrar doğrulat.
+
+Bu iki-prompt mimarisi ile sistemin “kendi kendini toparlayan” hale gelir: faturayı okur, eksik bulur, sadece eksik olanı sana sorar, sonra net teklif basar.

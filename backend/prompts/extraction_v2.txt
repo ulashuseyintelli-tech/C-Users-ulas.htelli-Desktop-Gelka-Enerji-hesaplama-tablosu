@@ -1,0 +1,244 @@
+GÖREV: Yüklenen görsel bir elektrik faturasıdır. Şemaya göre alanları çıkar.
+
+BİRİM/FORMAT:
+- value alanları number/null olmalı.
+- TR sayı formatı olsa bile value normal sayı olmalı (1234.56).
+- TL/MWh -> TL/kWh = /1000. Kr/kWh -> TL/kWh = /100.
+
+═══════════════════════════════════════════════════════════════════════════════
+⚠️ KRİTİK: DOĞRU TABLODAN OKUMA KURALLARI
+═══════════════════════════════════════════════════════════════════════════════
+
+ALTIN KURAL: Faturalandırılan tüketim SADECE parasal satırlardan gelir!
+
+✅ DOĞRU KAYNAK - "FATURA DETAYI" / "AÇIKLAMA" / "KALEM" tablosu:
+   - Satırda MİKTAR + BİRİM FİYAT + TUTAR (TL) birlikte var
+   - Tutar > 0 TL olan satırlar
+   - "Aktif Enerji Bedeli", "Enerji Bedeli", "Elektrik Enerjisi" satırları
+
+❌ YANLIŞ KAYNAKLAR - BUNLARDAN TÜKETİM ALMA:
+   - "Ort. Tüketim", "Ortalama Tüketim (kWh/gün)" → BİLGİ AMAÇLI
+   - Grafik altındaki yıllık/aylık tüketim değerleri → BİLGİ AMAÇLI
+   - "Önceki Yıl Tüketimi", "Geçen Yıl" → KARŞILAŞTIRMA AMAÇLI
+   - Sayaç okuma tablosundaki "Fark" → TEK BAŞINA KULLANMA
+   - "Sözleşme Gücü (kW)" → DEMAND DEĞİL
+
+DOĞRULAMA FORMÜLÜ (her extraction'da uygula):
+   consumption_kwh × unit_price ≈ energy_total_tl (±%5 tolerans)
+   Tutmuyorsa → yanlış sayıyı okudun, tekrar bak!
+
+═══════════════════════════════════════════════════════════════════════════════
+INVOICE TYPE SINIFLANDIRMA (invoice_type)
+═══════════════════════════════════════════════════════════════════════════════
+
+Faturayı aşağıdaki tiplerden birine sınıflandır:
+
+- type_1: Tek toplam kWh + tek birim fiyat + dağıtım birim fiyat açık
+          → Enerjisa gibi, en kolay tip
+          
+- type_2: Çok zamanlı (T1/T2/T3) var ama toplam satır/birim fiyat net
+          → Ekvator gibi, toplam satırından alınır
+          
+- type_3: Kademeli veya çok satırlı enerji bedeli (yüksek/düşük kademe vb.)
+          → CK Boğaziçi gibi, ağırlıklı ortalama gerekir
+          
+- type_4: Dağıtım birim fiyat yok, sadece dağıtım toplam var (türetilebilir)
+
+- type_5: Demand / reaktif / güç bedeli gibi ek kalemler belirgin
+          → OSB, OG tüketiciler, büyük sanayi
+          
+- type_6: Birden fazla sayaç/tesisat kalemi aynı faturada
+
+- type_7: Mahsuplaşma/düzeltme/iade/negatif kalemler bariz
+
+Emin değilsen: invoice_type = "unknown"
+
+═══════════════════════════════════════════════════════════════════════════════
+KALEM BAZLI EXTRACTION (line_items) - YENİ VE KRİTİK
+═══════════════════════════════════════════════════════════════════════════════
+
+Fatura detay tablosundaki HER enerji satırını ayrı ayrı çıkar:
+
+⚠️ NEGATİF KALEMLER (MAHSUPLAŞMA) ÇOK ÖNEMLİ:
+- Bazı faturalarda "Ek Tüketim", "Mahsup", "İade" gibi NEGATİF satırlar olabilir
+- Bu satırları NEGATİF değerlerle kaydet (qty ve amount_tl negatif)
+- Örnek: "-4.042,036 kWh" → qty: -4042.036
+
+Örnek CK Boğaziçi (mahsuplaşmalı):
+| Açıklama                  | Miktar       | Birim | B.Fiyat  | Tutar        |
+|---------------------------|--------------|-------|----------|--------------|
+| Enerji Bedeli SKTT        | 120.187,666  | kWh   | 4,3632   | 524.377,31   |
+| Enerji Bedeli (Ek Tüketim)| -4.042,036   | kWh   | 4,3632   | -17.639,05   | ← NEGATİF!
+| Dağıtım Bedeli            | 116.145,630  | kWh   | 0,7485   | 86.952,60    |
+
+Bu tablodan:
+- line_items[0]: {label: "Enerji Bedeli SKTT", qty: 120187.666, unit: "kWh", unit_price: 4.3632, amount_tl: 524377.31}
+- line_items[1]: {label: "Enerji Bedeli (Ek Tüketim)", qty: -4042.036, unit: "kWh", unit_price: 4.3632, amount_tl: -17639.05}
+- line_items[2]: {label: "Dağıtım Bedeli", qty: 116145.630, unit: "kWh", unit_price: 0.7485, amount_tl: 86952.60}
+
+CROSS-CHECK: qty × unit_price ≈ amount olmalı (±%1)
+TOPLAM TÜKETİM: consumption_kwh = SUM(line_items.qty WHERE unit == "kWh") 
+  → Negatif kalemler dahil! (120187.666 - 4042.036 = 116145.630)
+
+⚠️ CK BOĞAZİÇİ ÖZEL KURAL:
+- "Enerji Bedeli SKTT" = ana tüketim satırı
+- "Enerji Bedeli (Ek Tüketim)" = mahsuplaşma (genelde negatif)
+- Toplam tüketim = SKTT + Ek Tüketim (negatif olabilir)
+- "Fatura Tutarı" satırından invoice_total_with_vat_tl al, HESAPLAMA!
+
+═══════════════════════════════════════════════════════════════════════════════
+FALLBACK / STRATEJİ
+═══════════════════════════════════════════════════════════════════════════════
+
+- consumption_kwh: 
+  ✅ ÖNCELİK 1: line_items toplamı (NEGATİF kalemler dahil!)
+     → Örnek: SKTT (120.187) + Ek Tüketim (-4.042) = 116.145 kWh
+  ✅ ÖNCELİK 2: "TOPLAM" satırındaki kWh (fatura detay tablosunda)
+  ✅ ÖNCELİK 3: "AKTİF TOPLAM" veya T1+T2+T3 toplamı
+  ❌ KULLANMA: Grafik değerleri, ort. tüketim, önceki yıl
+
+- current_active_unit_price:
+  ✅ ÖNCELİK 1: TOPLAM satırında TL/kWh varsa direkt al
+  ✅ ÖNCELİK 2: energy_total_tl / consumption_kwh (cross-check ile)
+  ✅ ÖNCELİK 3: line_items'dan ağırlıklı ortalama
+  
+- distribution_unit_price:
+  - TL/kWh varsa direkt al.
+  - sadece distribution_total_tl varsa: distribution_total_tl / consumption_kwh.
+  
+- demand: sadece "Demand" açıkça varsa doldur. "Sözleşme Gücü" ile karıştırma.
+
+- invoice_total_with_vat_tl: 
+  ⚠️ KRİTİK: "ÖDENECEK TUTAR" veya "FATURA TUTARI" satırından DOĞRUDAN oku!
+  ❌ ASLA kalemleri toplayıp hesaplama!
+  → CK Boğaziçi'de "Fatura Tutarı: 593.738,26 TL" satırını bul
+
+═══════════════════════════════════════════════════════════════════════════════
+EXTRA ITEMS (extra_items) - ÇOK ÖNEMLİ
+═══════════════════════════════════════════════════════════════════════════════
+
+Aşağıdaki gibi ek kalemleri yakala (varsa):
+
+REAKTİF / GÜÇ:
+- Reaktif Enerji Bedeli
+- Kapasitif Enerji Bedeli
+- Endüktif Enerji Bedeli
+- Reaktif Ceza
+- Güç Bedeli (Demand değilse)
+- Güç Aşım Bedeli
+
+HİZMET BEDELLERİ:
+- Sayaç Okuma Bedeli
+- Sayaç Hizmet Bedeli
+- Perakende Satış Hizmet Bedeli
+- Kesme-Açma Bedeli
+- İletim Sistemi Kullanım Bedeli
+
+MAHSUPLAŞMA / DÜZELTME:
+- Mahsuplaşma
+- İade
+- Düzeltme
+- İptal
+- Fark (negatif olabilir)
+- Önceki Dönem Farkı
+
+Her biri için:
+- label: Kalem adı (faturadaki gibi)
+- amount_tl: Tutar (negatif olabilir - mahsuplaşma için)
+- confidence: 0.0-1.0
+- evidence: Faturadaki satır
+- page: Sayfa numarası
+
+Emin değilsen extra_items boş bırak [].
+
+═══════════════════════════════════════════════════════════════════════════════
+TİP-6: MULTI SAYAÇ (meters)
+═══════════════════════════════════════════════════════════════════════════════
+
+Faturada birden fazla sayaç/tesisat varsa:
+- is_multi_meter: true
+- meters dizisine her sayacı ekle:
+  - meter_id: Sayaç numarası
+  - meter_type: "main" (ana), "sub" (alt), "backup" (yedek)
+  - consumption_kwh: Bu sayacın tüketimi
+  - unit_price_tl_per_kwh: Sayaca özel birim fiyat (varsa)
+  - tariff_type: "single", "multi_time", "tiered"
+  - evidence: Faturadaki satır
+  - page: Sayfa numarası
+
+Toplam consumption_kwh = tüm sayaçların toplamı olmalı.
+Tek sayaç varsa meters boş bırak [].
+
+═══════════════════════════════════════════════════════════════════════════════
+TİP-7: MAHSUPLAŞMA / İADE (adjustments)
+═══════════════════════════════════════════════════════════════════════════════
+
+Faturada mahsuplaşma/iade/düzeltme varsa:
+- has_adjustments: true
+- adjustments dizisine her kalemi ekle:
+  - label: "Önceki Dönem Mahsubu", "İade", "Düzeltme" vb.
+  - amount_tl: Tutar (genelde negatif)
+  - period: İlgili dönem (örn: "2024-10")
+  - reason: Mahsup nedeni (varsa)
+  - evidence: Faturadaki satır
+  - page: Sayfa numarası
+
+Mahsup yoksa adjustments boş bırak [].
+
+═══════════════════════════════════════════════════════════════════════════════
+VENDOR TESPİTİ
+═══════════════════════════════════════════════════════════════════════════════
+
+- "Enerjisa", "Enerjisa Perakende", "Toroslar/AYEDAŞ/BAŞKENT Enerjisa" → vendor="enerjisa"
+- "CK", "Boğaziçi Elektrik", "CK Boğaziçi", "Bedaş" → vendor="ck_bogazici"
+- "Ekvator Enerji" → vendor="ekvator"
+- "Yelden", "Yelden Enerji" → vendor="yelden"
+- Emin değilsen vendor="unknown"
+
+═══════════════════════════════════════════════════════════════════════════════
+LINE ITEMS (line_items) - KALEM BAZLI EXTRACTION
+═══════════════════════════════════════════════════════════════════════════════
+
+Fatura detay tablosundaki enerji satırlarını çıkar:
+
+Her satır için:
+- label: Kalem adı ("Yüksek Kademe", "Düşük Kademe", "Gündüz", "Puant", "Gece", "Aktif Enerji")
+- qty: Miktar (kWh)
+- unit: Birim ("kWh")
+- unit_price: Birim fiyat (TL/kWh)
+- amount_tl: Tutar (TL)
+- confidence: 0.0-1.0
+- evidence: Faturadaki satır
+- page: Sayfa numarası
+
+CROSS-CHECK HER SATIRDA: qty × unit_price ≈ amount_tl (±%2)
+Tutmuyorsa confidence düşür ve evidence'a not ekle.
+
+═══════════════════════════════════════════════════════════════════════════════
+CONFIDENCE KURALLARI
+═══════════════════════════════════════════════════════════════════════════════
+
+- Etiket + tek değer + birim açık: 0.85–0.95
+- Fallback etiketle bulundu: 0.75–0.88
+- Ağırlıklı ortalama / türetilmiş: 0.65–0.82
+- Cross-check tutmadı: 0.3–0.5 (UYARI)
+- Sadece tahmin: 0.1–0.4 ve mümkünse value null
+
+═══════════════════════════════════════════════════════════════════════════════
+EVIDENCE KURALI
+═══════════════════════════════════════════════════════════════════════════════
+
+- Her alan için evidence: faturadaki ilgili satırın kısa kopyası (maks 120 karakter).
+- Sayfa numarası: PDF ise 1'den başla; görsel ise 1.
+
+═══════════════════════════════════════════════════════════════════════════════
+SON KONTROL (extraction bitirmeden önce)
+═══════════════════════════════════════════════════════════════════════════════
+
+1. consumption_kwh × current_active_unit_price ≈ energy_total_tl? (±%5)
+2. energy_total + distribution_total + btv + vat ≈ invoice_total? (±%10)
+3. line_items toplamı = consumption_kwh?
+
+Tutmuyorsa: YENİDEN BAK, yanlış tablodan/satırdan okumuş olabilirsin!
+
+ÇIKTI: Yalnızca JSON şemasına uygun veri.

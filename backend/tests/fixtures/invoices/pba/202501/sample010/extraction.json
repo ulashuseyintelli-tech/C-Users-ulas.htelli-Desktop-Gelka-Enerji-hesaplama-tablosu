@@ -1,0 +1,9 @@
+﻿{
+    "supplier_name": "PBA Elektrik",
+    "invoice_no": "PBA2025000999888",
+    "invoice_date": "2025-01-25",
+    "period_start": "2025-01-01",
+    "period_end": "2025-01-31",
+    "consumption_kwh": {"value": 22000, "confidence": 0.93},
+    "total_amount_tl": {"value": 66000, "confidence": 0.89}
+}

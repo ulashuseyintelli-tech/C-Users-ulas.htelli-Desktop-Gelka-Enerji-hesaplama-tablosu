@@ -1,0 +1,9 @@
+﻿{
+    "supplier_name": "CK Bogazici",
+    "invoice_no": "BBE2025000297356",
+    "invoice_date": "2025-01-15",
+    "period_start": "2025-01-01",
+    "period_end": "2025-01-31",
+    "consumption_kwh": {"value": 15000, "confidence": 0.95},
+    "total_amount_tl": {"value": 45000, "confidence": 0.92}
+}

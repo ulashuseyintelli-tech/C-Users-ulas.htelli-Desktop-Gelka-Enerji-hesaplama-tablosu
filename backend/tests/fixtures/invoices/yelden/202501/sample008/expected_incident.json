@@ -1,0 +1,13 @@
+﻿{
+    "primary_flag": "MISSING_FIELDS",
+    "category": "VALIDATION_FAIL",
+    "severity": "S2",
+    "action": {
+        "type": "USER_FIX",
+        "owner": "user",
+        "code": "MISSING_FIELDS_COMPLETE"
+    },
+    "all_flags": ["MISSING_FIELDS"],
+    "secondary_flags": [],
+    "deduction_total": 20
+}

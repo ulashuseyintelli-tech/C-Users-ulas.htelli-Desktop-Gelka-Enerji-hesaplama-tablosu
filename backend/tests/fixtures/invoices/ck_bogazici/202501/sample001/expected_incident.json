@@ -1,0 +1,13 @@
+﻿{
+    "primary_flag": "TARIFF_META_MISSING",
+    "category": "TARIFF_META_MISSING",
+    "severity": "S1",
+    "action": {
+        "type": "USER_FIX",
+        "owner": "user",
+        "code": "MANUAL_META_ENTRY"
+    },
+    "all_flags": ["TARIFF_META_MISSING"],
+    "secondary_flags": [],
+    "deduction_total": 45
+}

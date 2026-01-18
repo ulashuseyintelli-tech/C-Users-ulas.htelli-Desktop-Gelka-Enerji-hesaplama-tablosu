@@ -1,0 +1,7 @@
+﻿{
+    "fixture_version": 1,
+    "source": "synthetic",
+    "provider": "enerjisa",
+    "invoice_month": "2025-01",
+    "notes": "Consumption value missing from extraction; expect CONSUMPTION_MISSING"
+}

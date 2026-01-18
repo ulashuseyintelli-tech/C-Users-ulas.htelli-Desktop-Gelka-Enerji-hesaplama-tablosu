@@ -1,0 +1,39 @@
+Extract invoice data as JSON. Turkish number format: 1.234,56 = 1234.56
+
+Required fields:
+- vendor: "enerjisa", "ck_bogazici", "ekvator", "yelden", or "unknown"
+- invoice_period: "YYYY-MM" format
+- consumption_kwh: {value: number, confidence: 0-1, evidence: "source text", page: 1}
+- current_active_unit_price_tl_per_kwh: {value: number, confidence: 0-1, evidence: "source text", page: 1}
+- distribution_unit_price_tl_per_kwh: {value: number, confidence: 0-1, evidence: "source text", page: 1}
+- demand_qty: {value: number|null, confidence: 0-1, evidence: "source text", page: 1}
+- demand_unit_price_tl_per_unit: {value: number|null, confidence: 0-1, evidence: "source text", page: 1}
+- invoice_total_with_vat_tl: {value: number, confidence: 0-1, evidence: "source text", page: 1}
+- raw_breakdown: {
+    energy_total_tl: {value: number, confidence: 0-1, evidence: "source text", page: 1},
+    distribution_total_tl: {value: number, confidence: 0-1, evidence: "source text", page: 1},
+    btv_tl: {value: number|null, confidence: 0-1, evidence: "source text", page: 1},
+    vat_tl: {value: number|null, confidence: 0-1, evidence: "source text", page: 1}
+  }
+- charges: {
+    yek_amount: {value: number|null, confidence: 0-1, evidence: "source text", page: 1}
+  }
+
+Rules:
+1. Convert TL/MWh to TL/kWh by dividing by 1000
+2. Unit prices should be 0.5-10 TL/kWh range
+3. Verify: consumption × unit_price ≈ energy_total (±5%)
+4. Get invoice_total from "ÖDENECEK TUTAR" or "FATURA TUTARI" row directly
+
+⚠️ CRITICAL: Energy and Distribution are SEPARATE items!
+- current_active_unit_price_tl_per_kwh = Energy unit price ONLY (from "Enerji Bedeli" row)
+- distribution_unit_price_tl_per_kwh = Distribution unit price ONLY (from "Dağıtım Bedeli" row)
+- DO NOT add them together!
+- Example: Energy 4.36 TL/kWh + Distribution 0.75 TL/kWh → report SEPARATELY, not 5.11 TL/kWh
+
+EPDK Distribution tariffs (reference):
+- Sanayi OG Çift Terim: 0.810595 TL/kWh
+- Sanayi OG Tek Terim: 0.895372 TL/kWh
+- Sanayi AG Tek Terim: 1.385324 TL/kWh
+
+Return ONLY valid JSON, no explanation.

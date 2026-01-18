@@ -1,0 +1,13 @@
+﻿{
+    "primary_flag": "MARKET_PRICE_MISSING",
+    "category": "PRICE_MISSING",
+    "severity": "S1",
+    "action": {
+        "type": "RETRY_LOOKUP",
+        "owner": "market_price",
+        "code": "PTF_YEKDEM_CHECK"
+    },
+    "all_flags": ["MARKET_PRICE_MISSING", "TARIFF_META_MISSING"],
+    "secondary_flags": ["TARIFF_META_MISSING"],
+    "deduction_total": 95
+}

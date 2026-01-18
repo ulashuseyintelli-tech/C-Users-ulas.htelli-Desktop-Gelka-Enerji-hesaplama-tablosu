@@ -1,0 +1,7 @@
+﻿{
+    "fixture_version": 1,
+    "source": "synthetic",
+    "provider": "ck_bogazici",
+    "invoice_month": "2025-01",
+    "notes": "CK meta OCR missing; expect TARIFF_META_MISSING"
+}

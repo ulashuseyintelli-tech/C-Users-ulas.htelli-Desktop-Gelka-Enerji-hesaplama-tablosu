@@ -1,0 +1,33 @@
+Turkish electricity invoice extraction.
+
+CRITICAL: Get consumption_kwh from the BILLING TABLE where there is kWh × unit_price = amount.
+NOT from yearly/monthly comparison graphs or averages.
+
+Return JSON:
+{
+  "vendor": "enerjisa|ck_bogazici|ekvator|yelden|unknown",
+  "invoice_period": "YYYY-MM",
+  "consumption_kwh": {"value": number, "confidence": 0-1, "evidence": "source text", "page": 1},
+  "current_active_unit_price_tl_per_kwh": {"value": number, "confidence": 0-1, "evidence": "source text", "page": 1},
+  "distribution_unit_price_tl_per_kwh": {"value": number, "confidence": 0-1, "evidence": "source text", "page": 1},
+  "demand_qty": {"value": number|null, "confidence": 0-1, "evidence": "source text", "page": 1},
+  "demand_unit_price_tl_per_unit": {"value": number|null, "confidence": 0-1, "evidence": "source text", "page": 1},
+  "invoice_total_with_vat_tl": {"value": number, "confidence": 0-1, "evidence": "source text", "page": 1},
+  "raw_breakdown": {
+    "energy_total_tl": {"value": number, "confidence": 0-1, "evidence": "source text", "page": 1},
+    "distribution_total_tl": {"value": number, "confidence": 0-1, "evidence": "source text", "page": 1},
+    "btv_tl": {"value": number|null, "confidence": 0-1, "evidence": "source text", "page": 1},
+    "vat_tl": {"value": number|null, "confidence": 0-1, "evidence": "source text", "page": 1}
+  },
+  "charges": {
+    "yek_amount": {"value": number|null, "confidence": 0-1, "evidence": "source text", "page": 1}
+  }
+}
+
+Rules:
+- TL/MWh to TL/kWh: divide by 1000
+- Unit prices should be 0.5-10 TL/kWh
+- Get invoice_total from "ÖDENECEK TUTAR" or "FATURA TUTARI"
+- Number format: 1.234,56 = 1234.56
+
+Return ONLY valid JSON.

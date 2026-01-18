@@ -1,0 +1,7 @@
+﻿{
+    "fixture_version": 1,
+    "source": "synthetic",
+    "provider": "yelden",
+    "invoice_month": "2025-01",
+    "notes": "Distribution mismatch + JSON repair applied; DISTRIBUTION_MISMATCH is S2 (critical), JSON_REPAIR is S3 (non-critical). Only S1/S2 create incidents."
+}

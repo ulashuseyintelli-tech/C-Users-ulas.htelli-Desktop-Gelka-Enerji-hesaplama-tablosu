@@ -1,0 +1,7 @@
+﻿{
+    "fixture_version": 1,
+    "source": "synthetic",
+    "provider": "pba",
+    "invoice_month": "2025-01",
+    "notes": "Multiple flags: MARKET_PRICE_MISSING (priority 10) + TARIFF_META_MISSING (priority 25). MARKET_PRICE_MISSING should be primary."
+}

@@ -1,0 +1,464 @@
+GÖREV: Yüklenen görsel bir Türkiye elektrik faturasıdır. Şemaya göre tüm alanları çıkar.
+
+⚠️ KRİTİK UYARI - TÜRKÇE SAYI FORMATI:
+Türkiye'de sayılar şöyle yazılır: 1.459.245,86 (nokta=binlik, virgül=ondalık)
+Bu sayı = 1459245.86 (bir milyon dört yüz elli dokuz bin...)
+JSON çıktısında: noktaları kaldır, virgülü noktaya çevir!
+Örnek: "1.219.647,11 TL" → value: 1219647.11
+
+⚠️ BİRİM FİYAT FORMATI (ÇOK KRİTİK!):
+Türkiye'de birim fiyatlar genelde 1-10 TL/kWh arasındadır.
+- "4,2860 TL/kWh" → value: 4.286 (DÖRT virgül iki sekiz altı)
+- "0,7485 TL/kWh" → value: 0.7485 (SIFIR virgül yedi dört sekiz beş)
+- "3,87927 TL/kWh" → value: 3.87927
+
+❌ YANLIŞ: 0.4286 (bu çok düşük, mantıksız)
+✅ DOĞRU: 4.286 (bu makul bir birim fiyat)
+
+Eğer birim fiyat 0.1'den küçük çıkıyorsa TEKRAR KONTROL ET - muhtemelen yanlış okudun!
+
+═══════════════════════════════════════════════════════════════════════════════
+2 KATMANLI PARSER MİMARİSİ
+═══════════════════════════════════════════════════════════════════════════════
+
+KATMAN 1 - KİMLİK TESPİTİ (önce bunu yap):
+1. QR kod / ETTN varlığı kontrol et
+2. e-Fatura logosu ara
+3. "Özelleştirme No / Senaryo / Fatura Tipi" alanlarını bul
+4. Tedarikçi adını tespit et (aşağıdaki listeye göre)
+5. Dağıtım şirketi logosunu/adını bul
+
+KATMAN 2 - ANLAMSAL OKUMA (alan eşleştirme sözlüğü):
+Farklı tedarikçiler aynı alanı farklı isimlerle gösterir. Aşağıdaki sözlüğü kullan.
+
+═══════════════════════════════════════════════════════════════════════════════
+TEDARİKÇİ TESPİT KURALLARI (GENİŞLETİLMİŞ)
+═══════════════════════════════════════════════════════════════════════════════
+
+vendor değerleri (küçük harf, alt çizgi):
+- "enerjisa" → Enerjisa, Enerjisa Perakende, Toroslar EDAŞ, AYEDAŞ, BAŞKENT EDAŞ
+- "ck_bogazici" → CK, CK Boğaziçi, BEDAŞ, Boğaziçi Elektrik, CK Enerji
+- "uludag" → Uludağ, UEDAŞ, Uludağ Elektrik
+- "osmangazi" → Osmangazi, OEDAŞ, Osmangazi Elektrik
+- "kolen" → Kolen, Kolen Enerji
+- "ekvator" → Ekvator, Ekvator Enerji
+- "yelden" → Yelden, Yelden Enerji
+- "aksa" → Aksa, Aksa Elektrik, AKEDAŞ
+- "dicle" → Dicle, DEDAŞ, Dicle Elektrik
+- "gediz" → Gediz, GEDAŞ, Gediz Elektrik
+- "trakya" → Trakya, TEDAŞ, Trakya Elektrik
+- "zorlu" → Zorlu, Zorlu Enerji
+- "limak" → Limak, Limak Enerji
+- "unknown" → Emin değilsen
+
+distributor değerleri:
+- "ayedas" → AYEDAŞ, Anadolu Yakası
+- "bedas" → BEDAŞ, Boğaziçi
+- "uedas" → UEDAŞ, Uludağ
+- "oedas" → OEDAŞ, Osmangazi
+- "akedas" → AKEDAŞ, Aksa
+- "dedas" → DEDAŞ, Dicle
+- "gedas" → GEDAŞ, Gediz
+- "toroslar" → Toroslar EDAŞ
+- "baskent" → Başkent EDAŞ
+- "unknown" → Emin değilsen
+
+═══════════════════════════════════════════════════════════════════════════════
+ALAN EŞLEŞTİRME SÖZLÜĞÜ (KRİTİK)
+═══════════════════════════════════════════════════════════════════════════════
+
+1) ETTN (e-Fatura Tekil Numarası):
+   - "ETTN", "e-Fatura No", "Fatura UUID"
+   - Format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+2) invoice_no (Fatura Numarası):
+   - "Fatura No", "Belge No", "Fatura Numarası"
+   - Örnek: "BBE2025000297356", "EAL2025000070065"
+
+3) invoice_date (Fatura Tarihi):
+   - "Fatura Tarihi", "Düzenleme Tarihi", "Belge Tarihi"
+   - Format: YYYY-MM-DD
+
+4) invoice_period (Fatura Dönemi):
+   - "Dönem", "Tüketim Dönemi", "Okuma Dönemi"
+   - Format: YYYY-MM
+
+5) due_date (Son Ödeme Tarihi):
+   - "Son Ödeme Tarihi", "Vade Tarihi", "Ödeme Vadesi"
+   - Format: YYYY-MM-DD
+
+6) total_consumption_kwh (Toplam Tüketim):
+   - "AKTİF TOPLAM", "Aktif Toplam", "Toplam Tüketim"
+   - "Tüketim (kWh)", "Aktif Enerji Tüketimi"
+   - Çok zamanlı: T1 + T2 + T3 toplamı
+   - Kademeli: Yüksek + Düşük kademe toplamı
+
+7) t1_consumption_kwh, t2_consumption_kwh, t3_consumption_kwh:
+   - "Gündüz", "T1", "Gündüz Tüketimi"
+   - "Puant", "T2", "Puant Tüketimi"
+   - "Gece", "T3", "Gece Tüketimi"
+
+8) active_energy_unit_price (Aktif Enerji Birim Fiyatı):
+   - TOPLAM satırında TL/kWh varsa direkt al
+   - Kademeli/çok satırlıysa ağırlıklı ortalama üret
+   - "Toplam Enerji Bedeli" varsa: energy_total_tl / consumption_kwh
+   - Birim: TL/kWh (TL/MWh ise /1000, Kr/kWh ise /100)
+
+9) distribution_unit_price (Dağıtım Birim Fiyatı):
+   - "Elk. Dağıtım", "Dağıtım Bedeli", "DSKB"
+   - TL/kWh varsa direkt al
+   - Sadece toplam varsa: distribution_total_tl / consumption_kwh
+
+10) active_energy_amount (Aktif Enerji Bedeli):
+    - "Enerji Bedeli", "Aktif Enerji Bedeli", "ENERJİ TÜKETİM BEDELİ"
+    - "Toplam Enerji Bedeli", "Enerji Bedeli (Tüketim)"
+
+11) distribution_amount (Dağıtım Bedeli):
+    - "Dağıtım Bedeli", "Elk. Dağıtım", "DSKB"
+    - "Dağıtım Sistemi Kullanım Bedeli"
+
+12) yek_amount (YEK/YEKDEM Bedeli):
+    - "YEK Bedeli", "YEKDEM", "YEK Destekleme Bedeli"
+    - "Yenilenebilir Enerji Kaynak Destekleme"
+
+13) reactive_inductive_kvarh, reactive_capacitive_kvarh:
+    - "Endüktif", "Endüktif Reaktif", "End. Reaktif"
+    - "Kapasitif", "Kapasitif Reaktif", "Kap. Reaktif"
+
+14) reactive_penalty_amount (Reaktif Ceza):
+    - "Reaktif Enerji Bedeli", "Reaktif Ceza"
+    - "Endüktif Ceza", "Kapasitif Ceza"
+
+15) demand_kw (Demand/Maksimum Güç):
+    - "DEMAND", "Demand", "Maksimum Demand"
+    - "Sayaç Demand Değeri", "Max. Güç"
+    - NOT: "Sözleşme Gücü" demand DEĞİLDİR!
+
+16) consumption_tax (Elektrik Tüketim Vergisi):
+    - "ETV", "Elektrik Tüketim Vergisi", "Tüketim Vergisi"
+
+17) energy_fund (Enerji Fonu):
+    - "Enerji Fonu", "EF"
+
+18) trt_share (TRT Payı):
+    - "TRT Payı", "TRT"
+
+19) vat_amount (KDV):
+    - "KDV", "Katma Değer Vergisi"
+    - Oran: %10 (mesken bazı dönemler), %20 (sanayi/ticaret), %1/%8 (tarımsal)
+
+20) total_amount (Ödenecek Tutar):
+    - "ÖDENECEK TUTAR", "FATURA TUTARI", "GENEL TOPLAM"
+    - "TOPLAM TUTAR", "KDV DAHİL TOPLAM"
+    - ⚠️ KRİTİK: Bu değeri faturadan DOĞRUDAN oku, HESAPLAMA!
+    - CK Boğaziçi'de "Fatura Tutarı: 593.738,26 TL" satırını bul ve oku
+
+21) consumer_title (Tüketici Ünvanı):
+    - "Abone", "Müşteri", "Tüketici", "Unvan"
+
+22) consumer_vkn (Vergi Kimlik No):
+    - "VKN", "Vergi No", "Vergi Kimlik Numarası"
+
+23) eic_code (EIC Kodu):
+    - "EIC", "Tekil Kod", "Avrupa Enerji Tanımlama Kodu"
+
+24) contract_no (Sözleşme No):
+    - "Sözleşme No", "Sözleşme Numarası", "Anlaşma No"
+
+25) meter_no (Sayaç No):
+    - "Sayaç No", "Sayaç Numarası", "Tesisat No"
+
+═══════════════════════════════════════════════════════════════════════════════
+TARİFE BİLGİLERİ (ÇOK ÖNEMLİ - DAĞITIM BEDELİ İÇİN GEREKLİ!)
+═══════════════════════════════════════════════════════════════════════════════
+
+⚠️ CK ve diğer faturalarda SAĞ ÜST KÖŞEDE tarife bilgisi yazar!
+Örnek: "SANAYİ OG ÇİFT TERİM" veya "TİCARETHANE AG TEK TERİM"
+
+Bu bilgiyi MUTLAKA oku ve tariff alanına yaz:
+
+voltage_level (GERİLİM SEVİYESİ):
+- "AG" → Alçak Gerilim (0.4 kV) - faturada "AG", "Alçak Gerilim" yazar
+- "OG" → Orta Gerilim (1-36 kV) - faturada "OG", "Orta Gerilim" yazar
+- "YG" → Yüksek Gerilim (36+ kV) - faturada "YG", "Yüksek Gerilim" yazar
+
+tariff_type (TARİFE GRUBU):
+- "sanayi" → Sanayi, Fabrika, Üretim, SANAYİ
+- "ticarethane" → Ticarethane, İşyeri, Ticari, TİCARETHANE
+- "mesken" → Mesken, Konut, Ev, MESKEN
+- "tarimsal" → Tarımsal Sulama, Tarım, TARIMSAL
+- "aydinlatma" → Aydınlatma, Sokak Aydınlatma
+
+time_of_use (TERİM TİPİ):
+- "tek_terim" → Tek Terim, Tek Zamanlı, TEK TERİM
+- "cift_terim" → Çift Terim, Çok Zamanlı, ÇİFT TERİM, T1-T2-T3
+
+ÖRNEK CK FATURASI:
+Faturanın sağ üstünde "SANAYİ OG ÇİFT TERİM" yazıyorsa:
+{
+  "tariff": {
+    "voltage_level": "OG",
+    "tariff_type": "sanayi",
+    "time_of_use": "cift_terim"
+  }
+}
+
+Bu bilgi DAĞITIM BEDELİ hesabı için kritik!
+- Sanayi OG Çift Terim → 0.810595 TL/kWh
+- Sanayi OG Tek Terim → 0.895372 TL/kWh
+- Sanayi AG Tek Terim → 1.385324 TL/kWh
+- Kamu/Özel OG Çift Terim → 1.263293 TL/kWh
+- Kamu/Özel OG Tek Terim → 1.57581 TL/kWh
+- Kamu/Özel AG Tek Terim → 1.87741 TL/kWh
+
+═══════════════════════════════════════════════════════════════════════════════
+INVOICE TYPE SINIFLANDIRMA
+═══════════════════════════════════════════════════════════════════════════════
+
+- type_1: Tek toplam kWh + tek birim fiyat + dağıtım birim fiyat açık (Enerjisa)
+- type_2: Çok zamanlı (T1/T2/T3) var ama toplam satır/birim fiyat net (Ekvator)
+- type_3: Kademeli veya çok satırlı enerji bedeli (CK Boğaziçi)
+- type_4: Dağıtım birim fiyat yok, sadece dağıtım toplam var
+- type_5: Demand / reaktif / güç bedeli belirgin (OSB, OG, sanayi)
+- type_6: Birden fazla sayaç/tesisat aynı faturada
+- type_7: Mahsuplaşma/düzeltme/iade/negatif kalemler
+- unknown: Emin değilsen
+
+═══════════════════════════════════════════════════════════════════════════════
+⚠️ CK BOĞAZİÇİ ÖZEL KURALLAR (ÇOK KRİTİK!)
+═══════════════════════════════════════════════════════════════════════════════
+
+CK Boğaziçi faturalarında MUTLAKA şu kurallara uy:
+
+1) FATURA TUTARI → "Fatura Tutarı" satırından al, HESAPLAMA!
+   - Faturada "Fatura Tutarı: 593.738,26 TL" yazıyorsa → invoice_total_with_vat_tl = 593738.26
+   - ASLA kalemleri toplayıp hesaplama, faturadaki değeri al!
+
+2) TÜKETİM → "Enerji Bedeli SKTT" veya "Enerji Bedeli (Tüketim)" satırından al
+   - Örnek: "Enerji Bedeli SKTT 116.145,630 kWh" → consumption_kwh = 116145.630
+   - "Ort. Tüketim (kWh/gün)" değerini KULLANMA!
+
+3) NEGATİF KALEMLER (MAHSUPLAŞMA) → line_items'a NEGATİF olarak ekle
+   - "Enerji Bedeli (Ek Tüketim)" satırı NEGATİF olabilir
+   - Örnek: "-4.042,036 kWh" ve "-17.639,05 TL" → qty: -4042.036, amount_tl: -17639.05
+   - Bu satırları adjustments dizisine de ekle
+
+4) TOPLAM TÜKETİM HESABI:
+   - consumption_kwh = Enerji Bedeli SKTT (pozitif) + Enerji Bedeli Ek Tüketim (negatif olabilir)
+   - Örnek: 120.187,666 - 4.042,036 = 116.145,630 kWh
+
+5) ENERJİ BEDELİ TOPLAMI:
+   - energy_total_tl = Tüm enerji satırlarının toplamı (negatifler dahil)
+   - Örnek: 524.377,31 + 86.952,60 - 17.639,05 = 593.690,86 TL (yaklaşık)
+
+6) BİRİM FİYAT:
+   - Eğer "SKTT" satırında birim fiyat varsa onu al
+   - Yoksa: energy_total_tl / consumption_kwh ile hesapla
+
+═══════════════════════════════════════════════════════════════════════════════
+⚠️⚠️⚠️ KRİTİK: ENERJİ VE DAĞITIM BİRİM FİYATLARI AYRI AYRI OKUNMALI! ⚠️⚠️⚠️
+═══════════════════════════════════════════════════════════════════════════════
+
+CK ve diğer tüm faturalarda ENERJİ ve DAĞITIM iki AYRI kalemdir:
+
+A) ENERJİ BEDELİ (Tedarikçi tarafı):
+   - Satır: "Enerji Bedeli", "Aktif Enerji", "Enerji Bedeli SKTT"
+   - Birim fiyat: active_energy_unit_price (TL/kWh)
+   - Tutar: energy_total_tl = kWh × active_energy_unit_price
+   - Örnek: 116.145 kWh × 4,3632 TL/kWh = 506.738 TL
+
+B) DAĞITIM BEDELİ (EPDK tarifesi - AYRI KALEM!):
+   - Satır: "Dağıtım Bedeli", "Elk. Dağıtım", "DSKB"
+   - Birim fiyat: distribution_unit_price (TL/kWh)
+   - Tutar: distribution_total_tl = kWh × distribution_unit_price
+   - Örnek: 116.145 kWh × 0,7485 TL/kWh = 86.952 TL
+
+❌ YANLIŞ: Enerji + Dağıtım birim fiyatlarını toplamak
+   - 4,3632 + 0,7485 = 5,1117 TL/kWh → BU YANLIŞ!
+   - Bu "tek birim fiyat" muhasebe açısından hatalı
+
+✅ DOĞRU: Her birini AYRI AYRI okumak
+   - active_energy_unit_price = 4,3632 TL/kWh (enerji satırından)
+   - distribution_unit_price = 0,7485 TL/kWh (dağıtım satırından)
+
+EPDK DAĞITIM TARİFESİ (referans):
+┌─────────────────────┬──────────────┬────────────┬──────────────┐
+│ Tarife Grubu        │ Dağıtım TL/kWh│ Terim Tipi │ Gerilim      │
+├─────────────────────┼──────────────┼────────────┼──────────────┤
+│ Sanayi              │ 0,810595     │ Çift Terim │ OG           │
+│ Kamu ve Özel Sektör │ 1,263293     │ Çift Terim │ OG           │
+│ Sanayi              │ 0,895372     │ Tek Terim  │ OG           │
+│ Kamu ve Özel Sektör │ 1,57581      │ Tek Terim  │ OG           │
+│ Sanayi              │ 1,385324     │ Tek Terim  │ AG           │
+│ Kamu ve Özel Sektör │ 1,87741      │ Tek Terim  │ AG           │
+└─────────────────────┴──────────────┴────────────┴──────────────┘
+
+Faturada dağıtım birim fiyatı bu tabloya yakın olmalı (±%5).
+Eğer çok farklıysa yanlış satırdan okudun!
+
+CK BOĞAZİÇİ ÖRNEK FATURA YAPISI:
+┌─────────────────────────────────────────────────────────────────┐
+│ Fatura Detayı                                                   │
+├─────────────────────────────────────────────────────────────────┤
+│ Enerji Bedeli SKTT      120.187,666 kWh  4,3632  524.377,31 TL │
+│ Enerji Bedeli (Ek Tük.) -4.042,036 kWh   4,3632  -17.639,05 TL │ ← NEGATİF!
+│ Dağıtım Bedeli          116.145,630 kWh  0,7485   86.952,60 TL │
+├─────────────────────────────────────────────────────────────────┤
+│ Vergi ve Fonlar                                                 │
+│ BTV (%1)                                           5.937,38 TL │
+│ TRT Payı                                           1.161,46 TL │
+├─────────────────────────────────────────────────────────────────┤
+│ KDV Matrahı                                      612.428,75 TL │
+│ KDV (%20)                                        122.485,75 TL │
+├─────────────────────────────────────────────────────────────────┤
+│ Fatura Tutarı                                    593.738,26 TL │ ← BU DEĞER!
+└─────────────────────────────────────────────────────────────────┘
+
+Bu faturadan çıkarılacak değerler:
+- consumption_kwh = 116.145,630 (SKTT - Ek Tüketim = 120.187,666 - 4.042,036)
+- invoice_total_with_vat_tl = 593.738,26 (Fatura Tutarı satırından)
+- line_items: 3 satır (SKTT pozitif, Ek Tüketim negatif, Dağıtım pozitif)
+- has_adjustments = true (negatif kalem var)
+- adjustments: [{label: "Enerji Bedeli (Ek Tüketim)", amount_tl: -17639.05, ...}]
+
+═══════════════════════════════════════════════════════════════════════════════
+BİRİM DÖNÜŞÜM VE SAYI FORMAT KURALLARI (ÇOK ÖNEMLİ!)
+═══════════════════════════════════════════════════════════════════════════════
+
+TÜRKÇE SAYI FORMATI:
+- Türkiye'de binlik ayracı NOKTA (.), ondalık ayracı VİRGÜL (,) kullanılır
+- Örnek: "1.459.245,86" = 1459245.86 (bir milyon dört yüz elli dokuz bin...)
+- Örnek: "1.219.647,11" = 1219647.11 (bir milyon iki yüz on dokuz bin...)
+- Örnek: "252.494,59" = 252494.59 (iki yüz elli iki bin...)
+- Örnek: "3.185,674" = 3185.674 (üç bin yüz seksen beş)
+
+DÖNÜŞÜM KURALI:
+1. Sayıdaki TÜM noktaları kaldır (binlik ayracı)
+2. Virgülü noktaya çevir (ondalık ayracı)
+3. Sonuç: JSON'da nokta ondalık ayracı olarak kullan
+
+ÖRNEKLER:
+- "1.459.250,00 TL" → value: 1459250.00
+- "1.219.647,11 TL" → value: 1219647.11
+- "168.330 kWh" → value: 168330
+- "3,87927 TL/kWh" → value: 3.87927
+- "0,810595 TL/kWh" → value: 0.810595
+
+BİRİM DÖNÜŞÜMLER:
+- TL/MWh → TL/kWh = /1000
+- Kr/kWh → TL/kWh = /100
+
+DİKKAT: Büyük tutarlar (yüz binler, milyonlar) için noktaları binlik ayracı olarak yorumla!
+
+═══════════════════════════════════════════════════════════════════════════════
+CONFIDENCE KURALLARI
+═══════════════════════════════════════════════════════════════════════════════
+
+- Etiket + tek değer + birim açık: 0.85–0.95
+- Fallback etiketle bulundu: 0.75–0.88
+- Ağırlıklı ortalama / türetilmiş: 0.65–0.82
+- Sadece tahmin: 0.1–0.4 ve mümkünse value null
+
+═══════════════════════════════════════════════════════════════════════════════
+EVIDENCE KURALI
+═══════════════════════════════════════════════════════════════════════════════
+
+- Her alan için evidence: faturadaki ilgili satırın kısa kopyası (maks 120 karakter)
+- Sayfa numarası: PDF ise 1'den başla; görsel ise 1
+
+═══════════════════════════════════════════════════════════════════════════════
+LINE ITEMS - KALEM BAZLI EXTRACTION (ÇOK ÖNEMLİ!)
+═══════════════════════════════════════════════════════════════════════════════
+
+Her fatura satırı için line_items dizisine şu bilgileri ekle:
+
+{
+  "label": "Enerji Bedeli SKTT",      // Satır adı
+  "qty": 120187.666,                   // Miktar
+  "unit": "kWh",                       // Miktar birimi: kWh, kW, day, month
+  "line_type": "energy",               // Satır tipi (aşağıya bak)
+  "measurement_unit": "TL/kWh",        // Birim fiyat birimi (aşağıya bak)
+  "unit_price": 4.3632,                // Birim fiyat
+  "amount_tl": 524377.31,              // Tutar (TL)
+  "confidence": 0.9,
+  "evidence": "Enerji Bedeli SKTT 120.187,666 kWh 4,3632 524.377,31 TL"
+}
+
+LINE_TYPE değerleri:
+- "energy" → Aktif enerji bedeli (Enerji Bedeli, SKTT, Aktif Enerji, Kademe, T1/T2/T3)
+- "distribution" → Dağıtım bedeli (Dağıtım, DSKB, Elk. Dağıtım)
+- "demand" → Güç/demand bedeli (Demand, Güç Bedeli)
+- "tax" → Vergi (BTV, KDV, TRT, Enerji Fonu)
+- "service" → Hizmet bedeli (Sayaç Okuma, Perakende Satış Hizmet)
+- "reactive" → Reaktif enerji (Reaktif, Endüktif, Kapasitif)
+- "adjustment" → Mahsuplaşma/düzeltme (Mahsup, İade, Düzeltme)
+- "other" → Diğer
+
+MEASUREMENT_UNIT değerleri:
+- "TL/kWh" → Enerji, dağıtım (kWh bazlı)
+- "TL/kW" → Demand/güç bedeli
+- "TL/kVArh" → Reaktif enerji
+- "TL/day" → Günlük hizmet bedeli
+- "TL/month" → Aylık hizmet bedeli
+- "TL" → Sabit tutar
+- "%" → Yüzde (vergi oranı)
+
+ÖRNEK CK FATURASI:
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Satır                    │ Miktar      │ Birim  │ B.Fiyat │ Tutar         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Enerji Bedeli SKTT       │ 120.187,666 │ kWh    │ 4,3632  │ 524.377,31 TL │
+│ Enerji Bedeli (Ek Tük.)  │ -4.042,036  │ kWh    │ 4,3632  │ -17.639,05 TL │
+│ Dağıtım Bedeli           │ 116.145,630 │ kWh    │ 0,7485  │ 86.952,60 TL  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Bu tablodan line_items:
+[
+  {"label": "Enerji Bedeli SKTT", "qty": 120187.666, "unit": "kWh", "line_type": "energy", "measurement_unit": "TL/kWh", "unit_price": 4.3632, "amount_tl": 524377.31},
+  {"label": "Enerji Bedeli (Ek Tüketim)", "qty": -4042.036, "unit": "kWh", "line_type": "adjustment", "measurement_unit": "TL/kWh", "unit_price": 4.3632, "amount_tl": -17639.05},
+  {"label": "Dağıtım Bedeli", "qty": 116145.630, "unit": "kWh", "line_type": "distribution", "measurement_unit": "TL/kWh", "unit_price": 0.7485, "amount_tl": 86952.60}
+]
+
+⚠️ KRİTİK: Her satır için qty × unit_price ≈ amount_tl olmalı (±%2)
+Bu tutmuyorsa yanlış değer okudun!
+
+═══════════════════════════════════════════════════════════════════════════════
+EXTRA ITEMS (ek kalemler)
+═══════════════════════════════════════════════════════════════════════════════
+
+Aşağıdaki kalemleri yakala (varsa):
+
+REAKTİF / GÜÇ:
+- Reaktif Enerji Bedeli, Kapasitif/Endüktif Enerji Bedeli
+- Reaktif Ceza, Güç Bedeli, Güç Aşım Bedeli
+
+HİZMET BEDELLERİ:
+- Sayaç Okuma/Hizmet Bedeli, Perakende Satış Hizmet Bedeli
+- Kesme-Açma Bedeli, İletim Sistemi Kullanım Bedeli
+
+MAHSUPLAŞMA / DÜZELTME:
+- Mahsuplaşma, İade, Düzeltme, İptal, Fark
+
+═══════════════════════════════════════════════════════════════════════════════
+⚠️ SON KONTROL - SANİTY CHECK (extraction bitirmeden önce)
+═══════════════════════════════════════════════════════════════════════════════
+
+1) BİRİM FİYAT KONTROLÜ:
+   - active_energy_unit_price 0.5 - 10 TL/kWh arasında olmalı
+   - distribution_unit_price 0.3 - 3 TL/kWh arasında olmalı
+   - Bu aralık dışındaysa TEKRAR OKU - muhtemelen virgül/nokta hatası var!
+
+2) TÜKETİM × BİRİM FİYAT ≈ TUTAR:
+   - consumption_kwh × active_energy_unit_price ≈ energy_total_tl (±%5)
+   - Tutmuyorsa yanlış satırdan okudun!
+
+3) TOPLAM KONTROL:
+   - energy_total + distribution_total + taxes + vat ≈ invoice_total (±%10)
+   - Tutmuyorsa yanlış değer okudun!
+
+4) MANTIK KONTROLÜ:
+   - Fatura tutarı 100-1.000.000 TL arasında olmalı
+   - Tüketim 10-10.000.000 kWh arasında olmalı
+   - Bu aralık dışındaysa TEKRAR KONTROL ET!
+
+ÇIKTI: Yalnızca JSON şemasına uygun veri.
