@@ -1,12 +1,26 @@
 # Pilot İlk 24 Saat Değerlendirme Şablonu
 
 ## Tarih: 2026-01-18
-## Versiyon: 1.0
-## Durum: OPERASYONEL
+## Versiyon: 1.1
+## Durum: OPERASYONEL - FİNAL
 
 ---
 
-## 0. Temel Kural (MUTLAKA OKU)
+## ⚠️ ALTIN KURAL (HER KARAR ÖNCESİ OKU)
+
+```
+╔═════════════════════════════════════════════════════════════════════════════╗
+║                                                                             ║
+║   n < 20 ise HİÇBİR metrik için STOP / ROLLBACK kararı verilmez.           ║
+║                                                                             ║
+║   Bu durumda tek aksiyon: GÖZLEME DEVAM + NOT ALMA                          ║
+║                                                                             ║
+╚═════════════════════════════════════════════════════════════════════════════╝
+```
+
+---
+
+## 0. Temel Kural (Detay)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -43,6 +57,8 @@
 | Queue depth | Response → checks.queue.depth | 0-5 | >50 → Investigate |
 
 **Bu saatte karar:** Sadece "sistem çalışıyor mu?" - Evet ise devam, hayır ise rollback.
+
+> ⚠️ **False Positive Farkındalığı:** Bu aralıkta görülen S1, OCR suspect, latency spike'ları istatistiksel anlam taşımaz. Yorum yapılmaz, sadece kaydedilir.
 
 ---
 
@@ -97,6 +113,39 @@
 ---
 
 ## 2. Metrik → Eşik → Aksiyon Tablosu
+
+### 2.0 STOP vs ROLLBACK Ayrımı (KRİTİK)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         STOP vs ROLLBACK FARKI                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  STOP (Pilot Stop)                                                          │
+│  ─────────────────                                                          │
+│  Tetikleyici:                                                               │
+│    • S1 rate > %30 AND n >= 20                                              │
+│    • feedback_coverage < %10 AND n >= 20 (resolved)                         │
+│  Aksiyon:                                                                   │
+│    → PILOT_ENABLED=false                                                    │
+│    → Sistem AYAKTA kalır                                                    │
+│    → Pilot durur, prod etkilenmez                                           │
+│                                                                             │
+│  ROLLBACK (Sistem Geri Alma)                                                │
+│  ──────────────────────────────                                             │
+│  Tetikleyici:                                                               │
+│    • /health/ready = 503 > 5 dakika                                         │
+│    • 5xx error rate > %5 (10 dakika window, n >= 100 request)               │
+│    • Queue stuck > 15 dakika (depth artıyor + 0 tüketim)                    │
+│  Aksiyon:                                                                   │
+│    → Deploy rollback (önceki stable image)                                  │
+│    → PILOT_ENABLED=false                                                    │
+│    → Sistem eski haline döner                                               │
+│                                                                             │
+│  ⚠️ STOP ≠ ROLLBACK: Panik anında her şeyi geri alma refleksinden kaçın!   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
 ### 2.1 Kritik Metrikler (Rollback Tetikleyici)
 
@@ -272,22 +321,24 @@ Değerlendiren: ____________________
 │                    PILOT 24H HIZLI REFERANS                     │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│  ALTIN KURAL: n < 20 → KARAR VERME, GÖZLE                      │
+│  ⚠️ ALTIN KURAL: n < 20 → HİÇBİR STOP/ROLLBACK KARARI VERME   │
 │                                                                 │
 ├─────────────────────────────────────────────────────────────────┤
-│  ROLLBACK (hemen, n bağımsız)                                   │
+│  ROLLBACK (hemen, sistem hatası)                                │
 │  • /health/ready 503 > 5 dakika                                 │
 │  • Queue stuck > 15 dakika                                      │
 │  • 5xx > 5% (n >= 100 request)                                  │
+│  → Deploy geri al + PILOT_ENABLED=false                         │
 ├─────────────────────────────────────────────────────────────────┤
-│  PILOT STOP (n >= 20 zorunlu)                                   │
+│  PILOT STOP (n >= 20 zorunlu, sistem ayakta kalır)              │
 │  • S1 rate > 30%                                                │
+│  • Feedback coverage < 10%                                      │
+│  → PILOT_ENABLED=false (deploy geri alınmaz)                    │
 ├─────────────────────────────────────────────────────────────────┤
-│  INVESTIGATE (n >= 20 zorunlu)                                  │
+│  INVESTIGATE (n >= 20 zorunlu, durma)                           │
 │  • S1 rate > 20%                                                │
 │  • OCR suspect > 40%                                            │
 │  • p95 latency > 6000ms                                         │
-│  • Feedback coverage < 10%                                      │
 ├─────────────────────────────────────────────────────────────────┤
 │  KONTROL SIKLIĞI                                                │
 │  • Saat 0-1: Her 15 dakika                                      │
@@ -306,6 +357,8 @@ Değerlendiren: ____________________
 
 ## 7. Appendix: Metrik Toplama Komutları
 
+> ⚠️ **Zaman Penceresi Notu:** Pilot değerlendirmesinde sorgular mutlaka son X saat ile sınırlandırılmalıdır. Tüm tablo taraması yanlış büyük sayılarla karar verilmesine yol açar.
+
 ```bash
 # /health/ready tam response
 curl -s https://api.example.com/health/ready | jq .
@@ -313,7 +366,8 @@ curl -s https://api.example.com/health/ready | jq .
 # Pilot status
 curl -s https://api.example.com/health/ready | jq '.pilot'
 
-# Son 1 saatteki incident sayısı (örnek SQL)
+# Son 1 saatteki incident sayısı
+# NOT: created_at filtresini değerlendirme penceresine göre ayarlayın
 sqlite3 gelka_enerji.db "
   SELECT 
     COUNT(*) as total,
@@ -324,31 +378,37 @@ sqlite3 gelka_enerji.db "
     AND tenant_id = 'pilot'
 "
 
-# S1 rate hesaplama
+# S1 rate hesaplama (son 4 saat)
+# NOT: Zaman penceresini duruma göre ayarlayın (-1 hour, -4 hours, -24 hours)
 sqlite3 gelka_enerji.db "
   SELECT 
+    COUNT(*) as total_incidents,
     ROUND(100.0 * SUM(CASE WHEN severity='S1' THEN 1 ELSE 0 END) / COUNT(*), 2) as s1_rate_pct
   FROM incidents 
   WHERE tenant_id = 'pilot'
+    AND created_at > datetime('now', '-4 hours')
 "
 
-# Primary flag dağılımı
+# Primary flag dağılımı (son 24 saat)
 sqlite3 gelka_enerji.db "
   SELECT primary_flag, COUNT(*) as cnt
   FROM incidents 
   WHERE tenant_id = 'pilot'
+    AND created_at > datetime('now', '-24 hours')
   GROUP BY primary_flag
   ORDER BY cnt DESC
 "
 
-# Feedback coverage
+# Feedback coverage (son 24 saat, sadece resolved)
 sqlite3 gelka_enerji.db "
   SELECT 
     COUNT(*) as resolved,
     SUM(CASE WHEN feedback_json IS NOT NULL THEN 1 ELSE 0 END) as with_feedback,
     ROUND(100.0 * SUM(CASE WHEN feedback_json IS NOT NULL THEN 1 ELSE 0 END) / COUNT(*), 2) as coverage_pct
   FROM incidents 
-  WHERE tenant_id = 'pilot' AND status = 'RESOLVED'
+  WHERE tenant_id = 'pilot' 
+    AND status = 'RESOLVED'
+    AND created_at > datetime('now', '-24 hours')
 "
 ```
 
