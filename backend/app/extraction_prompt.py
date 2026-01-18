@@ -1,0 +1,232 @@
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+# .env dosyasını yükle (backend/.env)
+_env_path = Path(__file__).parent.parent / ".env"
+load_dotenv(_env_path)
+
+# Prompt versioning - dosyadan oku
+PROMPT_VERSION = os.getenv("EXTRACTION_PROMPT_VERSION", "v4")  # v4 en basit ve hızlı
+PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
+
+
+def load_prompt(name: str, version: str = PROMPT_VERSION) -> str:
+    """Prompt dosyasını yükle."""
+    prompt_file = PROMPTS_DIR / f"{name}_{version}.txt"
+    
+    if prompt_file.exists():
+        return prompt_file.read_text(encoding="utf-8")
+    
+    # Fallback to embedded prompt
+    print(f"[load_prompt] ⚠️ FALLBACK! File not found: {prompt_file}")
+    return _EMBEDDED_EXTRACTION_PROMPT
+
+
+# Embedded fallback (dosya yoksa kullanılır)
+_EMBEDDED_EXTRACTION_PROMPT = """
+GÖREV: Yüklenen görsel/PDF sayfaları bir elektrik faturasıdır. Sadece aşağıdaki JSON şemasına uyan veriyi çıkar. JSON DIŞINDA HİÇBİR ŞEY YAZMA. Açıklama/yorum/markdown yok.
+
+HEDEF: Bu alanları çıkar:
+- consumption_kwh (kWh)
+- current_active_unit_price_tl_per_kwh (TL/kWh)
+- distribution_unit_price_tl_per_kwh (TL/kWh)
+- demand_qty (varsa)
+- demand_unit_price_tl_per_unit (varsa)
+- invoice_total_with_vat_tl (KDV dahil toplam)
+
+Ek olarak (validasyon için) raw_breakdown:
+- energy_total_tl
+- distribution_total_tl
+- btv_tl
+- vat_tl
+
+BİRİM VE FORMAT KURALLARI:
+- TR formatı (1.234,56) olabilir: ÇIKTIDA 1234.56 (nokta ondalık) kullan.
+- TL/MWh görürsen TL/kWh'ye çevir: TL/kWh = (TL/MWh) / 1000.
+- kWh ve TL/kWh birimlerini karıştırma.
+- Birim fiyat "Kr/kWh" geçiyorsa TL/kWh'ye çevir (Kr/100).
+- Bulduğun değer yanında "kWh, TL/kWh, TL" gibi bağlam aramadan sayı çekme.
+
+VENDOR TESPİTİ (KURAL):
+- "Enerjisa", "Enerjisa Perakende", "Toroslar/AYEDAŞ/BAŞKENT Enerjisa" vb. → vendor="enerjisa"
+- "CK", "Boğaziçi Elektrik", "CK Boğaziçi", "Bedaş" ibareleri → vendor="ck_bogazici"
+- "Ekvator Enerji" → vendor="ekvator"
+- "Yelden", "Yelden Enerji" → vendor="yelden"
+- Emin değilsen vendor="unknown" (ama yine extraction yap)
+
+SAYFA SEÇİMİ:
+- Birden fazla sayfa varsa önce "Fatura Tutarı / Ödenecek Tutar / KDV" görünen sayfayı seç.
+- Eğer emin değilsen 1. sayfayı temel al; evidence ile sayfa belirt.
+
+═══════════════════════════════════════════════════════════════════════════════
+FALLBACK ETİKET SÖZLÜĞÜ (en kritik kısım)
+═══════════════════════════════════════════════════════════════════════════════
+
+Aşağıdaki alanları ararken sadece tek etikete bağlanma; listedeki alternatifleri dene.
+
+1) consumption_kwh (kWh) için olası etiketler:
+   - "AKTİF TOPLAM", "Aktif Toplam", "AKTİF ENERJİ", "Aktif Enerji"
+   - "Toplam Tüketim", "Tüketim (kWh)", "Tek Zamanlı … Fark"
+   - Çok zamanlı ise: "Gündüz", "Puant", "Gece" kWh'lerini TOPLA.
+   - Kademeli ise: "Yüksek Kademe" + "Düşük Kademe" kWh'lerini TOPLA.
+
+2) current_active_unit_price_tl_per_kwh için olası kaynaklar (öncelik sırası):
+   A) Eğer "TOPLAM" satırında TL/kWh birim fiyat açıkça yazıyorsa onu al.
+   B) Eğer "Birim Fiyat" / "TL/kWh" yanında enerji satırı varsa onu al.
+   C) Eğer birim fiyatlar kademeli/çok zamanlı farklıysa AĞIRLIKLI ORTALAMA üret:
+      - Öncelik: Eğer "Toplam Enerji Bedeli" (TL) yazıyorsa:
+          birim = ToplamEnerjiBedeliTL / consumption_kwh
+      - Yoksa, satır bazlı hesap:
+          birim = (Σ(kWh_i × birim_i)) / Σ(kWh_i)
+   D) Eğer sadece enerji toplam tutarı (TL) var ama kWh yoksa: birim fiyatı çıkarma, null dön.
+
+3) distribution_unit_price_tl_per_kwh için olası etiketler:
+   - "Elk. Dağıtım", "Elektrik Dağıtım", "Dağıtım Bedeli"
+   - "Dağıtım Sistemi Kullanım Bedeli", "DSKB"
+   - Eğer TL/kWh birim fiyat doğrudan yazıyorsa onu al.
+   - Eğer sadece dağıtım toplamı (TL) yazıyorsa ve consumption_kwh varsa:
+       dağıtım_birim = distribution_total_tl / consumption_kwh
+     (Bu durumda confidence düşür; evidence dağıtım toplam satırı olsun.)
+
+4) demand_qty ve demand_unit_price_tl_per_unit için olası etiketler:
+   - "DEMAND", "Demand", "Sayaç Demand Değeri", "Maksimum Demand"
+   - "Güç Bedeli", "Reaktif/Demand"
+   - Demand miktarı tek başına yazabilir (ör. "Demand 23.092").
+   - Demand birim fiyatı (TL/birim) yoksa demand_unit_price null.
+   - "Sözleşme Gücü" (kW/kVA) demand değildir; ayrı birim fiyat yoksa 
+     demand_qty olarak KULLANMA (null bırak), sadece evidence'a yazma.
+
+5) invoice_total_with_vat_tl için olası etiketler:
+   - "ÖDENECEK TUTAR", "FATURA TUTARI", "GENEL TOPLAM"
+   - "TOPLAM TUTAR", "KDV DAHİL"
+   - "Yuvarlama" gibi farklar olabilir; "ödenecek tutar" varsa onu tercih et.
+
+═══════════════════════════════════════════════════════════════════════════════
+VERGİ/FON (raw_breakdown) için
+═══════════════════════════════════════════════════════════════════════════════
+
+- energy_total_tl: "Enerji Bedeli Toplam", "Toplam Enerji Bedeli", "Enerji Bedeli" toplam satırı
+- distribution_total_tl: "Dağıtım … Toplam", "Dağıtım Bedeli" toplam satırı
+- btv_tl: "BTV", "Belediye Tüketim Vergisi"
+- vat_tl: "KDV", "Katma Değer Vergisi"
+Bulamazsan null.
+
+═══════════════════════════════════════════════════════════════════════════════
+CONFIDENCE KURALLARI
+═══════════════════════════════════════════════════════════════════════════════
+
+- Etiket + tek değer + birim açık: 0.85–0.95
+- Fallback etiketle bulundu: 0.75–0.88
+- Ağırlıklı ortalama / türetilmiş (toplam/kWh): 0.65–0.82
+- Sadece tahmin: 0.1–0.4 ve mümkünse value null
+
+═══════════════════════════════════════════════════════════════════════════════
+EVIDENCE KURALI
+═══════════════════════════════════════════════════════════════════════════════
+
+- Her alan için evidence: faturadaki ilgili satırın kısa kopyası (maks 120 karakter).
+- Sayfa numarası: PDF ise 1'den başla; görsel ise 1.
+
+═══════════════════════════════════════════════════════════════════════════════
+invoice_period KURALI
+═══════════════════════════════════════════════════════════════════════════════
+
+- "Fatura Tarihi", "Dönem", "Tüketim Dönemi", "Okuma Tarihi" gibi alanlardan YYYY-MM üret.
+- Bulamazsan invoice_period="" (boş string).
+
+═══════════════════════════════════════════════════════════════════════════════
+VENDOR-SPESİFİK İPUÇLARI
+═══════════════════════════════════════════════════════════════════════════════
+
+Enerjisa: genelde "AKTİF TOPLAM" + "TOPLAM birim fiyat" + "Elk. Dağıtım birim fiyat" hazır 
+          → confidence yüksek, ağırlıklı ortalama YAPMA.
+
+CK Boğaziçi: kademeli satırlardan ağırlıklı ortalama üret 
+             → confidence orta (0.70-0.82).
+
+Ekvator: dağıtım birim fiyatı "Dağıtım Sistemi Kullanım Bedeli" satırında 
+         → confidence yüksek.
+
+Yelden: CK Boğaziçi ile benzer format, kademeli olabilir.
+
+═══════════════════════════════════════════════════════════════════════════════
+META BİLGİLER (opsiyonel ama faydalı)
+═══════════════════════════════════════════════════════════════════════════════
+
+Faturadan şu bilgileri de çıkarmaya çalış:
+- tariff_group_guess: "Mesken", "Ticarethane", "Sanayi", "Tarimsal", "Aydinlatma", "unknown"
+- voltage_guess: "AG" (Alçak Gerilim), "OG" (Orta Gerilim), "YG" (Yüksek Gerilim), "unknown"
+- term_type_guess: "Tek Terim", "Çift Terim", "Çok Zamanlı", "unknown"
+- invoice_type_guess: Fatura yapı tipini belirle (aşağıdaki kurallara göre)
+
+═══════════════════════════════════════════════════════════════════════════════
+FATURA TİPİ TESPİTİ (invoice_type_guess)
+═══════════════════════════════════════════════════════════════════════════════
+
+Faturayı aşağıdaki tiplerden birine sınıflandır:
+
+Tip-1: "Toplam kWh + Toplam birim fiyat + Dağıtım birim fiyat" açıkça yazıyor
+       → Enerjisa gibi, en kolay tip
+       → invoice_type_guess = "Tip-1"
+
+Tip-2: Çok zamanlı (T1/T2/T3 veya Gündüz/Puant/Gece) ama "toplam" satırı var
+       → Ekvator gibi, toplam satırından alınır
+       → invoice_type_guess = "Tip-2"
+
+Tip-3: Kademeli / çok satırlı enerji bedeli (Yüksek Kademe, Düşük Kademe)
+       → CK Boğaziçi gibi, ağırlıklı ortalama hesaplanmalı
+       → "Toplam Enerji Bedeli" varsa kolay, yoksa satır çarpımları
+       → invoice_type_guess = "Tip-3"
+
+Tip-4: Dağıtım birim fiyatı yok, sadece dağıtım toplamı (TL) var
+       → Dağıtım birim = dağıtım_toplam / kWh ile türetilmeli
+       → invoice_type_guess = "Tip-4"
+
+Tip-5: Demand / güç bedeli / reaktif satırı var
+       → OSB, OG tüketiciler, büyük sanayi
+       → Demand hem miktar hem birim fiyat çıkarılmalı
+       → invoice_type_guess = "Tip-5"
+
+Tip-6: Birden fazla sayaç / birden fazla tesisat aynı faturada
+       → Sayaç bazında dağılım var
+       → invoice_type_guess = "Tip-6"
+
+Tip-7: Mahsuplaşma / iade / düzeltme / iptal-ikame faturası
+       → Negatif tutarlar içerir
+       → invoice_type_guess = "Tip-7"
+
+Emin değilsen: invoice_type_guess = "unknown"
+
+═══════════════════════════════════════════════════════════════════════════════
+ÇIKTI ŞEMASI (harici anahtar yok)
+═══════════════════════════════════════════════════════════════════════════════
+
+{
+  "vendor": "enerjisa|ck_bogazici|ekvator|yelden|unknown",
+  "invoice_period": "YYYY-MM",
+  "consumption_kwh": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+  "current_active_unit_price_tl_per_kwh": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+  "distribution_unit_price_tl_per_kwh": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+  "demand_qty": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+  "demand_unit_price_tl_per_unit": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+  "invoice_total_with_vat_tl": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+  "raw_breakdown": {
+    "energy_total_tl": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+    "distribution_total_tl": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+    "btv_tl": {"value": number|null, "confidence": number, "evidence": "string", "page": number},
+    "vat_tl": {"value": number|null, "confidence": number, "evidence": "string", "page": number}
+  },
+  "meta": {
+    "tariff_group_guess": "string",
+    "voltage_guess": "string",
+    "term_type_guess": "string",
+    "invoice_type_guess": "Tip-1|Tip-2|Tip-3|Tip-4|Tip-5|Tip-6|Tip-7|unknown"
+  }
+}
+
+ÇIKTI: Yalnızca JSON.
+"""
+
+# Load prompt from file or use embedded fallback
+EXTRACTION_PROMPT = load_prompt("extraction")

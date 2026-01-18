@@ -1,0 +1,3290 @@
+import io
+import os
+import hashlib
+import logging
+from pathlib import Path
+from typing import Optional, List
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Query, Header, Form, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse
+from sqlalchemy.orm import Session
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from .models import InvoiceExtraction, OfferParams, CalculationResult, ValidationResult, InvoiceStatus, JobType, JobStatus, FieldValue
+from .extractor import extract_invoice_data, clear_extraction_cache, mask_pii, ExtractionError
+from .calculator import calculate_offer
+from .validator import validate_extraction
+from .database import init_db, get_db, Customer, Offer, Invoice, Job, STORAGE_DIR, API_KEY, API_KEY_ENABLED
+from .pdf_generator import generate_offer_html, generate_offer_pdf
+from .pdf_render import render_pdf_first_page, get_page1_path
+from .image_prep import preprocess_image_bytes
+from .job_queue import enqueue_job, enqueue_job_idempotent, get_job_by_id, get_jobs_by_invoice, get_active_job, list_jobs
+from .core.config import settings
+
+# Logging setup
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Constants for input validation
+# ═══════════════════════════════════════════════════════════════════════════════
+MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
+ALLOWED_IMAGE_MIME_TYPES = frozenset([
+    "image/jpeg",
+    "image/jpg", 
+    "image/png",
+    "image/webp",
+    "image/gif",
+    "image/bmp",
+    "image/tiff",
+])
+ALLOWED_PDF_MIME_TYPE = "application/pdf"
+ALLOWED_HTML_MIME_TYPE = "text/html"
+ALLOWED_MIME_TYPES = ALLOWED_IMAGE_MIME_TYPES | {ALLOWED_PDF_MIME_TYPE, ALLOWED_HTML_MIME_TYPE}
+
+
+def convert_pdf_to_image(pdf_bytes: bytes, max_pages: int = 3) -> tuple[bytes, str]:
+    """
+    PDF'i optimize edilmiş PNG'ye dönüştür.
+    Tüm sayfaları (max_pages'e kadar) dikey birleştirir.
+    CK faturalarında dağıtım bedeli genelde 2. sayfada olduğu için önemli.
+    
+    Returns: (image_bytes, mime_type)
+    """
+    import pypdfium2 as pdfium
+    from PIL import Image
+    
+    pdf = pdfium.PdfDocument(pdf_bytes)
+    page_count = len(pdf)
+    
+    if page_count == 0:
+        pdf.close()
+        raise ValueError("PDF boş")
+    
+    # Tüm sayfaları (max_pages'e kadar) render et
+    pages_to_render = min(page_count, max_pages)
+    images = []
+    
+    for i in range(pages_to_render):
+        page = pdf[i]
+        bitmap = page.render(scale=1.5)  # Daha yüksek çözünürlük
+        pil_image = bitmap.to_pil()
+        if pil_image.mode not in ("RGB", "L"):
+            pil_image = pil_image.convert("RGB")
+        images.append(pil_image)
+        page.close()
+    
+    pdf.close()
+    
+    # Sayfaları dikey birleştir
+    if len(images) == 1:
+        combined = images[0]
+    else:
+        total_height = sum(img.height for img in images)
+        max_width = max(img.width for img in images)
+        combined = Image.new('RGB', (max_width, total_height), (255, 255, 255))
+        y_offset = 0
+        for img in images:
+            combined.paste(img, (0, y_offset))
+            y_offset += img.height
+    
+    # PNG formatı (kalite kaybı yok)
+    img_byte_arr = io.BytesIO()
+    combined.save(img_byte_arr, format='PNG', optimize=True)
+    
+    logger.info(f"PDF converted: {page_count} total pages, rendered {pages_to_render} pages, combined image size: {len(img_byte_arr.getvalue())} bytes")
+    
+    return img_byte_arr.getvalue(), "image/png"
+
+
+# Ensure storage directory exists
+Path(STORAGE_DIR).mkdir(parents=True, exist_ok=True)
+
+app = FastAPI(
+    title="Gelka Enerji API",
+    description="Fatura analizi ve teklif hesaplama",
+    version="1.0.0"
+)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Security - API Key Authentication + Rate Limiting
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Admin API Key (ayrı, daha güçlü yetki)
+# GÜVENLIK: Default key YOK - sadece env'den set edilmeli
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")  # Boş = disabled
+ADMIN_API_KEY_ENABLED = os.getenv("ADMIN_API_KEY_ENABLED", "false").lower() == "true"  # Default: kapalı
+
+
+def require_api_key(x_api_key: str | None = Header(default=None)) -> str | None:
+    """
+    API key doğrulama + rate limiting dependency.
+    API_KEY_ENABLED=false ise kontrol yapılmaz (MVP modu).
+    
+    Returns:
+        API key (for rate limiting key)
+    """
+    if not API_KEY_ENABLED:
+        return x_api_key
+    
+    if x_api_key != API_KEY:
+        raise HTTPException(
+            status_code=401,
+            detail={"error": "unauthorized", "message": "Geçersiz veya eksik API anahtarı"}
+        )
+    
+    # Rate limiting
+    from .services.rate_limit import check_rate_limit, RateLimitExceeded
+    try:
+        check_rate_limit(f"api_key:{x_api_key}")
+    except RateLimitExceeded as e:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "rate_limit_exceeded",
+                "message": f"Rate limit aşıldı: {e.limit} istek/{e.window}s",
+                "retry_after": e.window
+            }
+        )
+    
+    return x_api_key
+
+
+def require_admin_key(
+    x_admin_key: str | None = Header(default=None, alias="X-Admin-Key"),
+    request: Request = None
+) -> str:
+    """
+    Admin API key doğrulama dependency.
+    Admin endpoint'leri için zorunlu.
+    
+    GÜVENLIK:
+    - ADMIN_API_KEY_ENABLED=false (default) → bypass (dev mode)
+    - ADMIN_API_KEY_ENABLED=true → env'den ADMIN_API_KEY zorunlu
+    """
+    client_ip = "unknown"
+    if request:
+        client_ip = request.client.host if request.client else "unknown"
+    
+    if not ADMIN_API_KEY_ENABLED:
+        logger.info(f"[ADMIN] Auth bypassed (disabled), ip={client_ip}")
+        return "admin-bypass"
+    
+    # ADMIN_API_KEY boşsa ve enabled ise → config hatası
+    if not ADMIN_API_KEY:
+        logger.error(f"[ADMIN] ADMIN_API_KEY not configured but ADMIN_API_KEY_ENABLED=true")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "admin_not_configured",
+                "message": "Admin API key yapılandırılmamış. ADMIN_API_KEY env değişkenini ayarlayın."
+            }
+        )
+    
+    if not x_admin_key:
+        logger.warning(f"[ADMIN] Auth failed: missing key, ip={client_ip}")
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error": "admin_unauthorized",
+                "message": "Admin API anahtarı gerekli (X-Admin-Key header)"
+            }
+        )
+    
+    if x_admin_key != ADMIN_API_KEY:
+        logger.warning(f"[ADMIN] Auth failed: invalid key, ip={client_ip}")
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "admin_forbidden",
+                "message": "Geçersiz admin API anahtarı"
+            }
+        )
+    
+    logger.info(f"[ADMIN] Auth success, ip={client_ip}")
+    return x_admin_key
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Storage Service
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def save_uploaded_file(filename: str, content: bytes) -> tuple[str, str]:
+    """
+    Dosyayı storage'a kaydet.
+    Returns: (storage_path, file_hash)
+    """
+    import uuid
+    ext = os.path.splitext(filename)[1].lower() or ".bin"
+    file_hash = hashlib.sha256(content).hexdigest()
+    key = f"{uuid.uuid4()}{ext}"
+    path = os.path.join(STORAGE_DIR, key)
+    
+    with open(path, "wb") as f:
+        f.write(content)
+    
+    return path, file_hash
+
+# Initialize database on startup
+@app.on_event("startup")
+async def startup_event():
+    from .incident_service import check_production_guard, validate_environment
+    from .config import validate_config, ConfigValidationError
+    
+    # Sprint 8.8: Config validation (MUST be first!)
+    try:
+        validate_config()
+        logger.info("Config validation passed")
+    except ConfigValidationError as e:
+        logger.critical(f"FATAL: Config validation failed:\n{e}")
+        raise RuntimeError(str(e))
+    
+    # Sprint 4 P2: ENV whitelist + Production guard
+    env = os.getenv("ENV", "development").lower()
+    
+    # ENV whitelist kontrolü
+    env_valid, env_error = validate_environment(env)
+    if not env_valid:
+        logger.critical(f"FATAL: {env_error}")
+        raise RuntimeError(env_error)
+    
+    # Production guard
+    guard_ok, guard_error = check_production_guard(env, API_KEY_ENABLED, API_KEY or "")
+    if not guard_ok:
+        logger.critical(f"FATAL: {guard_error}")
+        raise RuntimeError(guard_error)
+    
+    if env == "production":
+        logger.info(f"Production mode: API key protection enabled (key length: {len(API_KEY or '')})")
+    elif not API_KEY_ENABLED:
+        logger.warning(f"WARNING: Running in {env} mode without API key protection")
+    
+    init_db()
+    logger.info("Database initialized")
+    
+    # Sprint 8.9.1: Pilot guard config logging
+    from .pilot_guard import log_pilot_config
+    log_pilot_config()
+    
+    # Sample market prices data (dev/test için)
+    _add_sample_market_prices()
+    
+    # EPDK tarifeleri DB'ye seed et (yoksa)
+    _seed_distribution_tariffs()
+
+
+def _add_sample_market_prices():
+    """
+    Sample PTF/YEKDEM verisi ekle (eğer yoksa).
+    Production'da admin panelden girilmeli.
+    """
+    from .database import SessionLocal, MarketReferencePrice
+    
+    sample_data = [
+        ("2024-11", 2850.0, 350.0),
+        ("2024-12", 2920.0, 355.0),
+        ("2025-01", 2974.1, 364.0),
+        ("2025-02", 3050.0, 370.0),
+    ]
+    
+    db = SessionLocal()
+    try:
+        for period, ptf, yekdem in sample_data:
+            existing = db.query(MarketReferencePrice).filter(
+                MarketReferencePrice.period == period
+            ).first()
+            
+            if not existing:
+                record = MarketReferencePrice(
+                    period=period,
+                    ptf_tl_per_mwh=ptf,
+                    yekdem_tl_per_mwh=yekdem,
+                    source_note="Sample data (dev)",
+                    is_locked=0
+                )
+                db.add(record)
+                logger.info(f"Sample market price added: {period}")
+        
+        db.commit()
+    except Exception as e:
+        logger.warning(f"Could not add sample market prices: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
+
+def _seed_distribution_tariffs():
+    """
+    EPDK dağıtım tarifelerini DB'ye seed et (yoksa).
+    In-memory DISTRIBUTION_TARIFFS listesinden alır.
+    """
+    from .database import SessionLocal, DistributionTariffDB
+    from .distribution_tariffs import DISTRIBUTION_TARIFFS
+    
+    db = SessionLocal()
+    try:
+        # Mevcut kayıt var mı kontrol et
+        existing_count = db.query(DistributionTariffDB).count()
+        if existing_count > 0:
+            logger.info(f"Distribution tariffs already seeded: {existing_count} records")
+            return
+        
+        # In-memory listeden seed et (DISTRIBUTION_TARIFFS artık DistributionTariff listesi)
+        for tariff in DISTRIBUTION_TARIFFS:
+            record = DistributionTariffDB(
+                valid_from="2025-01-01",
+                valid_to=None,  # Hala geçerli
+                tariff_group=tariff.tariff_group,
+                voltage_level=tariff.voltage_level,
+                term_type=tariff.term_type,
+                unit_price_tl_per_kwh=tariff.unit_price_tl_per_kwh,
+                source_note="EPDK Ocak 2025 tarifesi (seed)"
+            )
+            db.add(record)
+        
+        db.commit()
+        logger.info(f"Distribution tariffs seeded: {len(DISTRIBUTION_TARIFFS)} records")
+    except Exception as e:
+        logger.warning(f"Could not seed distribution tariffs: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
+
+def validate_uploaded_file(file: UploadFile, content: bytes) -> None:
+    """
+    Validate uploaded file for size and MIME type.
+    
+    Raises HTTPException with 400 status for invalid files.
+    Requirements: 1.4, 9.1-9.5
+    """
+    # Validate file size
+    if len(content) > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "file_too_large",
+                "message": f"Dosya boyutu çok büyük. Maksimum: {MAX_FILE_SIZE_BYTES // (1024*1024)} MB",
+                "max_size_bytes": MAX_FILE_SIZE_BYTES,
+                "actual_size_bytes": len(content)
+            }
+        )
+    
+    # Validate MIME type strictly
+    content_type = file.content_type or ""
+    
+    if content_type not in ALLOWED_MIME_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "unsupported_file_type",
+                "message": "Desteklenmeyen dosya formatı. Sadece görsel (JPG, PNG, WebP, GIF, BMP, TIFF), PDF veya HTML dosyası yükleyin.",
+                "allowed_types": list(ALLOWED_MIME_TYPES),
+                "received_type": content_type
+            }
+        )
+    
+    # Validate file is not empty
+    if len(content) == 0:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "empty_file",
+                "message": "Dosya boş. Lütfen geçerli bir fatura dosyası yükleyin."
+            }
+        )
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
+@app.get("/health/ready")
+async def health_ready(db: Session = Depends(get_db)):
+    """
+    Readiness check - Sprint 8.8 + 8.9
+    
+    Checks:
+    - config: Config validation passed
+    - database: DB connection working
+    - openai_api: API key configured
+    - queue: No stuck jobs (optional)
+    
+    Returns 200 if ready, 503 if not ready.
+    
+    Sprint 8.9: Includes build_id and config_hash for version tracking.
+    """
+    from datetime import datetime, timezone
+    from .config import validate_config, ConfigValidationError, get_config_summary, get_config_hash
+    import time
+    import subprocess
+    
+    # Get build ID
+    def get_build_id() -> str:
+        build_id = os.getenv("BUILD_ID")
+        if build_id:
+            return build_id
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                return f"git:{result.stdout.strip()}"
+        except:
+            pass
+        return "unknown"
+    
+    checks = {}
+    failing_checks = []
+    
+    # Check 1: Config validation
+    try:
+        validate_config()
+        checks["config"] = {"status": "ok", "validated": True}
+    except ConfigValidationError as e:
+        checks["config"] = {"status": "error", "message": str(e)[:200]}
+        failing_checks.append("config")
+    
+    # Check 2: Database connection
+    try:
+        start = time.time()
+        db.execute("SELECT 1")
+        latency_ms = int((time.time() - start) * 1000)
+        
+        if latency_ms > 500:
+            checks["database"] = {"status": "error", "latency_ms": latency_ms, "message": "High latency"}
+            failing_checks.append("database")
+        elif latency_ms > 100:
+            checks["database"] = {"status": "warning", "latency_ms": latency_ms}
+        else:
+            checks["database"] = {"status": "ok", "latency_ms": latency_ms}
+    except Exception as e:
+        checks["database"] = {"status": "error", "message": str(e)[:100]}
+        failing_checks.append("database")
+    
+    # Check 3: OpenAI API key
+    openai_key = os.getenv("OPENAI_API_KEY", "")
+    if openai_key and len(openai_key) > 10:
+        checks["openai_api"] = {"status": "ok", "key_configured": True}
+    else:
+        checks["openai_api"] = {"status": "warning", "message": "API key not configured"}
+    
+    # Check 4: Queue status (check for stuck jobs)
+    try:
+        from .database import Job
+        from datetime import timedelta
+        
+        # Jobs stuck for more than 10 minutes
+        stuck_threshold = datetime.utcnow() - timedelta(minutes=10)
+        stuck_jobs = db.query(Job).filter(
+            Job.status == "processing",
+            Job.updated_at < stuck_threshold
+        ).count()
+        
+        pending_jobs = db.query(Job).filter(Job.status == "pending").count()
+        
+        if stuck_jobs > 0:
+            checks["queue"] = {
+                "status": "warning",
+                "depth": pending_jobs,
+                "stuck_count": stuck_jobs,
+                "message": f"{stuck_jobs} stuck job(s) detected"
+            }
+        else:
+            checks["queue"] = {"status": "ok", "depth": pending_jobs}
+    except Exception as e:
+        checks["queue"] = {"status": "warning", "message": f"Could not check queue: {str(e)[:50]}"}
+    
+    # Last activity (optional info)
+    last_activity = {}
+    try:
+        from .database import Incident
+        last_incident = db.query(Incident).order_by(Incident.created_at.desc()).first()
+        if last_incident and last_incident.created_at:
+            last_activity["last_incident_at"] = last_incident.created_at.isoformat()
+    except:
+        pass
+    
+    # Sprint 8.9.1: Pilot status
+    from .pilot_guard import is_pilot_enabled, get_pilot_tenant_id, get_pilot_rate_status
+    pilot_status = {
+        "enabled": is_pilot_enabled(),
+        "tenant_id": get_pilot_tenant_id(),
+        "rate_limit": get_pilot_rate_status(),
+    }
+    
+    # Build response
+    status = "not_ready" if failing_checks else "ready"
+    response = {
+        "status": status,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "build_id": get_build_id(),
+        "config_hash": get_config_hash(),
+        "checks": checks,
+        "pilot": pilot_status,
+    }
+    
+    if last_activity:
+        response["last_activity"] = last_activity
+    
+    if failing_checks:
+        response["failing_checks"] = failing_checks
+    
+    # Return 503 if not ready
+    if failing_checks:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=503, content=response)
+    
+    return response
+
+
+@app.delete("/cache")
+async def clear_cache():
+    """
+    Extraction cache'ini temizle.
+    
+    Kullanım: Aynı faturayı farklı parametrelerle tekrar analiz etmek için.
+    """
+    count = clear_extraction_cache()
+    logger.info(f"Cache cleared via API: {count} entries removed")
+    return {
+        "status": "ok",
+        "message": f"Cache temizlendi: {count} kayıt silindi",
+        "cleared_count": count
+    }
+
+@app.post("/analyze-invoice", response_model=dict)
+async def analyze_invoice(
+    file: UploadFile = File(...),
+    fast_mode: bool = Query(default=False, description="Hızlı mod: gpt-4o-mini (varsayılan: false - gpt-4o kullan)")
+):
+    """
+    Fatura görselini analiz et ve alanları çıkar.
+    
+    Args:
+        file: Fatura görseli, PDF veya HTML
+        fast_mode: True = hızlı analiz (gpt-4o-mini), False = detaylı analiz (gpt-4o)
+    
+    Requirements: 1.1-1.5, 2.1-2.8, 9.1
+    """
+    content = await file.read()
+    
+    # Validate file (size, MIME type, empty check)
+    validate_uploaded_file(file, content)
+    
+    # HTML ise görsele çevir (analyze-invoice endpoint)
+    mime_type = file.content_type
+    if file.content_type == ALLOWED_HTML_MIME_TYPE or (file.filename and file.filename.lower().endswith('.html')):
+        try:
+            from .html_render import render_html_to_image_async
+            logger.info(f"[analyze] Converting HTML to image, size: {len(content)} bytes")
+            content = await render_html_to_image_async(content, width=1200)
+            mime_type = "image/png"
+            logger.info(f"[analyze] HTML converted to image: {len(content)} bytes")
+        except Exception as e:
+            import traceback
+            error_detail = traceback.format_exc()
+            logger.error(f"[analyze] HTML conversion error: {error_detail}")
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": "html_conversion_error",
+                    "message": f"HTML dönüştürme hatası: {type(e).__name__}: {str(e)}"
+                }
+            )
+    
+    # PDF ise sayfaları görsele çevir (tüm sayfalar birleştirilir)
+    elif file.content_type == ALLOWED_PDF_MIME_TYPE:
+        try:
+            content, mime_type = convert_pdf_to_image(content, max_pages=3)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": "pdf_conversion_error",
+                    "message": f"PDF dönüştürme hatası: {str(e)}"
+                }
+            )
+    
+    try:
+        extraction = extract_invoice_data(content, mime_type, fast_mode=fast_mode)
+        validation = validate_extraction(extraction)
+        
+        # Sanity check: Eğer validation başarısız ve kritik hatalar varsa, fast_mode=False ile tekrar dene
+        if fast_mode and not validation.is_ready_for_pricing and validation.errors:
+            logger.warning(f"Fast mode failed validation, retrying with full model. Errors: {validation.errors}")
+            # Cache'i temizle ve tekrar dene
+            from .extractor import compute_image_hash, _extraction_cache
+            image_hash = compute_image_hash(content)
+            if image_hash in _extraction_cache:
+                del _extraction_cache[image_hash]
+            
+            extraction = extract_invoice_data(content, mime_type, fast_mode=False)
+            validation = validate_extraction(extraction)
+            fast_mode = False  # Meta'da doğru göster
+        
+        return {
+            "extraction": extraction.model_dump(),
+            "validation": validation.model_dump(),
+            "meta": {
+                "fast_mode": fast_mode,
+                "model": "gpt-4o-mini" if fast_mode else "gpt-4o"
+            }
+        }
+    except ExtractionError as e:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "extraction_error",
+                "message": f"OpenAI API hatası: {str(e)}",
+                "retry": True
+            }
+        )
+    except Exception as e:
+        logger.exception("Unexpected error during invoice analysis")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "analysis_error",
+                "message": f"Analiz hatası: {str(e)}"
+            }
+        )
+
+@app.post("/calculate-offer", response_model=CalculationResult)
+async def calculate_offer_endpoint(
+    extraction: InvoiceExtraction,
+    params: OfferParams = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Çıkarılan verilerle teklif hesapla.
+    
+    PTF/YEKDEM otomatik olarak fatura dönemine göre DB'den çekilir.
+    Override için: use_reference_prices=False ve weighted_ptf_tl_per_mwh/yekdem_tl_per_mwh değerlerini verin.
+    
+    Requirements: 5.1-5.9, 6.1-6.4, 9.2
+    """
+    from .calculator import CalculationError
+    
+    if params is None:
+        params = OfferParams()
+    
+    try:
+        return calculate_offer(extraction, params, db=db)
+    except CalculationError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "calculation_error",
+                "message": str(e)
+            }
+        )
+
+@app.post("/full-process", response_model=dict)
+async def full_process(
+    file: UploadFile = File(...),
+    weighted_ptf_tl_per_mwh: Optional[float] = Query(default=None, description="PTF (TL/MWh) - boş bırakılırsa DB'den çekilir"),
+    yekdem_tl_per_mwh: Optional[float] = Query(default=None, description="YEKDEM (TL/MWh) - boş bırakılırsa DB'den çekilir"),
+    agreement_multiplier: float = 1.01,
+    use_reference_prices: bool = Query(default=True, description="True: DB'den çek, False: verilen değerleri kullan"),
+    fast_mode: bool = Query(default=False, description="Hızlı mod: gpt-4o-mini (varsayılan: false - gpt-4o kullan)"),
+    debug: bool = Query(default=False, description="Debug modu: LLM raw output dahil"),
+    db: Session = Depends(get_db)
+):
+    """
+    Tek endpoint: Fatura yükle → Analiz → Hesapla → Sonuç.
+    
+    PTF/YEKDEM:
+    - use_reference_prices=True (default): Fatura dönemine göre DB'den otomatik çekilir
+    - use_reference_prices=False: weighted_ptf_tl_per_mwh ve yekdem_tl_per_mwh değerleri kullanılır
+    
+    Debug:
+    - debug=True: LLM raw output ve detaylı debug bilgisi döner
+    
+    Desteklenen formatlar: PDF, HTML, görsel (JPG, PNG, etc.)
+    
+    Requirements: 9.3
+    """
+    import uuid
+    from .calculator import CalculationError
+    from .models import DebugMeta
+    
+    # Trace ID üret
+    trace_id = str(uuid.uuid4())[:8]
+    logger.info(f"[{trace_id}] full-process started: file={file.filename}, fast_mode={fast_mode}, debug={debug}")
+    
+    content = await file.read()
+    
+    # Validate file (size, MIME type, empty check)
+    validate_uploaded_file(file, content)
+    
+    # Debug meta başlat
+    debug_meta = DebugMeta(trace_id=trace_id)
+    debug_meta.warnings = []
+    debug_meta.errors = []
+    
+    # HTML ise görsele çevir (full-process endpoint)
+    mime_type = file.content_type
+    if file.content_type == ALLOWED_HTML_MIME_TYPE or (file.filename and file.filename.lower().endswith('.html')):
+        try:
+            from .html_render import render_html_to_image_async
+            logger.info(f"[{trace_id}] Converting HTML to image, size: {len(content)} bytes")
+            content = await render_html_to_image_async(content, width=1200)
+            mime_type = "image/png"
+            logger.info(f"[{trace_id}] HTML converted to image: {len(content)} bytes")
+        except Exception as e:
+            import traceback
+            error_detail = traceback.format_exc()
+            logger.error(f"[{trace_id}] HTML conversion error: {error_detail}")
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": "html_conversion_error",
+                    "message": f"HTML dönüştürme hatası: {type(e).__name__}: {str(e)}",
+                    "trace_id": trace_id
+                }
+            )
+    
+    # PDF ise sayfaları görsele çevir (tüm sayfalar birleştirilir)
+    elif file.content_type == ALLOWED_PDF_MIME_TYPE:
+        try:
+            content, mime_type = convert_pdf_to_image(content, max_pages=3)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": "pdf_conversion_error",
+                    "message": f"PDF dönüştürme hatası: {str(e)}",
+                    "trace_id": trace_id
+                }
+            )
+    
+    try:
+        # Extraction (debug modunda raw output capture)
+        extraction_cache_hit = False
+        llm_raw_output = None
+        
+        if debug:
+            from .extractor import compute_image_hash, get_cached_extraction
+            image_hash = compute_image_hash(content)
+            cached = get_cached_extraction(image_hash)
+            extraction_cache_hit = cached is not None
+        
+        extraction = extract_invoice_data(content, mime_type, fast_mode=fast_mode)
+        validation = validate_extraction(extraction)
+        
+        # Debug meta güncelle
+        debug_meta.llm_model_used = settings.openai_model_fast if fast_mode else settings.openai_model_accurate
+        debug_meta.extraction_cache_hit = extraction_cache_hit
+        
+        # Sanity check: Eğer validation başarısız ve kritik hatalar varsa, fast_mode=False ile tekrar dene
+        if fast_mode and not validation.is_ready_for_pricing and validation.errors:
+            logger.warning(f"[{trace_id}] Fast mode failed validation, retrying with full model. Errors: {validation.errors}")
+            debug_meta.warnings.append("Fast mode başarısız, full model ile tekrar denendi")
+            
+            from .extractor import compute_image_hash, _extraction_cache
+            image_hash = compute_image_hash(content)
+            if image_hash in _extraction_cache:
+                del _extraction_cache[image_hash]
+            
+            extraction = extract_invoice_data(content, mime_type, fast_mode=False)
+            validation = validate_extraction(extraction)
+            fast_mode = False
+            debug_meta.llm_model_used = settings.openai_model_accurate
+        
+        # Hesaplama (eğer hazırsa)
+        calculation = None
+        calculation_error = None
+        if validation.is_ready_for_pricing:
+            params = OfferParams(
+                weighted_ptf_tl_per_mwh=weighted_ptf_tl_per_mwh,
+                yekdem_tl_per_mwh=yekdem_tl_per_mwh,
+                agreement_multiplier=agreement_multiplier,
+                use_reference_prices=use_reference_prices
+            )
+            try:
+                calculation = calculate_offer(extraction, params, db=db)
+                
+                # Debug meta'yı calculation'dan doldur
+                debug_meta.pricing_period = calculation.meta_pricing_period
+                debug_meta.pricing_source = calculation.meta_pricing_source
+                debug_meta.ptf_tl_per_mwh = calculation.meta_ptf_tl_per_mwh
+                debug_meta.yekdem_tl_per_mwh = calculation.meta_yekdem_tl_per_mwh
+                debug_meta.epdk_tariff_key = calculation.meta_distribution_tariff_key
+                debug_meta.distribution_unit_price_tl_per_kwh = calculation.offer_distribution_unit_tl_per_kwh
+                debug_meta.distribution_source = calculation.meta_distribution_source
+                debug_meta.consumption_kwh = calculation.meta_consumption_kwh
+                debug_meta.energy_amount_tl = calculation.offer_energy_tl
+                debug_meta.distribution_amount_tl = calculation.offer_distribution_tl
+                debug_meta.btv_amount_tl = calculation.offer_btv_tl
+                debug_meta.kdv_amount_tl = calculation.offer_vat_tl
+                debug_meta.total_amount_tl = calculation.offer_total_with_vat_tl
+                
+                # Mismatch warning
+                if calculation.meta_distribution_mismatch_warning:
+                    debug_meta.warnings.append(calculation.meta_distribution_mismatch_warning)
+                    
+            except CalculationError as e:
+                calculation_error = str(e)
+                debug_meta.errors.append(str(e))
+                logger.error(f"[{trace_id}] Calculation error: {e}")
+        else:
+            # Validation başarısız
+            for field in validation.missing_fields:
+                debug_meta.errors.append(f"Eksik alan: {field}")
+            for err in validation.errors:
+                if isinstance(err, dict):
+                    debug_meta.errors.append(err.get("message", str(err)))
+                else:
+                    debug_meta.errors.append(str(err))
+        
+        # Quality Score hesapla (Sprint 3)
+        from .incident_service import calculate_quality_score, create_incidents_from_quality, generate_invoice_fingerprint
+        
+        quality = calculate_quality_score(
+            extraction=extraction.model_dump(),
+            validation=validation.model_dump(),
+            calculation=calculation.model_dump() if calculation else None,
+            calculation_error=calculation_error,
+            debug_meta=debug_meta.model_dump()
+        )
+        
+        # S1/S2 severity için incident oluştur (dedupe destekli - Sprint 4)
+        if quality.flags:
+            try:
+                # Invoice fingerprint üret (dedupe için)
+                invoice_fingerprint = generate_invoice_fingerprint(
+                    supplier=extraction.vendor,
+                    invoice_no=extraction.invoice_no.value if extraction.invoice_no else "",
+                    period=extraction.invoice_period,
+                    consumption_kwh=extraction.consumption_kwh.value if extraction.consumption_kwh else 0,
+                    total_amount=extraction.invoice_total_with_vat_tl.value if extraction.invoice_total_with_vat_tl else 0
+                )
+                
+                incident_ids = create_incidents_from_quality(
+                    db=db,
+                    trace_id=trace_id,
+                    quality=quality,
+                    tenant_id="default",
+                    invoice_id=None,  # TODO: invoice_id varsa ekle
+                    # Dedupe parametreleri (Sprint 4)
+                    period=extraction.invoice_period or "",
+                    invoice_fingerprint=invoice_fingerprint
+                )
+                if incident_ids:
+                    logger.warning(f"[{trace_id}] Created/updated {len(incident_ids)} incidents for quality flags")
+            except Exception as e:
+                logger.error(f"[{trace_id}] Failed to create incidents: {e}")
+        
+        logger.info(f"[{trace_id}] full-process completed: calculation={'OK' if calculation else 'FAILED'}, quality={quality.score}/{quality.grade}")
+        
+        return {
+            "extraction": extraction.model_dump(),
+            "validation": validation.model_dump(),
+            "calculation": calculation.model_dump() if calculation else None,
+            "calculation_error": calculation_error,
+            "quality_score": {
+                "score": quality.score,
+                "grade": quality.grade,
+                "flags": quality.flags,
+                "flag_details": quality.flag_details
+            },
+            "debug_meta": debug_meta.model_dump() if debug else {"trace_id": trace_id},
+            "meta": {
+                "trace_id": trace_id,
+                "fast_mode": fast_mode,
+                "model": settings.openai_model_fast if fast_mode else settings.openai_model_accurate
+            }
+        }
+    except ExtractionError as e:
+        logger.error(f"[{trace_id}] Extraction error: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "extraction_error",
+                "message": f"OpenAI API hatası: {str(e)}",
+                "retry": True,
+                "trace_id": trace_id
+            }
+        )
+    except Exception as e:
+        logger.exception("Unexpected error during full process")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "internal_error",
+                "message": f"Beklenmeyen hata: {str(e)}"
+            }
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Customer Management Endpoints
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/customers", response_model=dict)
+async def create_customer(
+    name: str,
+    company: Optional[str] = None,
+    email: Optional[str] = None,
+    phone: Optional[str] = None,
+    address: Optional[str] = None,
+    notes: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Yeni müşteri oluştur"""
+    customer = Customer(
+        name=name,
+        company=company,
+        email=email,
+        phone=phone,
+        address=address,
+        notes=notes
+    )
+    db.add(customer)
+    db.commit()
+    db.refresh(customer)
+    
+    return {
+        "id": customer.id,
+        "name": customer.name,
+        "company": customer.company,
+        "email": customer.email,
+        "phone": customer.phone,
+        "created_at": customer.created_at.isoformat()
+    }
+
+
+@app.get("/customers", response_model=List[dict])
+async def list_customers(
+    search: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+    db: Session = Depends(get_db)
+):
+    """Müşteri listesi"""
+    query = db.query(Customer)
+    
+    if search:
+        search_term = f"%{search}%"
+        query = query.filter(
+            (Customer.name.ilike(search_term)) |
+            (Customer.company.ilike(search_term)) |
+            (Customer.email.ilike(search_term))
+        )
+    
+    customers = query.order_by(Customer.created_at.desc()).offset(skip).limit(limit).all()
+    
+    return [
+        {
+            "id": c.id,
+            "name": c.name,
+            "company": c.company,
+            "email": c.email,
+            "phone": c.phone,
+            "offer_count": len(c.offers),
+            "created_at": c.created_at.isoformat()
+        }
+        for c in customers
+    ]
+
+
+@app.get("/customers/{customer_id}", response_model=dict)
+async def get_customer(customer_id: int, db: Session = Depends(get_db)):
+    """Müşteri detayı"""
+    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Müşteri bulunamadı")
+    
+    return {
+        "id": customer.id,
+        "name": customer.name,
+        "company": customer.company,
+        "email": customer.email,
+        "phone": customer.phone,
+        "address": customer.address,
+        "notes": customer.notes,
+        "created_at": customer.created_at.isoformat(),
+        "updated_at": customer.updated_at.isoformat(),
+        "offers": [
+            {
+                "id": o.id,
+                "invoice_period": o.invoice_period,
+                "savings_amount": o.savings_amount,
+                "savings_ratio": o.savings_ratio,
+                "status": o.status,
+                "created_at": o.created_at.isoformat()
+            }
+            for o in customer.offers
+        ]
+    }
+
+
+@app.put("/customers/{customer_id}", response_model=dict)
+async def update_customer(
+    customer_id: int,
+    name: Optional[str] = None,
+    company: Optional[str] = None,
+    email: Optional[str] = None,
+    phone: Optional[str] = None,
+    address: Optional[str] = None,
+    notes: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Müşteri güncelle"""
+    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Müşteri bulunamadı")
+    
+    if name is not None:
+        customer.name = name
+    if company is not None:
+        customer.company = company
+    if email is not None:
+        customer.email = email
+    if phone is not None:
+        customer.phone = phone
+    if address is not None:
+        customer.address = address
+    if notes is not None:
+        customer.notes = notes
+    
+    db.commit()
+    db.refresh(customer)
+    
+    return {"status": "ok", "message": "Müşteri güncellendi"}
+
+
+@app.delete("/customers/{customer_id}")
+async def delete_customer(customer_id: int, db: Session = Depends(get_db)):
+    """Müşteri sil"""
+    customer = db.query(Customer).filter(Customer.id == customer_id).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Müşteri bulunamadı")
+    
+    db.delete(customer)
+    db.commit()
+    
+    return {"status": "ok", "message": "Müşteri silindi"}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Offer Archive Endpoints
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/offers", response_model=dict)
+async def create_offer(
+    extraction: InvoiceExtraction,
+    calculation: CalculationResult,
+    params: OfferParams,
+    customer_id: Optional[int] = None,
+    db: Session = Depends(get_db)
+):
+    """Teklifi kaydet ve arşivle"""
+    offer = Offer(
+        customer_id=customer_id,
+        vendor=extraction.vendor,
+        invoice_period=extraction.invoice_period,
+        consumption_kwh=extraction.consumption_kwh.value or 0,
+        current_unit_price=extraction.current_active_unit_price_tl_per_kwh.value or 0,
+        distribution_unit_price=extraction.distribution_unit_price_tl_per_kwh.value,
+        demand_qty=extraction.demand_qty.value,
+        demand_unit_price=extraction.demand_unit_price_tl_per_unit.value,
+        weighted_ptf=params.weighted_ptf_tl_per_mwh,
+        yekdem=params.yekdem_tl_per_mwh,
+        agreement_multiplier=params.agreement_multiplier,
+        current_total=calculation.current_total_with_vat_tl,
+        offer_total=calculation.offer_total_with_vat_tl,
+        savings_amount=calculation.difference_incl_vat_tl,
+        savings_ratio=calculation.savings_ratio,
+        calculation_result=calculation.model_dump(),
+        extraction_result=extraction.model_dump(),
+        status="draft"
+    )
+    
+    db.add(offer)
+    db.commit()
+    db.refresh(offer)
+    
+    return {
+        "id": offer.id,
+        "savings_amount": offer.savings_amount,
+        "savings_ratio": offer.savings_ratio,
+        "status": offer.status,
+        "created_at": offer.created_at.isoformat()
+    }
+
+
+@app.get("/offers", response_model=List[dict])
+async def list_offers(
+    customer_id: Optional[int] = None,
+    status: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+    db: Session = Depends(get_db)
+):
+    """Teklif listesi"""
+    query = db.query(Offer)
+    
+    if customer_id:
+        query = query.filter(Offer.customer_id == customer_id)
+    if status:
+        query = query.filter(Offer.status == status)
+    
+    offers = query.order_by(Offer.created_at.desc()).offset(skip).limit(limit).all()
+    
+    return [
+        {
+            "id": o.id,
+            "customer_id": o.customer_id,
+            "customer_name": o.customer.name if o.customer else None,
+            "vendor": o.vendor,
+            "invoice_period": o.invoice_period,
+            "consumption_kwh": o.consumption_kwh,
+            "current_total": o.current_total,
+            "offer_total": o.offer_total,
+            "savings_amount": o.savings_amount,
+            "savings_ratio": o.savings_ratio,
+            "status": o.status,
+            "created_at": o.created_at.isoformat()
+        }
+        for o in offers
+    ]
+
+
+@app.get("/offers/{offer_id}", response_model=dict)
+async def get_offer(offer_id: int, db: Session = Depends(get_db)):
+    """Teklif detayı"""
+    offer = db.query(Offer).filter(Offer.id == offer_id).first()
+    if not offer:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı")
+    
+    return {
+        "id": offer.id,
+        "customer_id": offer.customer_id,
+        "customer": {
+            "id": offer.customer.id,
+            "name": offer.customer.name,
+            "company": offer.customer.company
+        } if offer.customer else None,
+        "vendor": offer.vendor,
+        "invoice_period": offer.invoice_period,
+        "consumption_kwh": offer.consumption_kwh,
+        "current_unit_price": offer.current_unit_price,
+        "distribution_unit_price": offer.distribution_unit_price,
+        "demand_qty": offer.demand_qty,
+        "demand_unit_price": offer.demand_unit_price,
+        "weighted_ptf": offer.weighted_ptf,
+        "yekdem": offer.yekdem,
+        "agreement_multiplier": offer.agreement_multiplier,
+        "current_total": offer.current_total,
+        "offer_total": offer.offer_total,
+        "savings_amount": offer.savings_amount,
+        "savings_ratio": offer.savings_ratio,
+        "calculation_result": offer.calculation_result,
+        "extraction_result": offer.extraction_result,
+        "status": offer.status,
+        "pdf_ref": offer.pdf_ref,
+        "created_at": offer.created_at.isoformat()
+    }
+
+
+@app.put("/offers/{offer_id}/status")
+async def update_offer_status(
+    offer_id: int,
+    status: str = Query(..., regex="^(draft|sent|viewed|accepted|rejected|contracting|completed|expired)$"),
+    notes: Optional[str] = Query(default=None, description="Durum değişikliği notu"),
+    db: Session = Depends(get_db),
+    _: None = Depends(require_api_key)
+):
+    """
+    Teklif durumunu güncelle.
+    
+    Lifecycle: draft → sent → viewed → accepted → contracting → completed
+                                    ↘ rejected
+                                    ↘ expired
+    
+    Webhook: Durum değişikliğinde ilgili webhook'lara event gönderilir.
+    Audit: Tüm durum değişiklikleri loglanır.
+    """
+    from .models import OfferStatus, AuditAction
+    from .services.audit import log_action
+    from .services.webhook import send_webhook
+    
+    offer = db.query(Offer).filter(Offer.id == offer_id).first()
+    if not offer:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı")
+    
+    old_status = offer.status
+    
+    # Validate status transition
+    valid_transitions = {
+        "draft": ["sent", "expired"],
+        "sent": ["viewed", "accepted", "rejected", "expired"],
+        "viewed": ["accepted", "rejected", "expired"],
+        "accepted": ["contracting", "rejected"],
+        "contracting": ["completed", "rejected"],
+        "rejected": [],  # Terminal state
+        "completed": [],  # Terminal state
+        "expired": [],  # Terminal state
+    }
+    
+    if old_status and status not in valid_transitions.get(old_status, [status]):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "invalid_transition",
+                "message": f"'{old_status}' → '{status}' geçişi geçersiz",
+                "valid_transitions": valid_transitions.get(old_status, [])
+            }
+        )
+    
+    # Update status
+    offer.status = status
+    db.commit()
+    
+    # Audit log
+    log_action(
+        db,
+        AuditAction.OFFER_STATUS_CHANGED,
+        tenant_id=offer.tenant_id,
+        actor_type="api_key",
+        target_type="offer",
+        target_id=str(offer.id),
+        details={
+            "old_status": old_status,
+            "new_status": status,
+            "notes": notes
+        }
+    )
+    
+    # Send webhook
+    try:
+        webhook_results = await send_webhook(
+            db,
+            tenant_id=offer.tenant_id,
+            event_type=f"offer.{status}",
+            payload={
+                "offer_id": offer.id,
+                "old_status": old_status,
+                "new_status": status,
+                "customer_id": offer.customer_id,
+                "savings_amount": offer.savings_amount,
+                "notes": notes
+            }
+        )
+    except Exception as e:
+        logger.error(f"Webhook send failed: {e}")
+        webhook_results = []
+    
+    return {
+        "status": "ok",
+        "message": f"Teklif durumu '{status}' olarak güncellendi",
+        "offer_id": offer.id,
+        "old_status": old_status,
+        "new_status": status,
+        "webhooks_triggered": len(webhook_results)
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PDF/HTML Generation Endpoints
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/offers/{offer_id}/generate-pdf")
+async def generate_pdf_for_offer(
+    offer_id: int,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_api_key)
+):
+    """
+    Kayıtlı teklif için PDF oluştur ve storage'a kaydet.
+    
+    PDF storage backend'e kaydedilir:
+    - Local: ./storage/offers/{offer_id}/offer.pdf
+    - S3: s3://bucket/offers/{offer_id}/offer.pdf
+    
+    Returns:
+        {offer_id, pdf_ref, message, download_url}
+    """
+    offer = db.query(Offer).filter(Offer.id == offer_id).first()
+    if not offer:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı")
+    
+    if not offer.extraction_result or not offer.calculation_result:
+        raise HTTPException(
+            status_code=400,
+            detail="Teklif verisi eksik (extraction_result veya calculation_result)"
+        )
+    
+    # Reconstruct extraction and calculation from stored JSON
+    extraction = InvoiceExtraction(**offer.extraction_result)
+    calculation = CalculationResult(**offer.calculation_result)
+    params = OfferParams(
+        weighted_ptf_tl_per_mwh=offer.weighted_ptf,
+        yekdem_tl_per_mwh=offer.yekdem,
+        agreement_multiplier=offer.agreement_multiplier
+    )
+    
+    customer_name = offer.customer.name if offer.customer else None
+    customer_company = offer.customer.company if offer.customer else None
+    
+    try:
+        # Generate and store PDF (uses storage backend)
+        from .pdf_generator import generate_and_store_offer_pdf
+        
+        pdf_ref = generate_and_store_offer_pdf(
+            extraction=extraction,
+            calculation=calculation,
+            params=params,
+            offer_id=offer.id,
+            customer_name=customer_name,
+            customer_company=customer_company
+        )
+        
+        # Update offer with PDF ref
+        offer.pdf_ref = pdf_ref
+        db.commit()
+        
+        logger.info(f"PDF generated and stored: {pdf_ref}")
+        
+        return {
+            "offer_id": offer.id,
+            "pdf_ref": pdf_ref,
+            "message": "PDF başarıyla oluşturuldu",
+            "download_url": f"/offers/{offer.id}/download"
+        }
+    except Exception as e:
+        logger.exception(f"PDF generation failed for offer {offer_id}")
+        raise HTTPException(status_code=500, detail=f"PDF oluşturma hatası: {str(e)}")
+
+
+@app.get("/offers/{offer_id}/download")
+async def download_offer_pdf(
+    offer_id: int,
+    expires: int = Query(default=300, ge=60, le=3600, description="Presigned URL geçerlilik süresi (saniye)"),
+    db: Session = Depends(get_db),
+    _: None = Depends(require_api_key)
+):
+    """
+    Teklif PDF'ini indir.
+    
+    Args:
+        expires: Presigned URL geçerlilik süresi (60-3600 saniye, default 300)
+    
+    Returns:
+        - S3 storage: JSON with presigned URL
+        - Local storage: Dosya stream (FileResponse)
+    
+    Note: PDF önce generate-pdf ile oluşturulmalı.
+    """
+    offer = db.query(Offer).filter(Offer.id == offer_id).first()
+    if not offer:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı")
+    
+    if not offer.pdf_ref:
+        raise HTTPException(
+            status_code=404, 
+            detail="PDF henüz oluşturulmamış. Önce POST /offers/{id}/generate-pdf çağırın."
+        )
+    
+    ref = offer.pdf_ref
+    filename = f"teklif_{offer.id}.pdf"
+    content_type = "application/pdf"
+    
+    # Get storage backend
+    from .services.storage import get_storage
+    from .services.storage_local import LocalStorage
+    storage = get_storage()
+    
+    # 1) S3 ise presigned URL dön
+    presigned_url = storage.get_presigned_url(ref, expires_in=expires)
+    if presigned_url:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({
+            "type": "presigned_url",
+            "url": presigned_url,
+            "expires_seconds": expires,
+            "filename": filename,
+            "content_type": content_type
+        })
+    
+    # 2) Local ise dosyayı stream et
+    if isinstance(storage, LocalStorage):
+        try:
+            local_path = storage.resolve_local_path(ref)
+        except ValueError as e:
+            logger.error(f"Path traversal attempt: {ref}")
+            raise HTTPException(status_code=400, detail=str(e))
+        
+        if not os.path.exists(local_path):
+            raise HTTPException(status_code=404, detail="PDF dosyası bulunamadı")
+        
+        return FileResponse(
+            path=local_path,
+            filename=filename,
+            media_type=content_type
+        )
+    
+    # 3) Fallback: local path olarak dene (eski PDF'ler için)
+    if os.path.exists(ref):
+        return FileResponse(
+            path=ref,
+            filename=filename,
+            media_type=content_type
+        )
+    
+    raise HTTPException(status_code=404, detail="PDF dosyası bulunamadı")
+
+
+@app.post("/offers/{offer_id}/generate-html", response_class=HTMLResponse)
+async def generate_html_for_offer(offer_id: int, db: Session = Depends(get_db)):
+    """Kayıtlı teklif için HTML oluştur"""
+    offer = db.query(Offer).filter(Offer.id == offer_id).first()
+    if not offer:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı")
+    
+    extraction = InvoiceExtraction(**offer.extraction_result)
+    calculation = CalculationResult(**offer.calculation_result)
+    params = OfferParams(
+        weighted_ptf_tl_per_mwh=offer.weighted_ptf,
+        yekdem_tl_per_mwh=offer.yekdem,
+        agreement_multiplier=offer.agreement_multiplier
+    )
+    
+    customer_name = offer.customer.name if offer.customer else None
+    customer_company = offer.customer.company if offer.customer else None
+    
+    html_content = generate_offer_html(
+        extraction, calculation, params,
+        customer_name=customer_name,
+        customer_company=customer_company,
+        offer_id=offer.id
+    )
+    
+    return HTMLResponse(content=html_content)
+
+
+@app.post("/generate-pdf-direct")
+async def generate_pdf_direct(
+    extraction: InvoiceExtraction,
+    calculation: CalculationResult,
+    params: OfferParams,
+    customer_name: Optional[str] = None,
+    customer_company: Optional[str] = None
+):
+    """Kaydetmeden direkt PDF oluştur"""
+    try:
+        pdf_path = generate_offer_pdf(
+            extraction, calculation, params,
+            customer_name=customer_name,
+            customer_company=customer_company
+        )
+        
+        return FileResponse(
+            pdf_path,
+            media_type="application/pdf",
+            filename="teklif.pdf"
+        )
+    except Exception as e:
+        logger.error(f"PDF generation error: {e}")
+        raise HTTPException(status_code=500, detail=f"PDF oluşturma hatası: {str(e)}")
+
+
+@app.post("/generate-pdf-simple")
+def generate_pdf_simple(
+    weighted_ptf_tl_per_mwh: float = Form(2974.1),
+    yekdem_tl_per_mwh: float = Form(364.0),
+    agreement_multiplier: float = Form(1.01),
+    consumption_kwh: float = Form(...),
+    current_unit_price: float = Form(...),
+    distribution_unit_price: float = Form(0),
+    invoice_total: float = Form(...),
+    current_energy_tl: float = Form(...),
+    current_distribution_tl: float = Form(0),
+    current_btv_tl: float = Form(...),
+    current_vat_tl: float = Form(...),
+    offer_energy_tl: float = Form(...),
+    offer_distribution_tl: float = Form(0),
+    offer_btv_tl: float = Form(...),
+    offer_vat_tl: float = Form(...),
+    offer_total: float = Form(...),
+    savings_ratio: float = Form(...),
+    vendor: str = Form("unknown"),
+    invoice_period: str = Form(""),
+    customer_name: Optional[str] = Form(None),
+):
+    """Basit parametrelerle PDF oluştur - Frontend için"""
+    try:
+        # Basit extraction oluştur (tüm gerekli alanlarla)
+        extraction = InvoiceExtraction(
+            vendor=vendor,
+            invoice_period=invoice_period,
+            consumption_kwh=FieldValue(value=consumption_kwh, confidence=1.0),
+            current_active_unit_price_tl_per_kwh=FieldValue(value=current_unit_price, confidence=1.0),
+            distribution_unit_price_tl_per_kwh=FieldValue(value=distribution_unit_price, confidence=1.0),
+            invoice_total_with_vat_tl=FieldValue(value=invoice_total, confidence=1.0),
+            demand_qty=FieldValue(value=0, confidence=1.0),
+            demand_unit_price_tl_per_unit=FieldValue(value=0, confidence=1.0),
+        )
+        
+        # Params
+        params = OfferParams(
+            weighted_ptf_tl_per_mwh=weighted_ptf_tl_per_mwh,
+            yekdem_tl_per_mwh=yekdem_tl_per_mwh,
+            agreement_multiplier=agreement_multiplier,
+        )
+        
+        # Calculation sonucu
+        current_vat_matrah = current_energy_tl + current_distribution_tl + current_btv_tl
+        offer_vat_matrah = offer_energy_tl + offer_distribution_tl + offer_btv_tl
+        
+        # kWh başı hesaplamalar
+        current_total_tl_per_kwh = invoice_total / consumption_kwh if consumption_kwh > 0 else 0
+        offer_total_tl_per_kwh = offer_total / consumption_kwh if consumption_kwh > 0 else 0
+        saving_tl_per_kwh = current_total_tl_per_kwh - offer_total_tl_per_kwh
+        annual_saving_tl = (invoice_total - offer_total) * 12
+        
+        # Birim fiyat tasarrufu
+        offer_unit_price = (weighted_ptf_tl_per_mwh / 1000 + yekdem_tl_per_mwh / 1000) * agreement_multiplier
+        unit_price_savings_ratio = (current_unit_price - offer_unit_price) / current_unit_price if current_unit_price > 0 else 0
+        
+        calculation = CalculationResult(
+            current_energy_tl=current_energy_tl,
+            current_distribution_tl=current_distribution_tl,
+            current_demand_tl=0,
+            current_btv_tl=current_btv_tl,
+            current_vat_matrah_tl=current_vat_matrah,
+            current_vat_tl=current_vat_tl,
+            current_total_with_vat_tl=invoice_total,
+            current_energy_unit_tl_per_kwh=current_unit_price,
+            current_distribution_unit_tl_per_kwh=distribution_unit_price,
+            offer_ptf_tl=offer_energy_tl / agreement_multiplier if agreement_multiplier else offer_energy_tl,
+            offer_yekdem_tl=0,
+            offer_energy_tl=offer_energy_tl,
+            offer_distribution_tl=offer_distribution_tl,
+            offer_demand_tl=0,
+            offer_btv_tl=offer_btv_tl,
+            offer_vat_matrah_tl=offer_vat_matrah,
+            offer_vat_tl=offer_vat_tl,
+            offer_total_with_vat_tl=offer_total,
+            offer_energy_unit_tl_per_kwh=offer_unit_price,
+            offer_distribution_unit_tl_per_kwh=distribution_unit_price,
+            difference_excl_vat_tl=current_vat_matrah - offer_vat_matrah,
+            difference_incl_vat_tl=invoice_total - offer_total,
+            savings_ratio=savings_ratio,
+            unit_price_savings_ratio=unit_price_savings_ratio,
+            current_total_tl_per_kwh=current_total_tl_per_kwh,
+            offer_total_tl_per_kwh=offer_total_tl_per_kwh,
+            saving_tl_per_kwh=saving_tl_per_kwh,
+            annual_saving_tl=annual_saving_tl,
+            meta_consumption_kwh=consumption_kwh,
+        )
+        
+        pdf_path = generate_offer_pdf(
+            extraction, calculation, params,
+            customer_name=customer_name,
+        )
+        
+        return FileResponse(
+            pdf_path,
+            media_type="application/pdf",
+            filename=f"teklif_{invoice_period or 'fatura'}.pdf"
+        )
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        logger.error(f"PDF generation error: {e}\n{tb}")
+        raise HTTPException(status_code=500, detail=f"PDF hatası: {str(e)} - {tb[:500]}")
+
+
+@app.post("/generate-html-direct", response_class=HTMLResponse)
+async def generate_html_direct(
+    extraction: InvoiceExtraction,
+    calculation: CalculationResult,
+    params: OfferParams,
+    customer_name: Optional[str] = None,
+    customer_company: Optional[str] = None
+):
+    """Kaydetmeden direkt HTML oluştur"""
+    html_content = generate_offer_html(
+        extraction, calculation, params,
+        customer_name=customer_name,
+        customer_company=customer_company
+    )
+    
+    return HTMLResponse(content=html_content)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Statistics Endpoint
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/stats")
+async def get_statistics(db: Session = Depends(get_db)):
+    """Genel istatistikler"""
+    from sqlalchemy import func
+    
+    total_customers = db.query(func.count(Customer.id)).scalar()
+    total_offers = db.query(func.count(Offer.id)).scalar()
+    
+    total_savings = db.query(func.sum(Offer.savings_amount)).filter(
+        Offer.status == "accepted"
+    ).scalar() or 0
+    
+    offers_by_status = db.query(
+        Offer.status,
+        func.count(Offer.id)
+    ).group_by(Offer.status).all()
+    
+    return {
+        "total_customers": total_customers,
+        "total_offers": total_offers,
+        "total_savings_accepted": round(total_savings, 2),
+        "offers_by_status": {status: count for status, count in offers_by_status}
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Field Patching Endpoint (Eksik alan düzeltme)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.patch("/extraction/patch-fields")
+async def patch_extraction_fields(
+    extraction: InvoiceExtraction,
+    patches: dict
+):
+    """
+    Extraction JSON'ına kullanıcı düzeltmelerini uygula ve tekrar validate et.
+    
+    Kullanım: UI'da eksik alan soruldu, kullanıcı cevapladı, bu endpoint'e gönder.
+    
+    Body örneği:
+    {
+        "extraction": { ... mevcut extraction ... },
+        "patches": {
+            "consumption_kwh": 168330,
+            "current_active_unit_price_tl_per_kwh": 3.87927
+        }
+    }
+    
+    Returns: Güncellenmiş extraction + yeni validation
+    """
+    # Extraction'ı dict'e çevir
+    extraction_dict = extraction.model_dump()
+    
+    # Patch'leri uygula
+    for field_name, new_value in patches.items():
+        if field_name in extraction_dict:
+            # FieldValue formatında güncelle
+            if isinstance(extraction_dict[field_name], dict) and "value" in extraction_dict[field_name]:
+                extraction_dict[field_name]["value"] = new_value
+                extraction_dict[field_name]["confidence"] = 1.0  # Kullanıcı girişi = %100 güven
+                extraction_dict[field_name]["evidence"] = "Kullanıcı tarafından manuel girildi"
+    
+    # Güncellenmiş extraction'ı oluştur
+    updated_extraction = InvoiceExtraction(**extraction_dict)
+    
+    # Tekrar validate et
+    validation = validate_extraction(updated_extraction)
+    
+    return {
+        "extraction": updated_extraction.model_dump(),
+        "validation": validation.model_dump(),
+        "patched_fields": list(patches.keys())
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Suggested Fix Application Endpoint
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/extraction/apply-suggested-fixes")
+async def apply_suggested_fixes(
+    extraction: InvoiceExtraction,
+    validation: ValidationResult
+):
+    """
+    Validation'daki suggested_fixes'ları otomatik uygula.
+    
+    Kullanım: UI'da "Önerileri Uygula" butonu tıklandığında.
+    """
+    if not validation.suggested_fixes:
+        return {
+            "extraction": extraction.model_dump(),
+            "validation": validation.model_dump(),
+            "applied_fixes": []
+        }
+    
+    # Extraction'ı dict'e çevir
+    extraction_dict = extraction.model_dump()
+    applied_fixes = []
+    
+    # Suggested fix'leri uygula
+    for fix in validation.suggested_fixes:
+        field_name = fix.field_name
+        if field_name in extraction_dict:
+            if isinstance(extraction_dict[field_name], dict) and "value" in extraction_dict[field_name]:
+                extraction_dict[field_name]["value"] = fix.suggested_value
+                extraction_dict[field_name]["confidence"] = fix.confidence
+                extraction_dict[field_name]["evidence"] = f"Türetildi: {fix.basis}"
+                applied_fixes.append({
+                    "field": field_name,
+                    "value": fix.suggested_value,
+                    "basis": fix.basis
+                })
+    
+    # Güncellenmiş extraction'ı oluştur
+    updated_extraction = InvoiceExtraction(**extraction_dict)
+    
+    # Tekrar validate et
+    new_validation = validate_extraction(updated_extraction)
+    
+    return {
+        "extraction": updated_extraction.model_dump(),
+        "validation": new_validation.model_dump(),
+        "applied_fixes": applied_fixes
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Invoice Management Endpoints (Durum Takipli)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/invoices", response_model=dict)
+async def upload_invoice(
+    file: UploadFile = File(...),
+    reuse: bool = Query(default=False, description="Aynı hash varsa mevcut invoice'ı döndür"),
+    db: Session = Depends(get_db),
+    _: None = Depends(require_api_key),
+    tenant_id: str = Depends(lambda x_tenant_id: __import__('app.services.tenant', fromlist=['get_tenant_id']).get_tenant_id(x_tenant_id))
+):
+    """
+    Fatura yükle ve kaydet.
+    - Görsel: EXIF fix + preprocessing → JPEG
+    - PDF: Page1 render → preprocessing → JPEG
+    Durum: UPLOADED olarak başlar.
+    
+    Args:
+        reuse: True ise aynı hash'e sahip mevcut invoice döndürülür (cache)
+    
+    Storage: Local veya S3/MinIO (config'e göre)
+    Multi-tenant: X-Tenant-Id header ile izolasyon
+    """
+    # Import tenant dependency properly
+    from .services.tenant import get_tenant_id as _get_tenant
+    
+    content = await file.read()
+    
+    # Validate file
+    validate_uploaded_file(file, content)
+    
+    # Check if same file already exists (by hash) within tenant
+    file_hash = hashlib.sha256(content).hexdigest()
+    existing = db.query(Invoice).filter(
+        Invoice.file_hash == file_hash,
+        Invoice.tenant_id == tenant_id
+    ).first()
+    
+    if existing:
+        if reuse:
+            # Return existing invoice (cache hit)
+            return {
+                "id": existing.id,
+                "tenant_id": existing.tenant_id,
+                "source_filename": existing.source_filename,
+                "status": existing.status.value,
+                "storage_page1_ref": existing.storage_page1_ref,
+                "message": "Bu dosya daha önce yüklenmiş (cache)",
+                "is_duplicate": True,
+                "reused": True
+            }
+        else:
+            # Warn but create new (default behavior)
+            logger.info(f"Duplicate file detected for tenant {tenant_id}, creating new record")
+    
+    # Get storage backend
+    from .services.storage import get_storage
+    storage = get_storage()
+    
+    # Generate unique invoice key (include tenant for S3 organization)
+    import uuid
+    invoice_key = str(uuid.uuid4())
+    storage_prefix = f"{tenant_id}/invoices/{invoice_key}" if tenant_id != "default" else f"invoices/{invoice_key}"
+    
+    page1_ref = None
+    original_ref = None
+    final_content_type = file.content_type
+    
+    if file.content_type in ALLOWED_IMAGE_MIME_TYPES:
+        # ═══════════════════════════════════════════════════════════════════
+        # GÖRSEL: EXIF fix + preprocessing
+        # ═══════════════════════════════════════════════════════════════════
+        try:
+            processed_bytes, processed_ct = preprocess_image_bytes(
+                content,
+                max_width=2000,
+                jpeg_quality=85,
+                output_format="JPEG"
+            )
+            final_content_type = processed_ct
+            
+            # Save to storage backend
+            ext = "jpg" if processed_ct == "image/jpeg" else "png"
+            original_ref = storage.put_bytes(
+                key=f"{storage_prefix}/original.{ext}",
+                data=processed_bytes,
+                content_type=processed_ct
+            )
+            logger.info(f"Image preprocessed and saved: {original_ref}")
+            
+        except Exception as e:
+            logger.error(f"Image preprocessing failed: {e}")
+            # Fallback: save original
+            ext = os.path.splitext(file.filename)[1].lower() or ".bin"
+            original_ref = storage.put_bytes(
+                key=f"{storage_prefix}/original{ext}",
+                data=content,
+                content_type=file.content_type
+            )
+            final_content_type = file.content_type
+    
+    elif file.content_type == ALLOWED_PDF_MIME_TYPE:
+        # ═══════════════════════════════════════════════════════════════════
+        # PDF: Save original → Render page1 → Preprocess
+        # ═══════════════════════════════════════════════════════════════════
+        
+        # Save original PDF to storage
+        original_ref = storage.put_bytes(
+            key=f"{storage_prefix}/original.pdf",
+            data=content,
+            content_type="application/pdf"
+        )
+        final_content_type = "application/pdf"
+        
+        try:
+            # PDF render için temp dosya kullan (pypdfium2 path istiyor)
+            import tempfile
+            with tempfile.TemporaryDirectory() as td:
+                pdf_path = os.path.join(td, "tmp.pdf")
+                with open(pdf_path, "wb") as f:
+                    f.write(content)
+                
+                # Render page 1 to PNG
+                page1_png_path = os.path.join(td, "p1.png")
+                render_pdf_first_page(pdf_path, page1_png_path, scale=2.5)
+                
+                # Read rendered page
+                with open(page1_png_path, "rb") as f:
+                    page1_bytes = f.read()
+            
+            # Preprocess the rendered page
+            processed_bytes, processed_ct = preprocess_image_bytes(
+                page1_bytes,
+                max_width=2200,
+                jpeg_quality=88,
+                output_format="JPEG"
+            )
+            
+            # Save preprocessed page1 to storage
+            page1_ref = storage.put_bytes(
+                key=f"{storage_prefix}/page1.jpg",
+                data=processed_bytes,
+                content_type=processed_ct
+            )
+            
+            logger.info(f"PDF page1 rendered and preprocessed: {page1_ref}")
+            
+        except Exception as e:
+            logger.error(f"PDF render/preprocess failed: {e}")
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "pdf_render_error",
+                    "message": f"PDF işleme başarısız: {str(e)}"
+                }
+            )
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "unsupported_file_type",
+                "message": "Desteklenmeyen dosya formatı"
+            }
+        )
+    
+    # Create invoice record with ref fields and tenant
+    invoice = Invoice(
+        tenant_id=tenant_id,
+        source_filename=file.filename,
+        content_type=final_content_type,
+        storage_original_ref=original_ref,
+        storage_page1_ref=page1_ref,
+        file_hash=file_hash,
+        status=InvoiceStatus.UPLOADED
+    )
+    db.add(invoice)
+    db.commit()
+    db.refresh(invoice)
+    
+    return {
+        "id": invoice.id,
+        "tenant_id": invoice.tenant_id,
+        "source_filename": invoice.source_filename,
+        "content_type": invoice.content_type,
+        "storage_original_ref": invoice.storage_original_ref,
+        "storage_page1_ref": invoice.storage_page1_ref,
+        "status": invoice.status.value,
+        "created_at": invoice.created_at.isoformat(),
+        "is_duplicate": False,
+        "preprocessed": True
+    }
+
+
+@app.post("/invoices/{invoice_id}/extract", response_model=dict)
+async def extract_invoice(
+    invoice_id: str,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_api_key)
+):
+    """
+    Yüklenen faturayı analiz et.
+    - PDF: Preprocessed page1 JPEG kullanılır
+    - Görsel: Preprocessed JPEG kullanılır
+    Durum: UPLOADED → EXTRACTED veya FAILED
+    
+    Storage: Local veya S3/MinIO (config'e göre)
+    """
+    invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı")
+    
+    # Get storage backend
+    from .services.storage import get_storage
+    storage = get_storage()
+    
+    # Hangi görseli kullanacağız?
+    if invoice.content_type == "application/pdf":
+        # PDF için preprocessed page1 JPEG
+        if not invoice.storage_page1_ref:
+            raise HTTPException(
+                status_code=400,
+                detail="PDF page1 görseli yok. Upload aşamasında işlem başarısız olmuş."
+            )
+        image_ref = invoice.storage_page1_ref
+        mime_type = "image/jpeg"
+    else:
+        # Görsel için preprocessed dosya
+        image_ref = invoice.storage_original_ref
+        mime_type = invoice.content_type
+    
+    # Read image from storage backend
+    try:
+        content = storage.get_bytes(image_ref)
+    except Exception as e:
+        invoice.status = InvoiceStatus.FAILED
+        invoice.error_message = f"Görsel dosyası okunamadı: {str(e)}"
+        db.commit()
+        raise HTTPException(status_code=404, detail=f"Görsel dosyası storage'da bulunamadı: {image_ref}")
+    
+    # Extract
+    try:
+        extraction = extract_invoice_data(content, mime_type)
+        invoice.extraction_json = extraction.model_dump()
+        invoice.vendor_guess = extraction.vendor
+        invoice.invoice_period = extraction.invoice_period or None
+        invoice.status = InvoiceStatus.EXTRACTED
+        invoice.error_message = None
+        db.commit()
+        
+        return {
+            "id": invoice.id,
+            "status": invoice.status.value,
+            "extraction": extraction.model_dump()
+        }
+    except ExtractionError as e:
+        invoice.status = InvoiceStatus.FAILED
+        invoice.error_message = str(e)
+        db.commit()
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "extraction_error",
+                "message": str(e),
+                "retry": True
+            }
+        )
+    except Exception as e:
+        invoice.status = InvoiceStatus.FAILED
+        invoice.error_message = str(e)
+        db.commit()
+        raise HTTPException(status_code=500, detail=f"Extraction hatası: {str(e)}")
+
+
+@app.post("/invoices/{invoice_id}/validate", response_model=dict)
+async def validate_invoice(
+    invoice_id: str,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_api_key)
+):
+    """
+    Extraction sonucunu doğrula.
+    Durum: EXTRACTED → READY veya NEEDS_INPUT
+    """
+    invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı")
+    
+    if not invoice.extraction_json:
+        raise HTTPException(status_code=400, detail="Önce extraction yapılmalı")
+    
+    extraction = InvoiceExtraction(**invoice.extraction_json)
+    validation = validate_extraction(extraction)
+    
+    invoice.validation_json = validation.model_dump()
+    invoice.status = InvoiceStatus.READY if validation.is_ready_for_pricing else InvoiceStatus.NEEDS_INPUT
+    db.commit()
+    
+    return {
+        "id": invoice.id,
+        "status": invoice.status.value,
+        "validation": validation.model_dump()
+    }
+
+
+@app.patch("/invoices/{invoice_id}/fields", response_model=dict)
+async def patch_invoice_fields(
+    invoice_id: str,
+    patches: dict,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_api_key)
+):
+    """
+    Fatura alanlarını manuel düzelt ve tekrar validate et.
+    """
+    invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı")
+    
+    if not invoice.extraction_json:
+        raise HTTPException(status_code=400, detail="Önce extraction yapılmalı")
+    
+    extraction_dict = invoice.extraction_json.copy()
+    
+    # Apply patches
+    for field_name, new_value in patches.items():
+        if field_name in extraction_dict:
+            if isinstance(extraction_dict[field_name], dict) and "value" in extraction_dict[field_name]:
+                extraction_dict[field_name]["value"] = float(new_value) if new_value is not None else None
+                extraction_dict[field_name]["confidence"] = 1.0
+                extraction_dict[field_name]["evidence"] = "manual_patch"
+    
+    # Update and validate
+    extraction = InvoiceExtraction(**extraction_dict)
+    validation = validate_extraction(extraction)
+    
+    invoice.extraction_json = extraction.model_dump()
+    invoice.validation_json = validation.model_dump()
+    invoice.status = InvoiceStatus.READY if validation.is_ready_for_pricing else InvoiceStatus.NEEDS_INPUT
+    db.commit()
+    
+    return {
+        "id": invoice.id,
+        "status": invoice.status.value,
+        "extraction": extraction.model_dump(),
+        "validation": validation.model_dump(),
+        "patched_fields": list(patches.keys())
+    }
+
+
+@app.get("/invoices/{invoice_id}", response_model=dict)
+async def get_invoice(
+    invoice_id: str,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_api_key)
+):
+    """Fatura detayı"""
+    invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı")
+    
+    return {
+        "id": invoice.id,
+        "source_filename": invoice.source_filename,
+        "content_type": invoice.content_type,
+        "storage_original_ref": invoice.storage_original_ref,
+        "storage_page1_ref": invoice.storage_page1_ref,
+        "vendor_guess": invoice.vendor_guess,
+        "invoice_period": invoice.invoice_period,
+        "status": invoice.status.value,
+        "error_message": invoice.error_message,
+        "extraction_json": invoice.extraction_json,
+        "validation_json": invoice.validation_json,
+        "created_at": invoice.created_at.isoformat(),
+        "updated_at": invoice.updated_at.isoformat()
+    }
+
+
+@app.get("/invoices", response_model=List[dict])
+async def list_invoices(
+    status: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_api_key)
+):
+    """Fatura listesi"""
+    query = db.query(Invoice)
+    
+    if status:
+        try:
+            status_enum = InvoiceStatus(status)
+            query = query.filter(Invoice.status == status_enum)
+        except ValueError:
+            pass
+    
+    invoices = query.order_by(Invoice.created_at.desc()).offset(skip).limit(limit).all()
+    
+    return [
+        {
+            "id": inv.id,
+            "source_filename": inv.source_filename,
+            "vendor_guess": inv.vendor_guess,
+            "invoice_period": inv.invoice_period,
+            "status": inv.status.value,
+            "created_at": inv.created_at.isoformat()
+        }
+        for inv in invoices
+    ]
+
+
+@app.get("/invoices/{invoice_id}/download")
+async def download_invoice_file(
+    invoice_id: str,
+    asset: str = Query(default="original", regex="^(original|page1)$", description="Hangi dosya: original veya page1"),
+    expires: int = Query(default=300, ge=60, le=3600, description="Presigned URL geçerlilik süresi (saniye)"),
+    db: Session = Depends(get_db),
+    _: None = Depends(require_api_key)
+):
+    """
+    Fatura dosyasını indir.
+    
+    Args:
+        asset: "original" (orijinal dosya) veya "page1" (PDF'nin ilk sayfası)
+        expires: Presigned URL geçerlilik süresi (60-3600 saniye, default 300)
+    
+    Returns:
+        - S3 storage: JSON with presigned URL
+        - Local storage: Dosya stream (FileResponse)
+    
+    Response (S3):
+        {"type": "presigned_url", "url": "https://...", "expires_seconds": 300}
+    
+    Response (Local):
+        Binary file stream
+    """
+    invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı")
+    
+    # Hangi ref'i kullanacağız?
+    if asset == "original":
+        ref = invoice.storage_original_ref
+        filename = invoice.source_filename or "invoice"
+        content_type = invoice.content_type
+    else:
+        ref = invoice.storage_page1_ref
+        filename = f"{os.path.splitext(invoice.source_filename or 'invoice')[0]}_page1.jpg"
+        content_type = "image/jpeg"
+    
+    if not ref:
+        raise HTTPException(status_code=404, detail=f"{asset} dosyası bulunamadı")
+    
+    # Get storage backend
+    from .services.storage import get_storage
+    from .services.storage_local import LocalStorage
+    storage = get_storage()
+    
+    # 1) S3 ise presigned URL dön
+    presigned_url = storage.get_presigned_url(ref, expires_in=expires)
+    if presigned_url:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({
+            "type": "presigned_url",
+            "url": presigned_url,
+            "expires_seconds": expires,
+            "filename": filename,
+            "content_type": content_type
+        })
+    
+    # 2) Local ise dosyayı stream et
+    if isinstance(storage, LocalStorage):
+        try:
+            local_path = storage.resolve_local_path(ref)
+        except ValueError as e:
+            logger.error(f"Path traversal attempt: {ref}")
+            raise HTTPException(status_code=400, detail=str(e))
+        
+        if not os.path.exists(local_path):
+            raise HTTPException(status_code=404, detail="Dosya storage'da bulunamadı")
+        
+        return FileResponse(
+            path=local_path,
+            filename=filename,
+            media_type=content_type
+        )
+    
+    # 3) Fallback: beklenmeyen backend
+    raise HTTPException(status_code=500, detail="Storage backend download not supported")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Async Job Endpoints (Queue-Ready)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/invoices/{invoice_id}/process", response_model=dict)
+async def process_invoice_async(
+    invoice_id: str,
+    force: bool = Query(default=False, description="FAILED invoice için zorla yeni job aç"),
+    db: Session = Depends(get_db),
+    _: None = Depends(require_api_key)
+):
+    """
+    Faturayı async olarak işle (extract + validate).
+    
+    Args:
+        force: True ise FAILED durumundaki invoice için yeni job açar
+    
+    Returns:
+        202 Accepted + job_id
+    
+    UI akışı:
+        1. POST /invoices/{id}/process → job_id al
+        2. GET /jobs/{job_id} ile polling
+        3. status=SUCCEEDED olunca invoice READY/NEEDS_INPUT
+    
+    Not: Aynı invoice için aktif job varsa yeni oluşturmaz, mevcut job'ı döndürür.
+    """
+    invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Fatura bulunamadı")
+    
+    # FAILED invoice için force=True gerekli (retry mekanizması)
+    if invoice.status == InvoiceStatus.FAILED and not force:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "invoice_failed",
+                "message": "Bu fatura daha önce başarısız oldu. Tekrar denemek için force=true kullanın.",
+                "hint": "POST /invoices/{id}/process?force=true"
+            }
+        )
+    
+    # Idempotent job oluştur
+    job, created_new = enqueue_job_idempotent(
+        db=db,
+        invoice_id=invoice_id,
+        job_type=JobType.EXTRACT_AND_VALIDATE
+    )
+    
+    # Yeni job oluşturulduysa invoice'ı PROCESSING yap
+    if created_new:
+        invoice.status = InvoiceStatus.PROCESSING
+        invoice.error_message = None  # Önceki hatayı temizle
+        db.add(invoice)
+        db.commit()
+        logger.info(f"Job created: {job.id} for invoice {invoice_id}")
+        
+        # Redis varsa kuyruğa ekle (opsiyonel)
+        try:
+            from .rq_adapter import enqueue_to_redis, is_redis_enabled
+            if is_redis_enabled():
+                enqueue_to_redis(job.id)
+                logger.info(f"Job {job.id} pushed to Redis queue")
+        except ImportError:
+            pass  # Redis modülleri yok, DB polling kullanılacak
+    else:
+        logger.info(f"Existing job returned: {job.id} for invoice {invoice_id}")
+    
+    # 202 Accepted
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=202,
+        content={
+            "job_id": job.id,
+            "invoice_id": invoice_id,
+            "status": job.status.value,
+            "message": "İşlem kuyruğa alındı" if created_new else "Fatura zaten işleniyor",
+            "created_new": created_new
+        }
+    )
+
+
+@app.get("/jobs/{job_id}", response_model=dict)
+async def get_job_status(
+    job_id: str,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_api_key)
+):
+    """
+    Job durumunu sorgula.
+    
+    Returns:
+        - status: QUEUED | RUNNING | SUCCEEDED | FAILED
+        - result: (SUCCEEDED ise) sonuç
+        - error: (FAILED ise) hata mesajı
+    """
+    job = get_job_by_id(db, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job bulunamadı")
+    
+    response = {
+        "job_id": job.id,
+        "invoice_id": job.invoice_id,
+        "job_type": job.job_type.value,
+        "status": job.status.value,
+        "created_at": job.created_at.isoformat(),
+    }
+    
+    if job.started_at:
+        response["started_at"] = job.started_at.isoformat()
+    
+    if job.finished_at:
+        response["finished_at"] = job.finished_at.isoformat()
+        response["duration_ms"] = int((job.finished_at - job.started_at).total_seconds() * 1000) if job.started_at else None
+    
+    if job.status == JobStatus.SUCCEEDED and job.result_json:
+        response["result"] = job.result_json
+    
+    if job.status == JobStatus.FAILED and job.error:
+        response["error"] = job.error
+    
+    return response
+
+
+@app.get("/invoices/{invoice_id}/jobs", response_model=List[dict])
+async def get_invoice_jobs(
+    invoice_id: str,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_api_key)
+):
+    """Invoice'a ait tüm job'ları listele."""
+    jobs = get_jobs_by_invoice(db, invoice_id)
+    
+    return [
+        {
+            "job_id": job.id,
+            "job_type": job.job_type.value,
+            "status": job.status.value,
+            "created_at": job.created_at.isoformat(),
+            "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+            "error": job.error if job.status == JobStatus.FAILED else None
+        }
+        for job in jobs
+    ]
+
+
+@app.get("/jobs", response_model=List[dict])
+async def list_all_jobs(
+    invoice_id: Optional[str] = Query(default=None, description="Belirli invoice'a ait job'lar"),
+    status: Optional[str] = Query(default=None, description="Job durumu: QUEUED, RUNNING, SUCCEEDED, FAILED"),
+    job_type: Optional[str] = Query(default=None, description="Job tipi: EXTRACT, VALIDATE, EXTRACT_AND_VALIDATE"),
+    limit: int = Query(default=50, ge=1, le=200, description="Maksimum sonuç sayısı"),
+    db: Session = Depends(get_db),
+    _: None = Depends(require_api_key)
+):
+    """
+    Tüm job'ları listele - filtreleme destekli.
+    
+    UI için altın:
+    - Invoice sayfasında "iş geçmişi" gösterirsin
+    - Hata ayıklama süper kolaylaşır
+    - Dashboard'da aktif işleri izlersin
+    """
+    # Enum dönüşümleri
+    status_enum = None
+    if status:
+        try:
+            status_enum = JobStatus(status)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Geçersiz status: {status}")
+    
+    job_type_enum = None
+    if job_type:
+        try:
+            job_type_enum = JobType(job_type)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Geçersiz job_type: {job_type}")
+    
+    jobs = list_jobs(
+        db=db,
+        invoice_id=invoice_id,
+        status=status_enum,
+        job_type=job_type_enum,
+        limit=limit
+    )
+    
+    def dt(v):
+        return v.isoformat() if v else None
+    
+    return [
+        {
+            "job_id": j.id,
+            "invoice_id": j.invoice_id,
+            "job_type": j.job_type.value,
+            "status": j.status.value,
+            "payload_json": j.payload_json,
+            "result_json": j.result_json if j.status == JobStatus.SUCCEEDED else None,
+            "error": j.error if j.status == JobStatus.FAILED else None,
+            "created_at": dt(j.created_at),
+            "started_at": dt(j.started_at),
+            "finished_at": dt(j.finished_at),
+            "duration_ms": int((j.finished_at - j.started_at).total_seconds() * 1000) if j.finished_at and j.started_at else None
+        }
+        for j in jobs
+    ]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Webhook Management Endpoints
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/webhooks", response_model=dict)
+async def create_webhook(
+    url: str = Query(..., description="Webhook URL"),
+    events: str = Query(..., description="Virgülle ayrılmış event listesi"),
+    secret: Optional[str] = Query(default=None, description="HMAC signing secret"),
+    db: Session = Depends(get_db),
+    _: None = Depends(require_api_key),
+    tenant_id: str = Header(alias="X-Tenant-Id", default="default")
+):
+    """
+    Yeni webhook konfigürasyonu oluştur.
+    
+    Events:
+    - invoice.uploaded, invoice.extracted, invoice.failed
+    - offer.created, offer.sent, offer.viewed, offer.accepted, offer.rejected
+    - offer.contracting, offer.completed, offer.expired
+    - customer.created, customer.updated
+    """
+    from .services.webhook import create_webhook_config, WEBHOOK_EVENTS
+    
+    event_list = [e.strip() for e in events.split(",")]
+    
+    # Validate events
+    invalid = [e for e in event_list if e not in WEBHOOK_EVENTS]
+    if invalid:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "invalid_events",
+                "message": f"Geçersiz event tipleri: {invalid}",
+                "valid_events": WEBHOOK_EVENTS
+            }
+        )
+    
+    try:
+        config_id = create_webhook_config(
+            db=db,
+            tenant_id=tenant_id,
+            url=url,
+            events=event_list,
+            secret=secret
+        )
+        
+        return {
+            "id": config_id,
+            "url": url,
+            "events": event_list,
+            "message": "Webhook oluşturuldu"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/webhooks", response_model=List[dict])
+async def list_webhooks(
+    db: Session = Depends(get_db),
+    _: None = Depends(require_api_key),
+    tenant_id: str = Header(alias="X-Tenant-Id", default="default")
+):
+    """Tenant'ın webhook konfigürasyonlarını listele."""
+    from .services.webhook import get_webhook_configs
+    
+    configs = get_webhook_configs(db, tenant_id, active_only=False)
+    
+    return [
+        {
+            "id": c.id,
+            "url": c.url,
+            "events": c.events,
+            "is_active": c.is_active == 1,
+            "success_count": c.success_count,
+            "failure_count": c.failure_count,
+            "last_triggered_at": c.last_triggered_at.isoformat() if c.last_triggered_at else None,
+            "created_at": c.created_at.isoformat()
+        }
+        for c in configs
+    ]
+
+
+@app.delete("/webhooks/{webhook_id}")
+async def delete_webhook(
+    webhook_id: int,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_api_key),
+    tenant_id: str = Header(alias="X-Tenant-Id", default="default")
+):
+    """Webhook konfigürasyonunu sil."""
+    from .database import WebhookConfig
+    
+    config = db.query(WebhookConfig).filter(
+        WebhookConfig.id == webhook_id,
+        WebhookConfig.tenant_id == tenant_id
+    ).first()
+    
+    if not config:
+        raise HTTPException(status_code=404, detail="Webhook bulunamadı")
+    
+    db.delete(config)
+    db.commit()
+    
+    return {"status": "ok", "message": "Webhook silindi"}
+
+
+@app.put("/webhooks/{webhook_id}/toggle")
+async def toggle_webhook(
+    webhook_id: int,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_api_key),
+    tenant_id: str = Header(alias="X-Tenant-Id", default="default")
+):
+    """Webhook'u aktif/pasif yap."""
+    from .database import WebhookConfig
+    
+    config = db.query(WebhookConfig).filter(
+        WebhookConfig.id == webhook_id,
+        WebhookConfig.tenant_id == tenant_id
+    ).first()
+    
+    if not config:
+        raise HTTPException(status_code=404, detail="Webhook bulunamadı")
+    
+    config.is_active = 0 if config.is_active == 1 else 1
+    db.commit()
+    
+    return {
+        "status": "ok",
+        "is_active": config.is_active == 1,
+        "message": f"Webhook {'aktif' if config.is_active else 'pasif'} yapıldı"
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Audit Log Endpoints
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/audit-logs", response_model=List[dict])
+async def list_audit_logs(
+    action: Optional[str] = Query(default=None, description="Aksiyon filtresi"),
+    target_type: Optional[str] = Query(default=None, description="Hedef tipi: invoice, offer, customer"),
+    target_id: Optional[str] = Query(default=None, description="Hedef ID"),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    _: None = Depends(require_api_key),
+    tenant_id: str = Header(alias="X-Tenant-Id", default="default")
+):
+    """
+    Audit logları listele.
+    
+    Kim ne zaman ne yaptı - tüm önemli aksiyonlar loglanır.
+    """
+    from .services.audit import get_audit_logs
+    from .models import AuditAction
+    
+    action_enum = None
+    if action:
+        try:
+            action_enum = AuditAction(action)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Geçersiz action: {action}. Geçerli değerler: {[a.value for a in AuditAction]}"
+            )
+    
+    logs = get_audit_logs(
+        db=db,
+        tenant_id=tenant_id,
+        action=action_enum,
+        target_type=target_type,
+        target_id=target_id,
+        skip=skip,
+        limit=limit
+    )
+    
+    return [
+        {
+            "id": log.id,
+            "action": log.action.value,
+            "actor_type": log.actor_type,
+            "actor_id": log.actor_id,
+            "target_type": log.target_type,
+            "target_id": log.target_id,
+            "details": log.details_json,
+            "ip_address": log.ip_address,
+            "created_at": log.created_at.isoformat()
+        }
+        for log in logs
+    ]
+
+
+@app.get("/audit-logs/stats", response_model=dict)
+async def get_audit_stats(
+    db: Session = Depends(get_db),
+    _: None = Depends(require_api_key),
+    tenant_id: str = Header(alias="X-Tenant-Id", default="default")
+):
+    """Audit log istatistikleri."""
+    from sqlalchemy import func
+    from .database import AuditLog
+    from datetime import datetime, timedelta
+    
+    # Son 24 saat
+    since = datetime.utcnow() - timedelta(hours=24)
+    
+    # Action bazlı sayılar
+    action_counts = db.query(
+        AuditLog.action,
+        func.count(AuditLog.id)
+    ).filter(
+        AuditLog.tenant_id == tenant_id,
+        AuditLog.created_at >= since
+    ).group_by(AuditLog.action).all()
+    
+    # Toplam
+    total = db.query(func.count(AuditLog.id)).filter(
+        AuditLog.tenant_id == tenant_id
+    ).scalar()
+    
+    return {
+        "total_logs": total,
+        "last_24h": {action.value: count for action, count in action_counts},
+        "period": "24h"
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ADMIN: PİYASA REFERANS FİYATLARI (PTF/YEKDEM)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/admin/market-prices")
+async def list_market_prices(
+    db: Session = Depends(get_db),
+    _: str = Depends(require_admin_key),
+    limit: int = Query(default=24, description="Son kaç dönem")
+):
+    """
+    Tüm piyasa referans fiyatlarını listele.
+    
+    Requires: X-Admin-Key header
+    
+    Returns:
+        PTF/YEKDEM dönem listesi
+    """
+    from .market_prices import get_all_market_prices
+    
+    prices = get_all_market_prices(db, limit=limit)
+    
+    return {
+        "status": "ok",
+        "count": len(prices),
+        "prices": [
+            {
+                "period": p.period,
+                "ptf_tl_per_mwh": p.ptf_tl_per_mwh,
+                "yekdem_tl_per_mwh": p.yekdem_tl_per_mwh,
+                "source": p.source,
+                "is_locked": p.is_locked
+            }
+            for p in prices
+        ]
+    }
+
+
+@app.get("/admin/market-prices/{period}")
+async def get_market_price(
+    period: str,
+    db: Session = Depends(get_db),
+    _: str = Depends(require_admin_key)
+):
+    """
+    Belirli dönem için piyasa fiyatlarını getir.
+    
+    Requires: X-Admin-Key header
+    
+    Args:
+        period: Dönem (YYYY-MM format)
+    """
+    from .market_prices import get_market_prices_or_default
+    
+    prices = get_market_prices_or_default(db, period)
+    
+    return {
+        "status": "ok",
+        "period": prices.period,
+        "ptf_tl_per_mwh": prices.ptf_tl_per_mwh,
+        "yekdem_tl_per_mwh": prices.yekdem_tl_per_mwh,
+        "source": prices.source,
+        "is_locked": prices.is_locked
+    }
+
+
+@app.post("/admin/market-prices")
+async def upsert_market_price(
+    period: str = Form(..., description="Dönem (YYYY-MM)"),
+    ptf_tl_per_mwh: float = Form(..., description="PTF (TL/MWh)"),
+    yekdem_tl_per_mwh: float = Form(default=0, description="YEKDEM (TL/MWh)"),
+    source_note: Optional[str] = Form(default=None, description="Kaynak notu"),
+    db: Session = Depends(get_db),
+    admin_key: str = Depends(require_admin_key)
+):
+    """
+    Piyasa fiyatlarını ekle veya güncelle.
+    
+    Requires: X-Admin-Key header
+    Kilitli dönemler güncellenemez (409 Conflict).
+    
+    Args:
+        period: Dönem (YYYY-MM format)
+        ptf_tl_per_mwh: PTF fiyatı (TL/MWh)
+        yekdem_tl_per_mwh: YEKDEM fiyatı (TL/MWh)
+        source_note: Kaynak notu (opsiyonel)
+    """
+    from .market_prices import upsert_market_prices, get_market_prices
+    
+    # Kilitli dönem kontrolü
+    existing = get_market_prices(db, period)
+    if existing and existing.is_locked:
+        logger.warning(f"[ADMIN] Attempted to update locked period: {period}")
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "period_locked",
+                "message": f"Dönem {period} kilitli, güncellenemez. Önce kilidi kaldırın."
+            }
+        )
+    
+    success, message = upsert_market_prices(
+        db=db,
+        period=period,
+        ptf_tl_per_mwh=ptf_tl_per_mwh,
+        yekdem_tl_per_mwh=yekdem_tl_per_mwh,
+        source_note=source_note,
+        updated_by="admin"  # TODO: Gerçek kullanıcı bilgisi
+    )
+    
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+    
+    return {
+        "status": "ok",
+        "message": message,
+        "period": period,
+        "ptf_tl_per_mwh": ptf_tl_per_mwh,
+        "yekdem_tl_per_mwh": yekdem_tl_per_mwh
+    }
+
+
+@app.post("/admin/market-prices/{period}/lock")
+async def lock_market_price(
+    period: str,
+    db: Session = Depends(get_db),
+    _: str = Depends(require_admin_key)
+):
+    """
+    Dönem fiyatlarını kilitle (geçmiş dönem koruması).
+    
+    Requires: X-Admin-Key header
+    """
+    from .market_prices import lock_market_prices
+    
+    success, message = lock_market_prices(db, period)
+    
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+    
+    logger.info(f"[ADMIN] Period locked: {period}")
+    return {"status": "ok", "message": message}
+
+
+@app.post("/admin/market-prices/{period}/unlock")
+async def unlock_market_price(
+    period: str,
+    db: Session = Depends(get_db),
+    _: str = Depends(require_admin_key)
+):
+    """
+    Dönem kilidini kaldır (dikkatli kullanın!).
+    
+    Requires: X-Admin-Key header
+    """
+    from .database import MarketReferencePrice
+    
+    record = db.query(MarketReferencePrice).filter(
+        MarketReferencePrice.period == period
+    ).first()
+    
+    if not record:
+        raise HTTPException(status_code=404, detail=f"Dönem {period} bulunamadı")
+    
+    record.is_locked = 0
+    db.commit()
+    
+    logger.warning(f"[ADMIN] Period unlocked: {period}")
+    return {"status": "ok", "message": f"Dönem {period} kilidi kaldırıldı"}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ADMIN: DAĞITIM TARİFELERİ (EPDK)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/admin/distribution-tariffs")
+async def list_distribution_tariffs(
+    db: Session = Depends(get_db),
+    _: str = Depends(require_admin_key)
+):
+    """
+    Tüm EPDK dağıtım tarifelerini listele (DB'den).
+    
+    Requires: X-Admin-Key header
+    """
+    from .database import DistributionTariffDB
+    
+    records = db.query(DistributionTariffDB).order_by(
+        DistributionTariffDB.tariff_group,
+        DistributionTariffDB.voltage_level,
+        DistributionTariffDB.term_type
+    ).all()
+    
+    tariffs = [
+        {
+            "id": r.id,
+            "tariff_group": r.tariff_group,
+            "voltage_level": r.voltage_level,
+            "term_type": r.term_type,
+            "unit_price_tl_per_kwh": r.unit_price_tl_per_kwh,
+            "key": f"{r.tariff_group}/{r.voltage_level}/{r.term_type}",
+            "valid_from": r.valid_from,
+            "valid_to": r.valid_to,
+            "source_note": r.source_note
+        }
+        for r in records
+    ]
+    
+    return {
+        "status": "ok",
+        "count": len(tariffs),
+        "tariffs": tariffs,
+        "note": "DB'den (EPDK tarifeleri)"
+    }
+
+
+@app.get("/admin/distribution-tariffs/lookup")
+async def lookup_distribution_tariff(
+    tariff_group: str = Query(..., description="Tarife grubu (Sanayi, Kamu, Ticarethane, vb.)"),
+    voltage_level: str = Query(..., description="Gerilim (AG, OG)"),
+    term_type: str = Query(..., description="Terim tipi (Tek Terim, Çift Terim)"),
+    _: str = Depends(require_admin_key)
+):
+    """
+    Tarife bilgilerine göre dağıtım birim fiyatını getir.
+    
+    Requires: X-Admin-Key header
+    """
+    from .distribution_tariffs import get_distribution_unit_price
+    
+    result = get_distribution_unit_price(tariff_group, voltage_level, term_type)
+    
+    return {
+        "status": "ok" if result.success else "error",
+        "success": result.success,
+        "unit_price_tl_per_kwh": result.unit_price,
+        "tariff_key": result.tariff_key,
+        "normalized": {
+            "group": result.normalized_group,
+            "voltage": result.normalized_voltage,
+            "term": result.normalized_term
+        },
+        "error_message": result.error_message
+    }
+
+
+@app.get("/admin/distribution-tariffs/parse")
+async def parse_tariff_string(
+    tariff_string: str = Query(..., description="Tam tarife string'i (örn: 'SANAYİ OG ÇİFT TERİM')")
+):
+    """
+    Tam tarife string'inden dağıtım birim fiyatını getir.
+    """
+    from .distribution_tariffs import get_distribution_from_tariff_string
+    
+    result = get_distribution_from_tariff_string(tariff_string)
+    
+    return {
+        "status": "ok" if result.success else "error",
+        "input": tariff_string,
+        "success": result.success,
+        "unit_price_tl_per_kwh": result.unit_price,
+        "tariff_key": result.tariff_key,
+        "error_message": result.error_message
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# INCIDENT ENDPOINTS (Sprint 3)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/admin/incidents")
+async def list_incidents(
+    status: Optional[str] = Query(default=None, description="Filtre: OPEN, ACK, RESOLVED"),
+    severity: Optional[str] = Query(default=None, description="Filtre: S1, S2, S3, S4"),
+    category: Optional[str] = Query(default=None, description="Filtre: PARSE_FAIL, TARIFF_MISSING, vb."),
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    admin_key: str = Depends(require_admin_key)
+):
+    """
+    Incident listesi getir.
+    
+    Filtreler:
+    - status: OPEN, ACK, RESOLVED
+    - severity: S1 (kritik), S2 (yüksek), S3 (orta), S4 (düşük)
+    - category: PARSE_FAIL, TARIFF_MISSING, PRICE_MISSING, MISMATCH, OUTLIER, vb.
+    """
+    from .incident_service import get_incidents
+    
+    incidents = get_incidents(
+        db=db,
+        tenant_id="default",
+        status=status,
+        severity=severity,
+        category=category,
+        limit=limit
+    )
+    
+    return {
+        "status": "ok",
+        "count": len(incidents),
+        "incidents": incidents
+    }
+
+
+@app.get("/admin/incidents/{incident_id}")
+async def get_incident(
+    incident_id: int,
+    db: Session = Depends(get_db),
+    admin_key: str = Depends(require_admin_key)
+):
+    """
+    Tek incident detayı getir.
+    """
+    from .database import Incident
+    
+    incident = db.query(Incident).filter(Incident.id == incident_id).first()
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident bulunamadı")
+    
+    return {
+        "id": incident.id,
+        "trace_id": incident.trace_id,
+        "tenant_id": incident.tenant_id,
+        "invoice_id": incident.invoice_id,
+        "offer_id": incident.offer_id,
+        "severity": incident.severity,
+        "category": incident.category,
+        "message": incident.message,
+        "details": incident.details_json,
+        "status": incident.status,
+        "resolution_note": incident.resolution_note,
+        "resolved_by": incident.resolved_by,
+        "resolved_at": incident.resolved_at.isoformat() if incident.resolved_at else None,
+        "created_at": incident.created_at.isoformat() if incident.created_at else None,
+        "updated_at": incident.updated_at.isoformat() if incident.updated_at else None
+    }
+
+
+@app.patch("/admin/incidents/{incident_id}")
+async def update_incident(
+    incident_id: int,
+    status: str = Form(..., description="Yeni durum: OPEN, ACK, RESOLVED"),
+    resolution_note: Optional[str] = Form(default=None, description="Çözüm notu"),
+    resolved_by: Optional[str] = Form(default=None, description="Çözen kişi"),
+    db: Session = Depends(get_db),
+    admin_key: str = Depends(require_admin_key)
+):
+    """
+    Incident durumunu güncelle.
+    
+    Status değerleri:
+    - OPEN: Açık (yeni)
+    - ACK: Kabul edildi (inceleniyor)
+    - RESOLVED: Çözüldü
+    """
+    from .incident_service import update_incident_status
+    
+    valid_statuses = ["OPEN", "ACK", "RESOLVED"]
+    if status not in valid_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Geçersiz status. Geçerli değerler: {valid_statuses}"
+        )
+    
+    success = update_incident_status(
+        db=db,
+        incident_id=incident_id,
+        status=status,
+        resolution_note=resolution_note,
+        resolved_by=resolved_by
+    )
+    
+    if not success:
+        raise HTTPException(status_code=404, detail="Incident bulunamadı")
+    
+    return {
+        "status": "ok",
+        "message": f"Incident #{incident_id} durumu '{status}' olarak güncellendi"
+    }
+
+
+@app.get("/admin/incidents/stats")
+async def get_incident_stats(
+    db: Session = Depends(get_db),
+    admin_key: str = Depends(require_admin_key)
+):
+    """
+    Incident istatistikleri.
+    """
+    from .database import Incident
+    from sqlalchemy import func
+    
+    # Status bazlı sayılar
+    status_counts = db.query(
+        Incident.status,
+        func.count(Incident.id)
+    ).filter(
+        Incident.tenant_id == "default"
+    ).group_by(Incident.status).all()
+    
+    # Severity bazlı sayılar
+    severity_counts = db.query(
+        Incident.severity,
+        func.count(Incident.id)
+    ).filter(
+        Incident.tenant_id == "default"
+    ).group_by(Incident.severity).all()
+    
+    # Category bazlı sayılar
+    category_counts = db.query(
+        Incident.category,
+        func.count(Incident.id)
+    ).filter(
+        Incident.tenant_id == "default"
+    ).group_by(Incident.category).all()
+    
+    return {
+        "status": "ok",
+        "by_status": {s: c for s, c in status_counts},
+        "by_severity": {s: c for s, c in severity_counts},
+        "by_category": {c: cnt for c, cnt in category_counts},
+        "total": sum(c for _, c in status_counts)
+    }
+
+
+@app.get("/admin/system-health")
+async def get_system_health(
+    db: Session = Depends(get_db),
+    admin_key: str = Depends(require_admin_key),
+    reference_date: Optional[str] = Query(default=None, description="Referans tarih (YYYY-MM-DD)"),
+    period_days: int = Query(default=7, description="Dönem uzunluğu (gün)")
+):
+    """
+    Sistem sağlık raporu (Sprint 8.6).
+    
+    İçerik:
+    - Dönem istatistikleri (mismatch, S1/S2, OCR suspect)
+    - Drift alerts (triple guard: n>=20 AND delta>=5 AND rate>=2x)
+    - Top offenders (provider bazlı mismatch RATE)
+    - Mismatch ratio histogram
+    - Action class dağılımı
+    """
+    from datetime import date as date_type
+    from .incident_metrics import generate_system_health_report
+    
+    # Parse reference date
+    ref_date = None
+    if reference_date:
+        try:
+            ref_date = date_type.fromisoformat(reference_date)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid date format: {reference_date}. Use YYYY-MM-DD."
+            )
+    
+    report = generate_system_health_report(
+        db=db,
+        tenant_id="default",
+        reference_date=ref_date,
+        period_days=period_days,
+    )
+    
+    return {
+        "status": "ok",
+        "report": report.to_dict(),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SPRINT 8.7: FEEDBACK LOOP ENDPOINTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@app.patch("/admin/incidents/{incident_id}/feedback")
+async def submit_incident_feedback(
+    incident_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    admin_key: str = Depends(require_admin_key),
+):
+    """
+    Submit feedback for a resolved incident (Sprint 8.7).
+    
+    UPSERT semantics: each submission overwrites previous feedback.
+    Both feedback_at and updated_at are always updated.
+    
+    Request body:
+    {
+        "action_taken": "VERIFIED_OCR" | "VERIFIED_LOGIC" | "ACCEPTED_ROUNDING" | "ESCALATED" | "NO_ACTION_REQUIRED",
+        "was_hint_correct": true | false,
+        "actual_root_cause": "optional string (max 200 char)",
+        "resolution_time_seconds": 120
+    }
+    
+    Error codes:
+    - incident_not_found (404): Incident does not exist
+    - incident_not_resolved (400): Incident is not in RESOLVED status
+    - invalid_feedback_action (400): action_taken is not a valid enum value
+    - invalid_feedback_data (400): Validation error (missing was_hint_correct, negative time, etc.)
+    """
+    from .incident_metrics import submit_feedback, FeedbackValidationError
+    
+    # Parse request body
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "invalid_feedback_data", "message": "Invalid JSON body"}
+        )
+    
+    # Get user_id from auth context (admin_key for now)
+    # In production, this would come from JWT/session
+    user_id = f"admin:{admin_key[:8]}..." if admin_key else "unknown"
+    
+    try:
+        incident = submit_feedback(
+            db=db,
+            incident_id=incident_id,
+            payload=payload,
+            user_id=user_id,
+        )
+        return {
+            "status": "ok",
+            "incident_id": incident.id,
+            "feedback": incident.feedback_json,
+        }
+    except ValueError as e:
+        # Incident not found
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "incident_not_found", "message": str(e)}
+        )
+    except FeedbackValidationError as e:
+        # Validation error (state guard, invalid action, etc.)
+        raise HTTPException(
+            status_code=400,
+            detail={"code": e.code, "message": e.message}
+        )
+
+
+@app.get("/admin/feedback-stats")
+async def get_feedback_stats(
+    db: Session = Depends(get_db),
+    admin_key: str = Depends(require_admin_key),
+    start_date: Optional[str] = Query(default=None, description="Başlangıç tarihi (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(default=None, description="Bitiş tarihi (YYYY-MM-DD)"),
+):
+    """
+    Get feedback calibration metrics (Sprint 8.7).
+    
+    Returns:
+    - hint_accuracy_rate: was_hint_correct=true / total_feedback
+    - action_class_accuracy: Per action class accuracy rates
+    - avg_resolution_time_by_class: Average resolution time per action class
+    - feedback_coverage: resolved_with_feedback / resolved_total
+    - total_feedback_count: Total number of feedback submissions
+    
+    All rates are null-safe: return 0.0 when denominator is 0.
+    """
+    from datetime import date as date_type
+    from .incident_metrics import get_feedback_stats as get_stats
+    
+    # Parse dates
+    start = None
+    end = None
+    
+    if start_date:
+        try:
+            start = date_type.fromisoformat(start_date)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid start_date format: {start_date}. Use YYYY-MM-DD."
+            )
+    
+    if end_date:
+        try:
+            end = date_type.fromisoformat(end_date)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid end_date format: {end_date}. Use YYYY-MM-DD."
+            )
+    
+    stats = get_stats(
+        db=db,
+        tenant_id="default",
+        start_date=start,
+        end_date=end,
+    )
+    
+    return {
+        "status": "ok",
+        "stats": stats.to_dict(),
+    }
