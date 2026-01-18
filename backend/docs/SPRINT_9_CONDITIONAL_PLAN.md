@@ -1,7 +1,7 @@
 # Sprint 9: Koşullu Plan (Veri-Driven)
 
 ## Tarih: 2026-01-18
-## Versiyon: 1.0
+## Versiyon: 1.1
 ## Durum: BEKLEMEDE (Pilot verisi gerekli)
 
 ---
@@ -41,18 +41,29 @@
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Normal Aralık Tanımı:**
+**Normal Aralık Tanımı (KESİN):**
 
-| Metrik | Normal Aralık |
-|--------|---------------|
-| S1 rate | ≤ 10% |
-| S2 rate | 10-25% |
-| OCR suspect rate | ≤ 25% |
-| Accept rounding rate | 5-15% |
-| Feedback coverage | ≥ 50% |
-| Hint accuracy | ≥ 70% |
-| p95 latency | ≤ 4000ms |
-| 5xx rate | 0% |
+```
+"Tüm metrikler normal" = 
+  S1 ≤ %5 AND 
+  OCR suspect ≤ %25 AND 
+  Accept rounding ∈ [%2, %25] AND 
+  Hint accuracy ≥ %80 AND 
+  p95 latency ≤ 3000ms AND 
+  Feedback coverage ≥ %30
+```
+
+| Metrik | Normal Eşik | Birim |
+|--------|-------------|-------|
+| S1 rate | ≤ 5% | incident |
+| OCR suspect rate | ≤ 25% | incident |
+| Accept rounding rate | 2-25% | incident |
+| Hint accuracy | ≥ 80% | feedback |
+| p95 latency | ≤ 3000ms | request |
+| Feedback coverage | ≥ 30% | resolved |
+
+**Aksiyon (Sprint 9 açılmazsa):**
+> Gözlem süresi 7 → 14 gün uzatılır, başka hiçbir teknik değişiklik yapılmaz.
 
 ---
 
@@ -104,6 +115,11 @@ EĞER [metrik] [operatör] [eşik] VE n >= [minimum_sample] İSE
 │  ───────────────────────────────────────────────────────────────────────── │
 │  EĞER accept_rounding_rate > 25% VE n >= 50 incident İSE                   │
 │  VEYA accept_rounding_rate < 2% VE n >= 50 incident İSE                    │
+│                                                                             │
+│  KOŞUL AÇIKLAMASI                                                           │
+│  ───────────────────────────────────────────────────────────────────────── │
+│  > 25% → Eşikler gevşek, gerçek hatalar yutuluyor olabilir                 │
+│  < 2%  → Eşikler çok sıkı, gereksiz incident üretiyor olabilir             │
 │                                                                             │
 │  TASK                                                                       │
 │  ───────────────────────────────────────────────────────────────────────── │
@@ -232,28 +248,42 @@ EĞER [metrik] [operatör] [eşik] VE n >= [minimum_sample] İSE
 
 ---
 
-### 1.8 Sprint 9.7: Alert Automation
+### 1.8 Sprint 9.7: Alert Automation (İKİ AŞAMALI)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│  KOŞUL                                                                      │
+│  KOŞUL (İKİ AŞAMALI KİLİT)                                                  │
 │  ───────────────────────────────────────────────────────────────────────── │
+│                                                                             │
+│  AŞAMA 1: POC                                                               │
 │  EĞER pilot 14 gün stabil çalıştı VE n >= 200 İSE                          │
-│  VE manuel kontrol yükü şikayet konusu olduysa                             │
+│  → Sprint 9.7a: Otomasyon POC (test ortamında)                             │
+│                                                                             │
+│  AŞAMA 2: PROD                                                              │
+│  EĞER POC +14 gün stabil çalıştı (toplam 28 gün) İSE                       │
+│  → Sprint 9.7b: Prod otomasyon kararı                                      │
+│                                                                             │
+│  ⚠️ Tek periyotla geri dönüşü olmayan adım atılmaz!                        │
 │                                                                             │
 │  TASK                                                                       │
 │  ───────────────────────────────────────────────────────────────────────── │
 │  Sprint 9.7: Automated Alerting                                             │
 │                                                                             │
-│  KAPSAM                                                                     │
-│  • Slack webhook entegrasyonu                                              │
-│  • S1 spike alert (otomatik)                                               │
-│  • Daily digest Slack'e gönder                                             │
-│  • Başarı kriteri: Manuel kontrol sıklığı %50 azalmalı                     │
+│  KAPSAM (Aşama 1 - POC)                                                     │
+│  • Slack webhook entegrasyonu (test kanalı)                                │
+│  • S1 spike alert (test ortamında)                                         │
+│  • Daily digest test Slack'e gönder                                        │
 │                                                                             │
-│  TİP: Otomasyon                                                             │
+│  KAPSAM (Aşama 2 - Prod)                                                    │
+│  • Prod Slack kanalına geçiş                                               │
+│  • Alert threshold'ları finalize                                           │
+│  • On-call rotation entegrasyonu                                           │
+│                                                                             │
+│  BAŞARI KRİTERİ: Manuel kontrol sıklığı %50 azalmalı                       │
+│                                                                             │
+│  TİP: Otomasyon (iki aşamalı)                                              │
 │  ÖNCELİK: P3 (nice-to-have, kritik değil)                                  │
-│  TAHMİNİ SÜRE: 2-3 gün                                                      │
+│  TAHMİNİ SÜRE: Aşama 1: 2 gün, Aşama 2: 1 gün                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -322,14 +352,15 @@ EĞER [metrik] [operatör] [eşik] VE n >= [minimum_sample] İSE
 
 | Sprint | Koşul | Min n | Tip | Öncelik |
 |--------|-------|-------|-----|---------|
-| - | Tüm metrikler normal | 100 | **AÇILMAZ** | - |
+| - | Tüm metrikler normal | 100 | **AÇILMAZ** (gözlem 7→14 gün) | - |
 | 9.1 | OCR suspect > 40% | 50 | POC | P1 |
 | 9.2 | Accept rounding > 25% veya < 2% | 50 | Review | P2 |
 | 9.3 | Hint accuracy < 70% | 30 feedback | Review | P2 |
 | 9.4 | Tek provider S1 > 30% | 20 (provider) | Fix | P1 |
 | 9.5 | p95 latency > 5000ms | 50 | Optimization | P3 |
 | 9.6 | Feedback coverage < 30% | 50 resolved | UX | P2 |
-| 9.7 | 14 gün stabil + manuel yük | 200 | Otomasyon | P3 |
+| 9.7a | 14 gün stabil | 200 | Otomasyon POC | P3 |
+| 9.7b | +14 gün stabil (28 gün toplam) | 200 | Otomasyon Prod | P3 |
 
 ---
 
@@ -415,6 +446,7 @@ Açan: ____________________
 | Versiyon | Tarih | Değişiklik |
 |----------|-------|------------|
 | 1.0 | 2026-01-18 | İlk sürüm |
+| 1.1 | 2026-01-18 | Normal tanımı kesinleştirildi, 9.7 iki aşamalı kilit, 9.2 açıklama eklendi |
 
 ---
 
