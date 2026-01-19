@@ -1,143 +1,398 @@
 """
-Region-Based Extractor - PDF'i bölgelere ayırıp her bölgeyi ayrı OCR'la.
+Bölge Kırpma (ROI Extraction) Modülü
 
-Bu modül:
-1. PDF'i görüntüye render eder
-2. Tedarikçi profiline göre bölgelere ayırır
-3. Her bölgeyi ayrı prompt ile OpenAI Vision'a gönderir
-4. Sonuçları birleştirip kanonik formata dönüştürür
+Fatura görselinden kritik bölgeleri kırparak OpenAI'a gönderir.
+Bu yaklaşım:
+1. Vision'ın dikkatini odaklar
+2. Token maliyetini düşürür
+3. Doğruluğu artırır
 
-Avantajları:
-- Daha az token kullanımı (sadece ilgili bölge)
-- Daha yüksek doğruluk (odaklanmış prompt)
-- Yanlış tablodan okuma riski düşük
+Strateji: Multi-crop hunting
+- Sayfa 1'den 2-3 aday bölge kırp
+- Her bölgeyi ayrı ayrı veya birlikte Vision'a gönder
+- "Ödenecek Tutar" içeren bölgeyi bul
 """
 
-import base64
-import json
+import io
 import logging
-import tempfile
-import os
-from typing import Optional
+from typing import Optional, List, Tuple
+from dataclasses import dataclass
 from PIL import Image
-
-from .supplier_profiles import (
-    CanonicalInvoice,
-    InvoiceLine,
-    LineCode,
-    TaxBreakdown,
-    VATInfo,
-    Totals,
-    RegionCoordinates,
-    get_regions_for_supplier,
-    get_region_prompt,
-    detect_supplier,
-    tr_money,
-)
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class CropRegion:
+    """Kırpılacak bölge tanımı."""
+    name: str
+    # Koordinatlar yüzde olarak (0-100)
+    # Böylece farklı çözünürlüklerde çalışır
+    x_percent: float  # Sol kenar
+    y_percent: float  # Üst kenar
+    width_percent: float
+    height_percent: float
+
+
+@dataclass
+class CroppedImage:
+    """Kırpılmış görsel ve meta bilgisi."""
+    name: str
+    image_bytes: bytes
+    width: int
+    height: int
+    region: CropRegion
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
-# PDF Rendering
+# CK Boğaziçi Fatura Bölgeleri (Sabit Layout)
 # ═══════════════════════════════════════════════════════════════════════════════
+# CK faturalarında "Fatura Özeti" kutusu genelde sağ üst bölgede
+# Birden fazla aday bölge tanımlıyoruz (multi-crop hunting)
 
-def render_pdf_pages(pdf_path: str, dpi: int = 200) -> list[Image.Image]:
-    """
-    PDF sayfalarını görüntüye render et.
-    
-    pdfplumber kullanır (requirements.txt'te olmalı).
-    """
-    try:
-        import pdfplumber
-    except ImportError:
-        logger.error("pdfplumber not installed. Run: pip install pdfplumber")
-        return []
-    
-    pages = []
-    try:
-        with pdfplumber.open(pdf_path) as pdf:
-            for page in pdf.pages:
-                img = page.to_image(resolution=dpi).original
-                pages.append(img)
-    except Exception as e:
-        logger.error(f"PDF render error: {e}")
-    
-    return pages
+CK_BOGAZICI_REGIONS = [
+    # Sağ üst - Fatura Özeti genelde burada
+    CropRegion(
+        name="sag_ust_fatura_ozeti",
+        x_percent=45,
+        y_percent=0,
+        width_percent=55,
+        height_percent=45
+    ),
+    # Sağ orta - Bazen aşağıda olabilir
+    CropRegion(
+        name="sag_orta",
+        x_percent=45,
+        y_percent=30,
+        width_percent=55,
+        height_percent=40
+    ),
+    # Tam sağ şerit - Tüm sağ taraf
+    CropRegion(
+        name="sag_serit",
+        x_percent=50,
+        y_percent=0,
+        width_percent=50,
+        height_percent=60
+    ),
+]
+
+# Genel fatura bölgeleri (vendor-agnostic)
+GENERIC_REGIONS = [
+    # Sağ üst köşe - geniş
+    CropRegion(
+        name="sag_ust",
+        x_percent=40,
+        y_percent=0,
+        width_percent=60,
+        height_percent=50
+    ),
+    # Orta sağ
+    CropRegion(
+        name="orta_sag",
+        x_percent=45,
+        y_percent=25,
+        width_percent=55,
+        height_percent=45
+    ),
+    # Alt yarı (toplam genelde altta)
+    CropRegion(
+        name="alt_yari",
+        x_percent=0,
+        y_percent=50,
+        width_percent=100,
+        height_percent=50
+    ),
+]
 
 
-def crop_region(img: Image.Image, region: tuple[float, float, float, float]) -> Image.Image:
+def get_regions_for_vendor(vendor: str) -> List[CropRegion]:
     """
-    Görüntüden belirli bir bölgeyi kırp.
+    Vendor'a göre kırpılacak bölgeleri döndür.
     
     Args:
-        img: PIL Image
-        region: (x0, y0, x1, y1) normalize koordinatlar (0..1)
-    
+        vendor: Tedarikçi adı (ck_bogazici, enerjisa, vb.)
+        
     Returns:
-        Kırpılmış görüntü
+        Kırpılacak bölge listesi
     """
-    w, h = img.size
-    x0, y0, x1, y1 = region
-    box = (int(x0 * w), int(y0 * h), int(x1 * w), int(y1 * h))
-    return img.crop(box)
+    vendor_lower = vendor.lower() if vendor else ""
+    
+    if "ck" in vendor_lower or "bogazici" in vendor_lower or "bogazi" in vendor_lower:
+        return CK_BOGAZICI_REGIONS
+    
+    # Diğer vendor'lar için generic bölgeler
+    return GENERIC_REGIONS
 
 
-def image_to_base64(img: Image.Image, format: str = "PNG") -> str:
-    """PIL Image'ı base64 string'e çevir"""
-    import io
+def crop_region(image_bytes: bytes, region: CropRegion) -> CroppedImage:
+    """
+    Görselden belirtilen bölgeyi kırp.
+    
+    Args:
+        image_bytes: Orijinal görsel
+        region: Kırpılacak bölge
+        
+    Returns:
+        Kırpılmış görsel
+    """
+    img = Image.open(io.BytesIO(image_bytes))
+    width, height = img.size
+    
+    # Yüzdelik koordinatları piksel koordinatlarına çevir
+    x1 = int(width * region.x_percent / 100)
+    y1 = int(height * region.y_percent / 100)
+    x2 = int(x1 + width * region.width_percent / 100)
+    y2 = int(y1 + height * region.height_percent / 100)
+    
+    # Sınırları kontrol et
+    x2 = min(x2, width)
+    y2 = min(y2, height)
+    
+    # Kırp
+    cropped = img.crop((x1, y1, x2, y2))
+    
+    # Bytes'a çevir
     buffer = io.BytesIO()
-    img.save(buffer, format=format)
-    return base64.b64encode(buffer.getvalue()).decode("utf-8")
+    if cropped.mode == "RGBA":
+        cropped = cropped.convert("RGB")
+    cropped.save(buffer, format="PNG", optimize=True)
+    
+    crop_bytes = buffer.getvalue()
+    
+    logger.info(
+        f"Region cropped: {region.name} | "
+        f"coords=({x1},{y1})-({x2},{y2}) | "
+        f"size={cropped.width}x{cropped.height} | "
+        f"bytes={len(crop_bytes)}"
+    )
+    
+    return CroppedImage(
+        name=region.name,
+        image_bytes=crop_bytes,
+        width=cropped.width,
+        height=cropped.height,
+        region=region
+    )
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# OpenAI Vision OCR
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def ocr_region_with_openai(
-    img: Image.Image,
-    prompt: str,
-    api_key: Optional[str] = None,
-    model: str = "gpt-4o"
-) -> dict:
+def crop_multiple_regions(
+    image_bytes: bytes, 
+    regions: List[CropRegion]
+) -> List[CroppedImage]:
     """
-    Görüntüyü OpenAI Vision ile OCR yap.
+    Görselden birden fazla bölge kırp.
     
     Args:
-        img: PIL Image
-        prompt: OCR prompt'u
-        api_key: OpenAI API key (None ise env'den alınır)
-        model: OpenAI model
-    
+        image_bytes: Orijinal görsel
+        regions: Kırpılacak bölgeler
+        
     Returns:
-        JSON dict
+        Kırpılmış görseller listesi
     """
-    try:
-        from openai import OpenAI
-    except ImportError:
-        logger.error("openai not installed")
-        return {}
+    cropped_images = []
     
-    if api_key is None:
-        from .core.config import settings
-        api_key = settings.openai_api_key
+    for region in regions:
+        try:
+            cropped = crop_region(image_bytes, region)
+            cropped_images.append(cropped)
+        except Exception as e:
+            logger.warning(f"Region crop failed: {region.name} - {e}")
     
-    if not api_key:
-        logger.error("OpenAI API key not configured")
-        return {}
+    return cropped_images
+
+
+def extract_payable_total_from_crops(
+    cropped_images: List[CroppedImage],
+    extract_func
+) -> Tuple[Optional[float], Optional[str], Optional[CroppedImage]]:
+    """
+    Kırpılmış görsellerden "Ödenecek Tutar" değerini bul.
     
-    client = OpenAI(api_key=api_key)
-    base64_image = image_to_base64(img)
+    Multi-crop hunting stratejisi:
+    1. Her crop'u sırayla dene
+    2. İlk başarılı sonucu döndür
+    3. Hiçbirinde bulunamazsa None döndür
     
-    try:
-        response = client.chat.completions.create(
+    Args:
+        cropped_images: Kırpılmış görseller
+        extract_func: Extraction fonksiyonu (OpenAI çağrısı)
+        
+    Returns:
+        (payable_total, evidence, winning_crop)
+    """
+    for crop in cropped_images:
+        try:
+            logger.info(f"Trying crop: {crop.name}")
+            
+            # Extraction fonksiyonunu çağır
+            result = extract_func(crop.image_bytes)
+            
+            # Sonucu kontrol et
+            if result and result.get("payable_total"):
+                value = result["payable_total"]
+                evidence = result.get("evidence", crop.name)
+                
+                logger.info(f"Found payable_total in {crop.name}: {value}")
+                return value, evidence, crop
+                
+        except Exception as e:
+            logger.warning(f"Extraction failed for {crop.name}: {e}")
+    
+    logger.warning("No payable_total found in any crop")
+    return None, None, None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Minimal Extraction Prompt (Sadece Ödenecek Tutar için)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+PAYABLE_TOTAL_PROMPT = """
+Bu görsel bir Türk elektrik faturasının bir bölümü.
+
+GÖREV: "Ödenecek Tutar" veya "Genel Toplam" değerini bul.
+
+KRİTİK KURALLAR:
+1. "Ödenecek Tutar" = KDV DAHİL son tutar (müşterinin ödeyeceği)
+2. "KDV Hariç Toplam" veya "Ara Toplam" DEĞİL - bunlar yanlış!
+3. En BÜYÜK tutarı ara (KDV dahil tutar her zaman en büyüktür)
+4. Türkçe sayı formatı: 593.740,00 (nokta=binlik, virgül=ondalık)
+5. Bu formatı AYNEN koru, dönüştürme
+
+ARAMA ÖNCELİĞİ:
+1. "Ödenecek Tutar" etiketi
+2. "Genel Toplam" etiketi
+3. "Toplam Tutar" etiketi (KDV dahil olanı seç)
+4. "TOPLAM" etiketi (en büyük değer)
+
+JSON FORMATI:
+{
+    "payable_total": "593.740,00",
+    "currency": "TL",
+    "confidence": 0.95,
+    "evidence": "Ödenecek Tutar: 593.740,00 TL",
+    "found_label": "Ödenecek Tutar"
+}
+
+Bulamazsan:
+{
+    "payable_total": null,
+    "currency": null,
+    "confidence": 0,
+    "evidence": null,
+    "found_label": null,
+    "reason": "Ödenecek Tutar bulunamadı"
+}
+"""
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Multi-Field Extraction Prompt (Tüm kritik alanlar için)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+MULTI_FIELD_PROMPT = """
+Bu görsel bir Türk elektrik faturasının "Fatura Özeti" veya "Toplam" bölümü.
+
+GÖREV: Aşağıdaki değerleri bul ve çıkar.
+
+ARANAN DEĞERLER:
+1. payable_total: "Ödenecek Tutar" veya "Genel Toplam" (KDV DAHİL)
+2. vat_amount: "KDV" veya "KDV Tutarı" (%20 vergi)
+3. vat_base: "KDV Matrahı" veya "Matrah" (KDV hariç toplam)
+4. energy_total: "Enerji Bedeli" veya "Aktif Enerji Bedeli"
+5. distribution_total: "Dağıtım Bedeli" veya "Elk. Dağıtım Bedeli"
+6. consumption_kwh: "Toplam Tüketim" veya "Tüketim (kWh)"
+
+KRİTİK KURALLAR:
+1. Türkçe sayı formatı: 593.740,00 (nokta=binlik, virgül=ondalık)
+2. Bu formatı AYNEN koru, dönüştürme yapma
+3. Bulamadığın alanlar için null döndür
+4. Her alan için confidence (0-1) ver
+5. evidence olarak gördüğün metni yaz
+
+JSON FORMATI:
+{
+    "payable_total": {"value": "593.740,00", "confidence": 0.95, "evidence": "Ödenecek Tutar: 593.740,00 TL"},
+    "vat_amount": {"value": "98.956,24", "confidence": 0.90, "evidence": "KDV (%20): 98.956,24 TL"},
+    "vat_base": {"value": "494.783,76", "confidence": 0.85, "evidence": "KDV Matrahı: 494.783,76 TL"},
+    "energy_total": {"value": "506.738,26", "confidence": 0.80, "evidence": "Enerji Bedeli: 506.738,26 TL"},
+    "distribution_total": {"value": "86.952,60", "confidence": 0.80, "evidence": "Dağıtım Bedeli: 86.952,60 TL"},
+    "consumption_kwh": {"value": "116.145,63", "confidence": 0.85, "evidence": "Toplam Tüketim: 116.145,63 kWh"}
+}
+
+Bulamadığın alanlar için:
+{
+    "field_name": {"value": null, "confidence": 0, "evidence": null, "reason": "Bulunamadı"}
+}
+"""
+
+
+@dataclass
+class MultiFieldResult:
+    """Multi-field extraction sonucu."""
+    payable_total: Optional[float] = None
+    vat_amount: Optional[float] = None
+    vat_base: Optional[float] = None
+    energy_total: Optional[float] = None
+    distribution_total: Optional[float] = None
+    consumption_kwh: Optional[float] = None
+    
+    # Confidence değerleri
+    payable_total_confidence: float = 0.0
+    vat_amount_confidence: float = 0.0
+    vat_base_confidence: float = 0.0
+    energy_total_confidence: float = 0.0
+    distribution_total_confidence: float = 0.0
+    consumption_kwh_confidence: float = 0.0
+    
+    # Kaynak bilgisi
+    source_region: str = ""
+    
+    def to_dict(self) -> dict:
+        return {
+            "payable_total": self.payable_total,
+            "vat_amount": self.vat_amount,
+            "vat_base": self.vat_base,
+            "energy_total": self.energy_total,
+            "distribution_total": self.distribution_total,
+            "consumption_kwh": self.consumption_kwh,
+            "confidences": {
+                "payable_total": self.payable_total_confidence,
+                "vat_amount": self.vat_amount_confidence,
+                "vat_base": self.vat_base_confidence,
+                "energy_total": self.energy_total_confidence,
+                "distribution_total": self.distribution_total_confidence,
+                "consumption_kwh": self.consumption_kwh_confidence,
+            },
+            "source_region": self.source_region,
+        }
+
+
+def create_multi_field_extraction_func(openai_client, model: str = "gpt-4o"):
+    """
+    Multi-field extraction fonksiyonu oluştur.
+    
+    Args:
+        openai_client: OpenAI client
+        model: Kullanılacak model
+        
+    Returns:
+        Extraction fonksiyonu
+    """
+    import base64
+    import json
+    from .parse_tr import parse_tr_float
+    
+    def extract(image_bytes: bytes) -> MultiFieldResult:
+        base64_image = base64.b64encode(image_bytes).decode("utf-8")
+        
+        response = openai_client.chat.completions.create(
             model=model,
             messages=[
+                {"role": "system", "content": MULTI_FIELD_PROMPT},
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": prompt + "\n\nSADECE JSON döndür, başka bir şey yazma."},
                         {
                             "type": "image_url",
                             "image_url": {
@@ -148,260 +403,129 @@ def ocr_region_with_openai(
                     ]
                 }
             ],
-            max_tokens=1000,
-            temperature=0.1,
+            response_format={"type": "json_object"},
+            max_tokens=500,
+            temperature=0.1
         )
         
-        content = response.choices[0].message.content
+        raw = response.choices[0].message.content
+        data = json.loads(raw)
         
-        # JSON parse
-        # Markdown code block varsa temizle
-        if "```json" in content:
-            content = content.split("```json")[1].split("```")[0]
-        elif "```" in content:
-            content = content.split("```")[1].split("```")[0]
+        result = MultiFieldResult()
         
-        return json.loads(content.strip())
+        # Her alanı parse et
+        for field in ["payable_total", "vat_amount", "vat_base", "energy_total", "distribution_total", "consumption_kwh"]:
+            field_data = data.get(field, {})
+            if field_data and field_data.get("value"):
+                value = parse_tr_float(field_data["value"])
+                confidence = field_data.get("confidence", 0.5)
+                
+                setattr(result, field, value)
+                setattr(result, f"{field}_confidence", confidence)
         
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON parse error: {e}, content: {content[:200]}")
-        return {}
-    except Exception as e:
-        logger.error(f"OpenAI Vision error: {e}")
-        return {}
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Line Item Parsing
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def map_label_to_code(label: str) -> LineCode:
-    """Etiket metninden kalem kodunu belirle"""
-    t = (label or "").lower()
+        return result
     
-    if "dağıtım" in t:
-        return LineCode.DISTRIBUTION
-    if "yek" in t or "yekdem" in t:
-        return LineCode.YEK
-    if "vergi" in t or "btv" in t or "fon" in t:
-        return LineCode.TAX_BTV
-    if "yüksek" in t and "kademe" in t:
-        return LineCode.ACTIVE_ENERGY_HIGH
-    if "düşük" in t and "kademe" in t:
-        return LineCode.ACTIVE_ENERGY_LOW
-    if "gündüz" in t or "t1" in t:
-        return LineCode.ACTIVE_ENERGY_T1
-    if "puant" in t or "t2" in t:
-        return LineCode.ACTIVE_ENERGY_T2
-    if "gece" in t or "t3" in t:
-        return LineCode.ACTIVE_ENERGY_T3
-    if "reaktif" in t:
-        return LineCode.REACTIVE
-    if "demand" in t or "güç" in t:
-        return LineCode.DEMAND
-    
-    return LineCode.ACTIVE_ENERGY
+    return extract
 
 
-def parse_lines_from_json(lines_json: list) -> list[InvoiceLine]:
-    """JSON'dan InvoiceLine listesi oluştur"""
-    result = []
-    
-    for row in lines_json or []:
-        label = (row.get("label") or "").strip()
-        qty = tr_money(row.get("qty_kwh"))
-        unit_price = tr_money(row.get("unit_price"))
-        amount = tr_money(row.get("amount_tl"))
-        
-        if label and (qty or amount):
-            line = InvoiceLine(
-                code=map_label_to_code(label),
-                label=label,
-                qty_kwh=qty,
-                unit_price=unit_price,
-                amount=amount,
-                evidence=f"{label}: {qty} kWh × {unit_price} = {amount} TL",
-            )
-            result.append(line)
-    
-    return result
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Region-Based Extraction Pipeline
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def extract_invoice_by_regions(
-    pdf_path: str,
-    supplier_code: Optional[str] = None,
-    page_index: int = 0,
-    api_key: Optional[str] = None,
-) -> CanonicalInvoice:
+def extract_multi_fields_from_crops(
+    cropped_images: List[CroppedImage],
+    extract_func
+) -> MultiFieldResult:
     """
-    PDF'i bölgelere ayırıp her bölgeyi ayrı OCR'la.
+    Kırpılmış görsellerden tüm kritik alanları çıkar.
+    
+    Strateji:
+    1. Her crop'u dene
+    2. En çok alan bulan crop'u seç
+    3. Veya: Her alan için en yüksek confidence'lı değeri seç
     
     Args:
-        pdf_path: PDF dosya yolu
-        supplier_code: Tedarikçi kodu (None ise otomatik tespit)
-        page_index: İşlenecek sayfa (varsayılan: 0)
-        api_key: OpenAI API key
-    
+        cropped_images: Kırpılmış görseller
+        extract_func: Multi-field extraction fonksiyonu
+        
     Returns:
-        CanonicalInvoice
+        MultiFieldResult with best values from all crops
     """
-    invoice = CanonicalInvoice()
+    best_result = MultiFieldResult()
+    best_field_count = 0
     
-    # PDF'i render et
-    pages = render_pdf_pages(pdf_path)
-    if not pages:
-        invoice.errors.append("PDF_RENDER_FAILED")
-        return invoice
+    for crop in cropped_images:
+        try:
+            logger.info(f"Multi-field extraction from: {crop.name}")
+            
+            result = extract_func(crop.image_bytes)
+            result.source_region = crop.name
+            
+            # Bulunan alan sayısını hesapla
+            field_count = sum([
+                1 if result.payable_total else 0,
+                1 if result.vat_amount else 0,
+                1 if result.vat_base else 0,
+                1 if result.energy_total else 0,
+                1 if result.distribution_total else 0,
+                1 if result.consumption_kwh else 0,
+            ])
+            
+            logger.info(f"Found {field_count} fields in {crop.name}")
+            
+            # En çok alan bulan crop'u seç
+            if field_count > best_field_count:
+                best_result = result
+                best_field_count = field_count
+                
+            # Eğer tüm alanlar bulunduysa dur
+            if field_count >= 5:
+                logger.info(f"All fields found in {crop.name}, stopping")
+                break
+                
+        except Exception as e:
+            logger.warning(f"Multi-field extraction failed for {crop.name}: {e}")
     
-    if page_index >= len(pages):
-        invoice.errors.append(f"PAGE_INDEX_OUT_OF_RANGE: {page_index} >= {len(pages)}")
-        return invoice
+    logger.info(f"Best result from {best_result.source_region}: {best_field_count} fields")
+    return best_result
+
+
+def create_payable_total_extraction_func(openai_client, model: str = "gpt-4o"):
+    """
+    Ödenecek Tutar extraction fonksiyonu oluştur.
     
-    img = pages[page_index]
+    Args:
+        openai_client: OpenAI client
+        model: Kullanılacak model
+        
+    Returns:
+        Extraction fonksiyonu
+    """
+    import base64
+    import json
     
-    # Tedarikçi tespiti (dosya adından)
-    if not supplier_code:
-        filename = os.path.basename(pdf_path)
-        profile = detect_supplier("", filename)
-        supplier_code = profile.code if profile else "unknown"
-    
-    invoice.supplier = supplier_code
-    
-    # Region koordinatlarını al
-    regions = get_regions_for_supplier(supplier_code)
-    
-    # 1) Fatura Detayı bölgesi
-    logger.info(f"Extracting fatura_detayi region for {supplier_code}")
-    det_img = crop_region(img, regions.fatura_detayi)
-    det_prompt = get_region_prompt("fatura_detayi")
-    det_json = ocr_region_with_openai(det_img, det_prompt, api_key)
-    
-    if det_json.get("lines"):
-        invoice.lines = parse_lines_from_json(det_json["lines"])
-        invoice.source_anchor = "fatura_detayi_region"
-    else:
-        invoice.warnings.append("FATURA_DETAYI_EMPTY")
-    
-    # 2) Vergiler bölgesi
-    logger.info(f"Extracting vergiler region for {supplier_code}")
-    tax_img = crop_region(img, regions.vergiler)
-    tax_prompt = get_region_prompt("vergiler")
-    tax_json = ocr_region_with_openai(tax_img, tax_prompt, api_key)
-    
-    invoice.taxes = TaxBreakdown(
-        btv=tr_money(tax_json.get("btv_tl")),
-        other=tr_money(tax_json.get("other_taxes_tl")),
-    )
-    invoice.vat = VATInfo(
-        base=tr_money(tax_json.get("vat_base_tl")),
-        amount=tr_money(tax_json.get("vat_amount_tl")),
-        rate=0.20,
-    )
-    
-    # 3) Özet bölgesi
-    logger.info(f"Extracting ozet region for {supplier_code}")
-    ozet_img = crop_region(img, regions.ozet)
-    ozet_prompt = get_region_prompt("ozet")
-    ozet_json = ocr_region_with_openai(ozet_img, ozet_prompt, api_key)
-    
-    invoice.totals.payable = tr_money(ozet_json.get("payable_tl"))
-    # due_date parse edilebilir
-    
-    # 4) Fatura Tutarı bölgesi
-    logger.info(f"Extracting fatura_tutari region for {supplier_code}")
-    total_img = crop_region(img, regions.fatura_tutari)
-    total_prompt = get_region_prompt("fatura_tutari")
-    total_json = ocr_region_with_openai(total_img, total_prompt, api_key)
-    
-    invoice.totals.total = tr_money(total_json.get("total_tl"))
-    
-    # Subtotal hesapla (kalem toplamı)
-    if invoice.lines:
-        invoice.totals.subtotal = sum(
-            l.amount or 0 for l in invoice.lines if l.amount
+    def extract(image_bytes: bytes) -> dict:
+        base64_image = base64.b64encode(image_bytes).decode("utf-8")
+        
+        response = openai_client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": PAYABLE_TOTAL_PROMPT},
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{base64_image}",
+                                "detail": "high"  # Yüksek detay - küçük crop için önemli
+                            }
+                        }
+                    ]
+                }
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=200,
+            temperature=0.1
         )
+        
+        raw = response.choices[0].message.content
+        return json.loads(raw)
     
-    # Doğrulama
-    invoice.validate()
-    
-    logger.info(f"Region extraction complete: {invoice.to_debug_dict()}")
-    
-    return invoice
-
-
-def extract_invoice_by_regions_from_image(
-    image_bytes: bytes,
-    supplier_code: Optional[str] = None,
-    api_key: Optional[str] = None,
-) -> CanonicalInvoice:
-    """
-    Görüntü bytes'ından region-based extraction.
-    
-    Args:
-        image_bytes: Görüntü bytes
-        supplier_code: Tedarikçi kodu
-        api_key: OpenAI API key
-    
-    Returns:
-        CanonicalInvoice
-    """
-    import io
-    
-    invoice = CanonicalInvoice()
-    
-    try:
-        img = Image.open(io.BytesIO(image_bytes))
-    except Exception as e:
-        invoice.errors.append(f"IMAGE_LOAD_FAILED: {e}")
-        return invoice
-    
-    invoice.supplier = supplier_code or "unknown"
-    
-    # Region koordinatlarını al
-    regions = get_regions_for_supplier(invoice.supplier)
-    
-    # Aynı extraction pipeline...
-    # (Kısaltılmış - tam implementasyon yukarıdaki fonksiyonla aynı)
-    
-    # 1) Fatura Detayı
-    det_img = crop_region(img, regions.fatura_detayi)
-    det_prompt = get_region_prompt("fatura_detayi")
-    det_json = ocr_region_with_openai(det_img, det_prompt, api_key)
-    
-    if det_json.get("lines"):
-        invoice.lines = parse_lines_from_json(det_json["lines"])
-    
-    # 2) Vergiler
-    tax_img = crop_region(img, regions.vergiler)
-    tax_prompt = get_region_prompt("vergiler")
-    tax_json = ocr_region_with_openai(tax_img, tax_prompt, api_key)
-    
-    invoice.taxes = TaxBreakdown(
-        btv=tr_money(tax_json.get("btv_tl")),
-    )
-    invoice.vat = VATInfo(
-        amount=tr_money(tax_json.get("vat_amount_tl")),
-    )
-    
-    # 3) Özet
-    ozet_img = crop_region(img, regions.ozet)
-    ozet_prompt = get_region_prompt("ozet")
-    ozet_json = ocr_region_with_openai(ozet_img, ozet_prompt, api_key)
-    
-    invoice.totals.payable = tr_money(ozet_json.get("payable_tl"))
-    
-    # 4) Fatura Tutarı
-    total_img = crop_region(img, regions.fatura_tutari)
-    total_prompt = get_region_prompt("fatura_tutari")
-    total_json = ocr_region_with_openai(total_img, total_prompt, api_key)
-    
-    invoice.totals.total = tr_money(total_json.get("total_tl"))
-    
-    # Doğrulama
-    invoice.validate()
-    
-    return invoice
+    return extract

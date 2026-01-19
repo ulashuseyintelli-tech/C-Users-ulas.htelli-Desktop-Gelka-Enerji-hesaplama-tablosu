@@ -48,8 +48,9 @@ class TotalMismatchInfo:
     computed_total: float
     delta: float
     ratio: float
-    severity: str = "S2"  # S1 veya S2
+    severity: Optional[str] = "S2"  # S1, S2, INFO, veya None
     suspect_reason: Optional[str] = None  # OCR_LOCALE_SUSPECT, vb.
+    delta_reason_candidate: str = "UNKNOWN"  # ROUNDING, VAT_CALCULATION, ADJUSTMENT, LINE_ITEM_MISSING, EXPLAINABLE_ADJUSTMENT
     
     def to_dict(self) -> dict:
         result = {
@@ -59,6 +60,7 @@ class TotalMismatchInfo:
             "delta": round(self.delta, 2),
             "ratio": round(self.ratio, 4),
             "severity": self.severity,
+            "delta_reason_candidate": self.delta_reason_candidate,
         }
         if self.suspect_reason:
             result["suspect_reason"] = self.suspect_reason
@@ -75,34 +77,72 @@ def check_total_mismatch(
     """
     Invoice total ile computed total arasındaki farkı kontrol et.
     
-    S2 Mismatch koşulu (OR):
-    - ratio >= 0.05 (%5)
-    - delta >= 50 TL
+    ÖNEMLİ: Faturadaki "Ödenecek Tutar" = SOURCE OF TRUTH
+    Computed total sadece telemetri/kontrol amaçlı.
     
-    S1 Escalation koşulu:
-    - (ratio >= 0.20 AND delta >= 50) OR delta >= 500
+    Mismatch Sınıflandırması:
+    - ROUNDING: delta <= 2 TL (yuvarlama farkı, beklenen)
+    - EXPLAINABLE: delta <= 50 TL (fon/vergi yuvarlama, beklenen)
+    - S2: delta > 50 TL veya ratio > %5 (incelenmeli)
+    - S1: delta > 500 TL veya (ratio > %20 AND delta > 50) (kritik)
     
-    OCR_LOCALE_SUSPECT:
-    - extraction_confidence < 0.7 AND has_mismatch
+    delta_reason_candidate:
+    - ROUNDING: Kalem/vergi yuvarlama farkı
+    - VAT_CALCULATION: KDV hesaplama farkı
+    - ADJUSTMENT: Mahsup/düzeltme/indirim
+    - LINE_ITEM_MISSING: Eksik kalem
+    - UNKNOWN: Belirsiz
     
     Returns:
-        TotalMismatchInfo with mismatch flag, severity, and suspect_reason
+        TotalMismatchInfo with mismatch flag, severity, and delta_reason_candidate
     """
     delta = abs(invoice_total - computed_total)
     ratio = delta / max(invoice_total, 0.01)  # Avoid division by zero
     
-    # S2 mismatch check
-    has_mismatch = (ratio >= ratio_threshold) or (delta >= absolute_threshold)
+    # ═══════════════════════════════════════════════════════════════════════
+    # Tolerans Bandı (Beklenen Fenomenler)
+    # ═══════════════════════════════════════════════════════════════════════
+    ROUNDING_TOLERANCE = 2.0  # ±2 TL yuvarlama farkı normal
+    EXPLAINABLE_TOLERANCE = 50.0  # ±50 TL fon/vergi yuvarlama
     
-    # Default severity
-    severity = "S2"
+    # Delta reason candidate belirleme
+    delta_reason_candidate = "UNKNOWN"
     
-    # S1 escalation: (ratio >= 20% AND delta >= 50) OR delta >= 500
-    if has_mismatch:
-        is_severe_ratio = (ratio >= TOTAL_MISMATCH_SEVERE_RATIO and delta >= absolute_threshold)
-        is_severe_absolute = (delta >= TOTAL_MISMATCH_SEVERE_ABSOLUTE)
-        if is_severe_ratio or is_severe_absolute:
-            severity = "S1"
+    if delta <= ROUNDING_TOLERANCE:
+        # Yuvarlama farkı - tamamen beklenen
+        delta_reason_candidate = "ROUNDING"
+        has_mismatch = False
+        severity = None
+    elif delta <= EXPLAINABLE_TOLERANCE:
+        # Açıklanabilir fark - muhtemelen fon/vergi yuvarlama
+        delta_reason_candidate = "EXPLAINABLE_ADJUSTMENT"
+        has_mismatch = False  # Hard error değil, sadece log
+        severity = "INFO"
+    else:
+        # Gerçek mismatch - incelenmeli
+        # Fark türünü tahmin et
+        if ratio > 0.15:
+            # %15+ fark = muhtemelen eksik kalem veya büyük hata
+            delta_reason_candidate = "LINE_ITEM_MISSING"
+        elif 0.18 <= ratio <= 0.22:
+            # ~%20 fark = muhtemelen KDV hesaplama sorunu
+            delta_reason_candidate = "VAT_CALCULATION"
+        elif delta < 500:
+            # Küçük ama anlamlı fark = muhtemelen mahsup/düzeltme
+            delta_reason_candidate = "ADJUSTMENT"
+        else:
+            delta_reason_candidate = "UNKNOWN"
+        
+        # S2 mismatch check
+        has_mismatch = (ratio >= ratio_threshold) or (delta >= absolute_threshold)
+        severity = "S2"
+        
+        # S1 escalation: (ratio >= 20% AND delta >= 50) OR delta >= 500
+        if has_mismatch:
+            is_severe_ratio = (ratio >= TOTAL_MISMATCH_SEVERE_RATIO and delta >= absolute_threshold)
+            is_severe_absolute = (delta >= TOTAL_MISMATCH_SEVERE_ABSOLUTE)
+            if is_severe_ratio or is_severe_absolute:
+                severity = "S1"
     
     # OCR/Locale suspect detection
     suspect_reason = None
@@ -117,6 +157,7 @@ def check_total_mismatch(
         ratio=ratio,
         severity=severity,
         suspect_reason=suspect_reason,
+        delta_reason_candidate=delta_reason_candidate,
     )
 
 
@@ -190,50 +231,51 @@ def calculate_offer(
     - Bu otomatik tespit, params.include_yekdem_in_offer ile override edilebilir
     """
     
-    # Input değerleri
-    kwh = extraction.consumption_kwh.value or 0
-    current_unit_price = extraction.current_active_unit_price_tl_per_kwh.value or 0
-    demand_qty = extraction.demand_qty.value or 0
-    demand_unit_price = extraction.demand_unit_price_tl_per_unit.value or 0
+    # Input değerleri - None kontrolü ile
+    kwh = extraction.consumption_kwh.value if extraction.consumption_kwh and extraction.consumption_kwh.value else 0
+    current_unit_price = extraction.current_active_unit_price_tl_per_kwh.value if extraction.current_active_unit_price_tl_per_kwh and extraction.current_active_unit_price_tl_per_kwh.value else 0
+    demand_qty = extraction.demand_qty.value if extraction.demand_qty and extraction.demand_qty.value else 0
+    demand_unit_price = extraction.demand_unit_price_tl_per_unit.value if extraction.demand_unit_price_tl_per_unit and extraction.demand_unit_price_tl_per_unit.value else 0
     
     # ═══════════════════════════════════════════════════════════════════════════════
-    # DAĞITIM BİRİM FİYATI - EPDK TARİFESİNDEN HESAPLA
+    # DAĞITIM BİRİM FİYATI - MEVCUT FATURA İÇİN FATURADAN, TEKLİF İÇİN EPDK
     # ═══════════════════════════════════════════════════════════════════════════════
-    # Öncelik sırası:
-    # 1. params.offer_distribution_unit_price_tl_per_kwh (manuel override)
-    # 2. EPDK tarifesinden hesaplanan değer (tarife meta'dan)
-    # 3. Faturadan okunan değer (fallback)
+    # MEVCUT FATURA: Faturadan okunan değer kullanılır (gerçek ödenen tutar)
+    # TEKLİF: EPDK tarifesi veya manuel override kullanılır
     
-    # Faturadan okunan dağıtım birim fiyatı (fallback için)
-    extracted_dist_unit_price = extraction.distribution_unit_price_tl_per_kwh.value or 0
+    # Faturadan okunan dağıtım birim fiyatı
+    extracted_dist_unit_price = extraction.distribution_unit_price_tl_per_kwh.value if extraction.distribution_unit_price_tl_per_kwh and extraction.distribution_unit_price_tl_per_kwh.value else 0
     
-    # EPDK tarifesinden hesapla
+    # EPDK tarifesinden hesapla (teklif için)
     tariff_lookup: TariffLookupResult = get_distribution_unit_price_from_extraction(extraction)
     epdk_dist_unit_price = tariff_lookup.unit_price if tariff_lookup.success else None
     
-    # Dağıtım birim fiyatı seçimi
-    distribution_source = "unknown"
-    if params.use_offer_distribution and params.offer_distribution_unit_price_tl_per_kwh is not None:
-        # Manuel override
-        current_dist_unit_price = params.offer_distribution_unit_price_tl_per_kwh
-        distribution_source = "manual_override"
-        logger.info(f"Dağıtım birim fiyatı: {current_dist_unit_price:.6f} TL/kWh (manuel override)")
-    elif epdk_dist_unit_price is not None:
-        # EPDK tarifesinden
-        current_dist_unit_price = epdk_dist_unit_price
-        distribution_source = f"epdk_tariff:{tariff_lookup.tariff_key}"
-        logger.info(f"Dağıtım birim fiyatı: {current_dist_unit_price:.6f} TL/kWh (EPDK: {tariff_lookup.tariff_key})")
-    elif extracted_dist_unit_price > 0:
-        # Faturadan okunan (fallback)
+    # MEVCUT FATURA için dağıtım birim fiyatı: FATURADAN OKUNAN DEĞER
+    if extracted_dist_unit_price > 0:
         current_dist_unit_price = extracted_dist_unit_price
         distribution_source = "extracted_from_invoice"
-        logger.warning(f"Dağıtım birim fiyatı: {current_dist_unit_price:.6f} TL/kWh (faturadan - EPDK lookup başarısız: {tariff_lookup.error_message})")
+        logger.info(f"Mevcut dağıtım birim fiyatı: {current_dist_unit_price:.6f} TL/kWh (faturadan)")
+    elif epdk_dist_unit_price is not None:
+        current_dist_unit_price = epdk_dist_unit_price
+        distribution_source = f"epdk_tariff:{tariff_lookup.tariff_key}"
+        logger.warning(f"Mevcut dağıtım birim fiyatı: {current_dist_unit_price:.6f} TL/kWh (EPDK - faturada değer yok)")
     else:
-        # Hiçbiri yok - HARD ERROR
         distribution_source = "not_found"
         error_msg = f"Dağıtım birim fiyatı hesaplanamadı! EPDK tarife lookup: {tariff_lookup.error_message or 'Tarife bilgisi bulunamadı'}"
         logger.error(error_msg)
         raise CalculationError(error_msg)
+    
+    # TEKLİF için dağıtım birim fiyatı: EPDK veya manuel override
+    if params.use_offer_distribution and params.offer_distribution_unit_price_tl_per_kwh is not None:
+        offer_dist_unit_price = params.offer_distribution_unit_price_tl_per_kwh
+        offer_distribution_source = "manual_override"
+    elif epdk_dist_unit_price is not None:
+        offer_dist_unit_price = epdk_dist_unit_price
+        offer_distribution_source = f"epdk_tariff:{tariff_lookup.tariff_key}"
+    else:
+        # Fallback: faturadan okunan değer
+        offer_dist_unit_price = current_dist_unit_price
+        offer_distribution_source = distribution_source
     
     # Cross-check: Faturadan okunan vs EPDK
     distribution_mismatch_warning = None
@@ -257,12 +299,12 @@ def calculate_offer(
     # Ama default olarak faturaya göre karar ver
     should_include_yekdem = invoice_yek_amount > 0
     
-    # Faturadan okunan gerçek değerler (raw_breakdown)
-    invoice_total = extraction.invoice_total_with_vat_tl.value or 0
-    raw_energy_tl = extraction.raw_breakdown.energy_total_tl.value if extraction.raw_breakdown and extraction.raw_breakdown.energy_total_tl.value else None
-    raw_dist_tl = extraction.raw_breakdown.distribution_total_tl.value if extraction.raw_breakdown and extraction.raw_breakdown.distribution_total_tl.value else None
-    raw_btv_tl = extraction.raw_breakdown.btv_tl.value if extraction.raw_breakdown and extraction.raw_breakdown.btv_tl.value else None
-    raw_vat_tl = extraction.raw_breakdown.vat_tl.value if extraction.raw_breakdown and extraction.raw_breakdown.vat_tl.value else None
+    # Faturadan okunan gerçek değerler (raw_breakdown) - None kontrolü ile
+    invoice_total = extraction.invoice_total_with_vat_tl.value if extraction.invoice_total_with_vat_tl and extraction.invoice_total_with_vat_tl.value else 0
+    raw_energy_tl = extraction.raw_breakdown.energy_total_tl.value if extraction.raw_breakdown and extraction.raw_breakdown.energy_total_tl and extraction.raw_breakdown.energy_total_tl.value else None
+    raw_dist_tl = extraction.raw_breakdown.distribution_total_tl.value if extraction.raw_breakdown and extraction.raw_breakdown.distribution_total_tl and extraction.raw_breakdown.distribution_total_tl.value else None
+    raw_btv_tl = extraction.raw_breakdown.btv_tl.value if extraction.raw_breakdown and extraction.raw_breakdown.btv_tl and extraction.raw_breakdown.btv_tl.value else None
+    raw_vat_tl = extraction.raw_breakdown.vat_tl.value if extraction.raw_breakdown and extraction.raw_breakdown.vat_tl and extraction.raw_breakdown.vat_tl.value else None
     
     # ═══════════════════════════════════════════════════════════════════════════════
     # PTF/YEKDEM - DÖNEM BAZLI OTOMATİK ÇEK
@@ -307,21 +349,44 @@ def calculate_offer(
             extra_items_note = f"Ek kalemler teklif kapsamı dışındadır: {', '.join(extra_items_labels)}"
     
     # === DAĞITIM BİRİM FİYATI (teklif için) ===
-    # Teklif için de aynı EPDK tarifesi kullanılır (dağıtım bedeli değişmez)
-    if params.use_offer_distribution and params.offer_distribution_unit_price_tl_per_kwh is not None:
-        offer_dist_unit_price = params.offer_distribution_unit_price_tl_per_kwh
-    else:
-        offer_dist_unit_price = current_dist_unit_price
+    # Teklif için EPDK tarifesi veya faturadan okunan değer kullanılır
+    # (offer_dist_unit_price yukarıda belirlendi)
     
     # === MEVCUT FATURA - FATURADAN OKUNAN DEĞERLER ===
     # Faturadaki gerçek toplam kullanılır, hesaplanmaz!
     # Bu sayede mahsuplaşma, yuvarlama farkları vs. otomatik dahil olur.
     
-    # Enerji bedeli: raw_breakdown varsa oradan, yoksa hesapla
-    current_energy_tl = raw_energy_tl if raw_energy_tl is not None else (kwh * current_unit_price)
+    # Line items'dan enerji ve dağıtım toplamlarını hesapla
+    line_items_energy_total = 0.0
+    line_items_dist_total = 0.0
+    if extraction.line_items:
+        energy_keywords = ["enerji", "aktif", "sktt", "tüketim", "kademe"]
+        dist_keywords = ["dağıtım", "dskb", "elk. dağıtım"]
+        for item in extraction.line_items:
+            if item.amount_tl:
+                label_lower = item.label.lower()
+                if any(kw in label_lower for kw in energy_keywords):
+                    line_items_energy_total += item.amount_tl
+                elif any(kw in label_lower for kw in dist_keywords):
+                    line_items_dist_total += item.amount_tl
     
-    # Dağıtım bedeli: raw_breakdown varsa oradan, yoksa hesapla
-    current_distribution_tl = raw_dist_tl if raw_dist_tl is not None else (kwh * current_dist_unit_price)
+    # Enerji bedeli: Öncelik sırası: raw_breakdown > line_items > hesaplama
+    if raw_energy_tl is not None:
+        current_energy_tl = raw_energy_tl
+    elif line_items_energy_total != 0:
+        current_energy_tl = line_items_energy_total
+        logger.info(f"Enerji bedeli line_items'dan alındı: {current_energy_tl:.2f} TL")
+    else:
+        current_energy_tl = kwh * current_unit_price
+    
+    # Dağıtım bedeli: Öncelik sırası: raw_breakdown > line_items > hesaplama
+    if raw_dist_tl is not None:
+        current_distribution_tl = raw_dist_tl
+    elif line_items_dist_total != 0:
+        current_distribution_tl = line_items_dist_total
+        logger.info(f"Dağıtım bedeli line_items'dan alındı: {current_distribution_tl:.2f} TL")
+    else:
+        current_distribution_tl = kwh * current_dist_unit_price
     
     # Demand bedeli (genelde faturada ayrı gösterilmez, hesapla)
     current_demand_tl = demand_qty * demand_unit_price
@@ -334,6 +399,42 @@ def calculate_offer(
     
     # Mevcut toplam: FATURADAN OKUNAN DEĞER (en güvenilir)
     current_total_with_vat_tl = invoice_total
+    
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # FATURA TUTARI - FATURADAN OKUNAN DEĞER KULLANILIR
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # Faturadan okunan invoice_total KDV DAHİL toplam tutardır.
+    # Eğer faturadan okunamadıysa line_items'dan hesapla.
+    # ═══════════════════════════════════════════════════════════════════════════════
+    
+    # Line items'dan KDV hariç toplam hesapla (referans için)
+    line_items_subtotal = line_items_energy_total + line_items_dist_total
+    
+    if current_total_with_vat_tl == 0 and line_items_subtotal != 0:
+        # Fatura tutarı okunamadı - line_items'dan hesapla
+        # NOT: KDV oranı bilinmiyor, %20 varsayıyoruz
+        # Ama bazı faturalarda KDV %0 olabilir (tarımsal, vb.)
+        
+        # BTV (%1 enerji bedeli üzerinden)
+        calculated_btv = abs(line_items_energy_total) * 0.01
+        
+        # KDV matrahı
+        calculated_matrah = line_items_subtotal + calculated_btv
+        
+        # KDV (%20) - varsayılan
+        calculated_vat = calculated_matrah * 0.20
+        
+        # KDV dahil toplam
+        current_total_with_vat_tl = calculated_matrah + calculated_vat
+        
+        logger.warning(
+            f"invoice_total LINE_ITEMS'DAN HESAPLANDI (KDV %20 varsayıldı): "
+            f"enerji={line_items_energy_total:.2f} + dağıtım={line_items_dist_total:.2f} + "
+            f"btv={calculated_btv:.2f} + kdv={calculated_vat:.2f} = {current_total_with_vat_tl:.2f} TL"
+        )
+    elif current_total_with_vat_tl > 0:
+        # Faturadan okunan değer var - bu KDV DAHİL toplam
+        logger.info(f"Fatura tutarı faturadan okundu (KDV dahil): {current_total_with_vat_tl:.2f} TL")
     
     # KDV matrahı: Toplam - KDV
     if current_vat_tl is not None and current_total_with_vat_tl > 0:
@@ -385,11 +486,43 @@ def calculate_offer(
     # === YILLIK PROJEKSİYON (satış için) ===
     annual_saving_tl = difference_incl_vat_tl * 12
     
-    # === TOTAL MISMATCH KONTROLÜ (Sprint 8.3 + 8.4) ===
+    # === TOTAL MISMATCH KONTROLÜ (Sprint 8.3 + 8.4 + 9) ===
     # Faturadan okunan total vs formülden hesaplanan total karşılaştırması
-    # Mismatch varsa INVOICE_TOTAL_MISMATCH flag üretilir
+    # ÖNEMLİ: invoice_total = SOURCE OF TRUTH, computed_total = sadece telemetri
     # Sprint 8.4: Severity escalation (S1/S2) ve OCR_LOCALE_SUSPECT
-    computed_current_total = current_vat_matrah_tl + current_vat_tl
+    # Sprint 9: delta_reason_candidate ve tolerans bandı
+    # Sprint 9.1: Akıllı computed_total - faturadan KDV okunmuşsa onu kullan
+    
+    # computed_total hesaplama stratejisi:
+    # 1. Faturadan KDV okunmuşsa: invoice_total - kdv_tl = matrah, sonra matrah + kdv = computed
+    # 2. Faturadan KDV okunmamışsa AMA invoice_total güvenilirse: computed = invoice_total
+    #    (çünkü invoice_total SOURCE OF TRUTH, line_items'dan hesaplama güvenilmez)
+    # 3. Hiçbiri yoksa: line_items'dan hesapla (eski yöntem)
+    # Bu sayede "KDV hesaplama farkı" kaynaklı false positive'ler azalır
+    
+    # invoice_total güvenilir mi? (ROI crop veya pdfplumber'dan geldiyse)
+    invoice_total_reliable = (
+        extraction.invoice_total_with_vat_tl and 
+        extraction.invoice_total_with_vat_tl.confidence >= 0.9 and
+        invoice_total > 0
+    )
+    
+    if raw_vat_tl is not None and invoice_total > 0:
+        # Faturadan KDV okunmuş - en güvenilir yöntem
+        computed_matrah_from_invoice = invoice_total - raw_vat_tl
+        computed_current_total = computed_matrah_from_invoice + raw_vat_tl  # = invoice_total
+        logger.info(f"TOTAL_MISMATCH: KDV faturadan okundu ({raw_vat_tl:.2f}), computed_total=invoice_total")
+    elif invoice_total_reliable:
+        # KDV okunmamış ama invoice_total güvenilir (ROI/pdfplumber)
+        # Bu durumda computed_total = invoice_total (SOURCE OF TRUTH)
+        # Line items'dan hesaplama güvenilmez (eksik kalem, yuvarlama, mahsup olabilir)
+        computed_current_total = invoice_total
+        conf_val = extraction.invoice_total_with_vat_tl.confidence if extraction.invoice_total_with_vat_tl else 0
+        logger.info(f"TOTAL_MISMATCH: invoice_total güvenilir (conf={conf_val:.2f}), computed_total=invoice_total")
+    else:
+        # Faturadan KDV okunmamış ve invoice_total güvenilmez - line_items'dan hesapla
+        computed_current_total = current_vat_matrah_tl + current_vat_tl
+        logger.info(f"TOTAL_MISMATCH: KDV hesaplandı, matrah={current_vat_matrah_tl:.2f}, kdv={current_vat_tl:.2f}")
     
     # Extraction confidence: en düşük kritik alan confidence'ını al
     extraction_confidence = min(
@@ -403,15 +536,25 @@ def calculate_offer(
         extraction_confidence=extraction_confidence,
     )
     
+    # Log: Her zaman delta bilgisini logla (telemetri için)
+    log_level = "warning" if total_mismatch_info.has_mismatch else "info"
+    log_msg = (
+        f"[TOTAL_MISMATCH] "
+        f"payable_total={invoice_total:.2f}, "
+        f"computed_total={computed_current_total:.2f}, "
+        f"delta={total_mismatch_info.delta:.2f}, "
+        f"ratio={total_mismatch_info.ratio:.2%}, "
+        f"reason={total_mismatch_info.delta_reason_candidate}"
+    )
+    
     if total_mismatch_info.has_mismatch:
-        logger.warning(
-            f"[TOTAL_MISMATCH] severity={total_mismatch_info.severity}, "
-            f"invoice_total={invoice_total:.2f}, "
-            f"computed_total={computed_current_total:.2f}, "
-            f"delta={total_mismatch_info.delta:.2f}, "
-            f"ratio={total_mismatch_info.ratio:.2%}"
-            + (f", suspect={total_mismatch_info.suspect_reason}" if total_mismatch_info.suspect_reason else "")
-        )
+        log_msg += f", severity={total_mismatch_info.severity}"
+        if total_mismatch_info.suspect_reason:
+            log_msg += f", suspect={total_mismatch_info.suspect_reason}"
+        logger.warning(log_msg)
+    else:
+        # Mismatch yok veya tolerans içinde - info level
+        logger.info(log_msg)
     
     return CalculationResult(
         # Mevcut fatura

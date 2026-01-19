@@ -33,9 +33,9 @@ class Settings(BaseSettings):
     # OpenAI
     # ═══════════════════════════════════════════════════════════════════════════
     openai_api_key: str | None = None
-    openai_model: str = "gpt-5.2"  # En iyi model (Ocak 2026)
-    openai_model_fast: str = "gpt-5.2"  # Hızlı extraction için (gpt-5-mini sorunlu)
-    openai_model_accurate: str = "gpt-5.2"  # Doğruluk kritik olduğunda
+    openai_model: str = "gpt-4o"  # Default model
+    openai_model_fast: str = "gpt-4o-mini"  # Hızlı extraction için
+    openai_model_accurate: str = "gpt-4o"  # Doğruluk kritik olduğunda
     openai_max_retries: int = 3
     openai_retry_delay: float = 1.0
     openai_image_detail: str = "high"  # low | high | auto (high = daha doğru okuma)

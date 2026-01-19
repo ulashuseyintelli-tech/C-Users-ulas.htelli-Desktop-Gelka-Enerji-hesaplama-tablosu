@@ -589,6 +589,8 @@ async def analyze_invoice(
     
     # HTML ise görsele çevir (analyze-invoice endpoint)
     mime_type = file.content_type
+    pdf_text_hint = ""  # Hibrit yaklaşım için
+    
     if file.content_type == ALLOWED_HTML_MIME_TYPE or (file.filename and file.filename.lower().endswith('.html')):
         try:
             from .html_render import render_html_to_image_async
@@ -610,6 +612,16 @@ async def analyze_invoice(
     
     # PDF ise sayfaları görsele çevir (tüm sayfalar birleştirilir)
     elif file.content_type == ALLOWED_PDF_MIME_TYPE:
+        # KATMAN 1: PDF'den metin çıkar (hibrit yaklaşım)
+        try:
+            from .pdf_text_extractor import extract_text_from_pdf, create_extraction_hint
+            pdf_extracted = extract_text_from_pdf(content)
+            pdf_text_hint = create_extraction_hint(pdf_extracted)
+            logger.info(f"[analyze] PDF text extraction: quality={pdf_extracted.extraction_quality}, odenecek={pdf_extracted.odenecek_tutar}")
+        except Exception as e:
+            logger.warning(f"[analyze] PDF text extraction failed: {e}")
+        
+        # KATMAN 2: PDF'i görsele çevir
         try:
             content, mime_type = convert_pdf_to_image(content, max_pages=3)
         except Exception as e:
@@ -622,7 +634,7 @@ async def analyze_invoice(
             )
     
     try:
-        extraction = extract_invoice_data(content, mime_type, fast_mode=fast_mode)
+        extraction = extract_invoice_data(content, mime_type, fast_mode=fast_mode, text_hint=pdf_text_hint)
         validation = validate_extraction(extraction)
         
         # Sanity check: Eğer validation başarısız ve kritik hatalar varsa, fast_mode=False ile tekrar dene
@@ -634,7 +646,7 @@ async def analyze_invoice(
             if image_hash in _extraction_cache:
                 del _extraction_cache[image_hash]
             
-            extraction = extract_invoice_data(content, mime_type, fast_mode=False)
+            extraction = extract_invoice_data(content, mime_type, fast_mode=False, text_hint=pdf_text_hint)
             validation = validate_extraction(extraction)
             fast_mode = False  # Meta'da doğru göster
         
@@ -738,6 +750,12 @@ async def full_process(
     debug_meta.warnings = []
     debug_meta.errors = []
     
+    # PDF text hint (hibrit yaklaşım için)
+    pdf_text_hint = ""
+    pdf_extracted = None
+    roi_payable_total = None  # ROI crop'tan gelen değer
+    roi_multi_fields = None  # ROI multi-field extraction sonucu
+    
     # HTML ise görsele çevir (full-process endpoint)
     mime_type = file.content_type
     if file.content_type == ALLOWED_HTML_MIME_TYPE or (file.filename and file.filename.lower().endswith('.html')):
@@ -762,7 +780,43 @@ async def full_process(
     
     # PDF ise sayfaları görsele çevir (tüm sayfalar birleştirilir)
     elif file.content_type == ALLOWED_PDF_MIME_TYPE:
+        # KATMAN 1: PDF'den metin çıkar (hibrit yaklaşım)
         try:
+            from .pdf_text_extractor import extract_text_from_pdf, create_extraction_hint
+            pdf_extracted = extract_text_from_pdf(content)
+            pdf_text_hint = create_extraction_hint(pdf_extracted)
+            
+            if pdf_extracted.odenecek_tutar:
+                debug_meta.warnings.append(f"PDF'den okunan Ödenecek Tutar: {pdf_extracted.odenecek_tutar:.2f} TL")
+            if pdf_extracted.kdv_tutari:
+                debug_meta.warnings.append(f"PDF'den okunan KDV: {pdf_extracted.kdv_tutari:.2f} TL")
+                
+            logger.info(f"[{trace_id}] PDF text extraction: quality={pdf_extracted.extraction_quality}, odenecek={pdf_extracted.odenecek_tutar}")
+        except Exception as e:
+            logger.warning(f"[{trace_id}] PDF text extraction failed: {e}")
+        
+        # KATMAN 2: PDF'i görsele çevir
+        try:
+            # ROI crop için sayfa 1'i ayrı tut
+            page1_content = None
+            try:
+                import pypdfium2 as pdfium
+                from PIL import Image
+                pdf = pdfium.PdfDocument(content)
+                if len(pdf) > 0:
+                    page = pdf[0]
+                    bitmap = page.render(scale=1.5)
+                    pil_image = bitmap.to_pil()
+                    if pil_image.mode == "RGBA":
+                        pil_image = pil_image.convert("RGB")
+                    buffer = io.BytesIO()
+                    pil_image.save(buffer, format='PNG')
+                    page1_content = buffer.getvalue()
+                    logger.info(f"[{trace_id}] Page 1 rendered for ROI: {pil_image.width}x{pil_image.height}")
+                    pdf.close()
+            except Exception as e:
+                logger.warning(f"[{trace_id}] Page 1 render failed: {e}")
+            
             content, mime_type = convert_pdf_to_image(content, max_pages=3)
         except Exception as e:
             raise HTTPException(
@@ -773,6 +827,73 @@ async def full_process(
                     "trace_id": trace_id
                 }
             )
+        
+        # KATMAN 2.5: ROI Crop (pdfplumber başarısız olduysa)
+        # Taranmış PDF'lerde metin çıkmaz, bu durumda bölge kırpma ile dene
+        roi_payable_total = None
+        
+        if pdf_extracted and not pdf_extracted.odenecek_tutar and pdf_extracted.extraction_quality == "poor":
+            # Sayfa 1'i kullan (birleştirilmiş görsel değil)
+            roi_image = page1_content if page1_content else content
+            try:
+                from .region_extractor import (
+                    get_regions_for_vendor, 
+                    crop_multiple_regions,
+                    create_multi_field_extraction_func,
+                    MultiFieldResult
+                )
+                from .extractor import get_openai_client
+                
+                logger.info(f"[{trace_id}] PDF is scanned, trying ROI multi-field extraction")
+                
+                # Vendor henüz bilinmiyor, generic bölgeler kullan
+                regions = get_regions_for_vendor("unknown")
+                cropped_images = crop_multiple_regions(roi_image, regions)
+                
+                if cropped_images:
+                    # OpenAI client al
+                    client = get_openai_client()
+                    extract_func = create_multi_field_extraction_func(client, model=settings.openai_model_accurate)
+                    
+                    # Multi-field extraction - en iyi crop'u bul
+                    from .region_extractor import extract_multi_fields_from_crops
+                    roi_multi_fields = extract_multi_fields_from_crops(cropped_images, extract_func)
+                    
+                    # Sonuçları logla
+                    if roi_multi_fields:
+                        roi_payable_total = roi_multi_fields.payable_total
+                        
+                        found_fields = []
+                        if roi_multi_fields.payable_total:
+                            found_fields.append(f"payable_total={roi_multi_fields.payable_total:.2f}")
+                        if roi_multi_fields.vat_amount:
+                            found_fields.append(f"vat={roi_multi_fields.vat_amount:.2f}")
+                        if roi_multi_fields.energy_total:
+                            found_fields.append(f"energy={roi_multi_fields.energy_total:.2f}")
+                        if roi_multi_fields.distribution_total:
+                            found_fields.append(f"dist={roi_multi_fields.distribution_total:.2f}")
+                        if roi_multi_fields.consumption_kwh:
+                            found_fields.append(f"kwh={roi_multi_fields.consumption_kwh:.2f}")
+                        
+                        logger.info(f"[{trace_id}] ROI multi-field success: {roi_multi_fields.source_region} → {', '.join(found_fields)}")
+                        debug_meta.warnings.append(f"ROI crop'tan okunan alanlar ({roi_multi_fields.source_region}): {', '.join(found_fields)}")
+                        
+                        # Hint'e ekle
+                        hint_parts = []
+                        if roi_multi_fields.payable_total:
+                            hint_parts.append(f"Ödenecek Tutar: {roi_multi_fields.payable_total:.2f} TL")
+                        if roi_multi_fields.vat_amount:
+                            hint_parts.append(f"KDV: {roi_multi_fields.vat_amount:.2f} TL")
+                        if roi_multi_fields.energy_total:
+                            hint_parts.append(f"Enerji Bedeli: {roi_multi_fields.energy_total:.2f} TL")
+                        if roi_multi_fields.distribution_total:
+                            hint_parts.append(f"Dağıtım Bedeli: {roi_multi_fields.distribution_total:.2f} TL")
+                        
+                        if hint_parts:
+                            pdf_text_hint += f"\n\n⚠️ ROI CROP'TAN OKUNAN DEĞERLER:\n" + "\n".join(hint_parts) + "\nBu değerleri doğrula!"
+                            
+            except Exception as e:
+                logger.warning(f"[{trace_id}] ROI multi-field extraction failed: {e}")
     
     try:
         # Extraction (debug modunda raw output capture)
@@ -785,7 +906,7 @@ async def full_process(
             cached = get_cached_extraction(image_hash)
             extraction_cache_hit = cached is not None
         
-        extraction = extract_invoice_data(content, mime_type, fast_mode=fast_mode)
+        extraction = extract_invoice_data(content, mime_type, fast_mode=fast_mode, text_hint=pdf_text_hint)
         validation = validate_extraction(extraction)
         
         # Debug meta güncelle
@@ -802,10 +923,127 @@ async def full_process(
             if image_hash in _extraction_cache:
                 del _extraction_cache[image_hash]
             
-            extraction = extract_invoice_data(content, mime_type, fast_mode=False)
+            extraction = extract_invoice_data(content, mime_type, fast_mode=False, text_hint=pdf_text_hint)
             validation = validate_extraction(extraction)
             fast_mode = False
             debug_meta.llm_model_used = settings.openai_model_accurate
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # KATMAN 4: Cross-validation (pdfplumber / ROI vs Vision)
+        # ═══════════════════════════════════════════════════════════════════════
+        # Öncelik: pdfplumber > ROI crop > Vision
+        reference_total = None
+        reference_source = None
+        
+        if pdf_extracted and pdf_extracted.odenecek_tutar:
+            reference_total = pdf_extracted.odenecek_tutar
+            reference_source = "pdfplumber"
+        elif roi_payable_total:
+            reference_total = roi_payable_total
+            reference_source = "roi_crop"
+        
+        if reference_total:
+            from .parse_tr import reconcile_amount
+            from decimal import Decimal
+            
+            # Vision'dan gelen değer
+            vision_total = None
+            if extraction.invoice_total_with_vat_tl and extraction.invoice_total_with_vat_tl.value:
+                vision_total = Decimal(str(extraction.invoice_total_with_vat_tl.value))
+            
+            # Referans değer
+            text_total = Decimal(str(reference_total))
+            
+            # Reconcile
+            reconciled = reconcile_amount(text_total, vision_total)
+            
+            logger.info(f"[{trace_id}] Cross-validation: {reference_source}={text_total}, vision={vision_total}, result={reconciled}")
+            
+            if reconciled["flag"]:
+                debug_meta.warnings.append(f"Cross-validation: {reconciled['flag']} ({reference_source}={text_total}, vision={vision_total})")
+            
+            # Eğer referans değer daha güvenilirse, extraction'ı güncelle
+            if reconciled["final"] and reconciled["source"] in ["text_confirmed", "text_with_rounding", "text_only"]:
+                if extraction.invoice_total_with_vat_tl.value != float(reconciled["final"]):
+                    old_value = extraction.invoice_total_with_vat_tl.value
+                    extraction.invoice_total_with_vat_tl.value = float(reconciled["final"])
+                    extraction.invoice_total_with_vat_tl.confidence = reconciled["confidence"]
+                    extraction.invoice_total_with_vat_tl.evidence = f"[CROSS-VALIDATED: {reference_source}]"
+                    logger.info(f"[{trace_id}] invoice_total updated: {old_value} → {reconciled['final']} (source: {reference_source})")
+                    debug_meta.warnings.append(f"Fatura tutarı düzeltildi: {old_value} → {reconciled['final']} ({reference_source})")
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # KATMAN 4.5: ROI Multi-field → Extraction Update
+        # ═══════════════════════════════════════════════════════════════════════
+        # ROI'den gelen diğer alanları da extraction'a ekle (Vision'dan daha güvenilir)
+        if roi_multi_fields:
+            try:
+                from .models import FieldValue, RawBreakdown
+                
+                # raw_breakdown yoksa oluştur
+                if not extraction.raw_breakdown:
+                    extraction.raw_breakdown = RawBreakdown()
+                    logger.info(f"[{trace_id}] raw_breakdown created for ROI values")
+                
+                # KDV (vat_tl)
+                if roi_multi_fields.vat_amount and roi_multi_fields.vat_amount_confidence >= 0.7:
+                    old_vat = None
+                    if extraction.raw_breakdown.vat_tl and extraction.raw_breakdown.vat_tl.value:
+                        old_vat = extraction.raw_breakdown.vat_tl.value
+                    extraction.raw_breakdown.vat_tl = FieldValue(
+                        value=roi_multi_fields.vat_amount,
+                        confidence=roi_multi_fields.vat_amount_confidence,
+                        evidence=f"[ROI: {roi_multi_fields.source_region}]"
+                    )
+                    logger.info(f"[{trace_id}] vat_tl updated from ROI: {old_vat} → {roi_multi_fields.vat_amount}")
+                    debug_meta.warnings.append(f"KDV ROI'den alındı: {roi_multi_fields.vat_amount:.2f} TL")
+                
+                # Enerji Bedeli (energy_total_tl)
+                if roi_multi_fields.energy_total and roi_multi_fields.energy_total_confidence >= 0.7:
+                    old_energy = None
+                    if extraction.raw_breakdown.energy_total_tl and extraction.raw_breakdown.energy_total_tl.value:
+                        old_energy = extraction.raw_breakdown.energy_total_tl.value
+                    extraction.raw_breakdown.energy_total_tl = FieldValue(
+                        value=roi_multi_fields.energy_total,
+                        confidence=roi_multi_fields.energy_total_confidence,
+                        evidence=f"[ROI: {roi_multi_fields.source_region}]"
+                    )
+                    logger.info(f"[{trace_id}] energy_total_tl updated from ROI: {old_energy} → {roi_multi_fields.energy_total}")
+                    debug_meta.warnings.append(f"Enerji Bedeli ROI'den alındı: {roi_multi_fields.energy_total:.2f} TL")
+                
+                # Dağıtım Bedeli (distribution_total_tl)
+                if roi_multi_fields.distribution_total and roi_multi_fields.distribution_total_confidence >= 0.7:
+                    old_dist = None
+                    if extraction.raw_breakdown.distribution_total_tl and extraction.raw_breakdown.distribution_total_tl.value:
+                        old_dist = extraction.raw_breakdown.distribution_total_tl.value
+                    extraction.raw_breakdown.distribution_total_tl = FieldValue(
+                        value=roi_multi_fields.distribution_total,
+                        confidence=roi_multi_fields.distribution_total_confidence,
+                        evidence=f"[ROI: {roi_multi_fields.source_region}]"
+                    )
+                    logger.info(f"[{trace_id}] distribution_total_tl updated from ROI: {old_dist} → {roi_multi_fields.distribution_total}")
+                    debug_meta.warnings.append(f"Dağıtım Bedeli ROI'den alındı: {roi_multi_fields.distribution_total:.2f} TL")
+                
+                # Tüketim (consumption_kwh) - sadece Vision'dan gelen değer yoksa veya düşük confidence ise
+                if roi_multi_fields.consumption_kwh and roi_multi_fields.consumption_kwh_confidence >= 0.7:
+                    vision_consumption_conf = 0
+                    if extraction.consumption_kwh and extraction.consumption_kwh.confidence:
+                        vision_consumption_conf = extraction.consumption_kwh.confidence
+                    if vision_consumption_conf < 0.8:
+                        old_kwh = None
+                        if extraction.consumption_kwh and extraction.consumption_kwh.value:
+                            old_kwh = extraction.consumption_kwh.value
+                        extraction.consumption_kwh = FieldValue(
+                            value=roi_multi_fields.consumption_kwh,
+                            confidence=roi_multi_fields.consumption_kwh_confidence,
+                            evidence=f"[ROI: {roi_multi_fields.source_region}]"
+                        )
+                        logger.info(f"[{trace_id}] consumption_kwh updated from ROI: {old_kwh} → {roi_multi_fields.consumption_kwh}")
+                        debug_meta.warnings.append(f"Tüketim ROI'den alındı: {roi_multi_fields.consumption_kwh:.2f} kWh")
+            except Exception as e:
+                logger.error(f"[{trace_id}] ROI multi-field update failed: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
         
         # Hesaplama (eğer hazırsa)
         calculation = None

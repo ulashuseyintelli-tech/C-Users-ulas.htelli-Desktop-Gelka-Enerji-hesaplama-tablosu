@@ -53,15 +53,20 @@ class TestCheckTotalMismatch:
         assert result.has_mismatch is False
         assert result.delta == 0
         assert result.ratio == 0
-        assert result.severity == "S2"
+        # Sprint 9: Tolerans bandı - delta=0 → ROUNDING, severity=None
+        assert result.severity is None
+        assert result.delta_reason_candidate == "ROUNDING"
     
     def test_no_mismatch_within_threshold(self):
         """Threshold içinde mismatch yok."""
-        # %4 fark, 40 TL fark → threshold altında
+        # %4 fark, 40 TL fark → threshold altında (EXPLAINABLE_TOLERANCE=50)
         result = check_total_mismatch(1000.0, 960.0)
         assert result.has_mismatch is False
         assert result.delta == 40.0
         assert result.ratio == 0.04
+        # Sprint 9: delta <= 50 → EXPLAINABLE_ADJUSTMENT, severity=INFO
+        assert result.severity == "INFO"
+        assert result.delta_reason_candidate == "EXPLAINABLE_ADJUSTMENT"
     
     def test_mismatch_when_ratio_exceeded(self):
         """Ratio threshold aşıldığında mismatch var."""
@@ -107,19 +112,21 @@ class TestSeverityEscalation:
         assert result.delta == 250.0
     
     def test_s2_when_high_ratio_but_low_delta(self):
-        """ratio >= 20% ama delta < 50 → S2 (küçük fatura koruması)."""
+        """ratio >= 20% ama delta < 50 → tolerans bandı içinde (Sprint 9)."""
         # 200 TL fatura, 150 TL hesaplanan → %25 fark, 50 TL delta (sınırda)
         result = check_total_mismatch(200.0, 150.0)
-        assert result.has_mismatch is True
-        # delta=50 tam sınırda, ratio=25% → S1 olmalı
-        assert result.severity == "S1"
+        # Sprint 9: delta=50 tam sınırda → EXPLAINABLE_TOLERANCE içinde
+        # has_mismatch=False, severity=INFO
+        assert result.has_mismatch is False
+        assert result.severity == "INFO"
+        assert result.delta_reason_candidate == "EXPLAINABLE_ADJUSTMENT"
         
         # 100 TL fatura, 75 TL hesaplanan → %25 fark, 25 TL delta
-        # ratio=25% > 5% → mismatch VAR (S2 threshold)
-        # Ama delta=25 < 50 → S1 değil, S2 kalır
+        # Sprint 9: delta=25 < 50 → EXPLAINABLE_TOLERANCE içinde
         result2 = check_total_mismatch(100.0, 75.0)
-        assert result2.has_mismatch is True  # ratio > 5% → mismatch var
-        assert result2.severity == "S2"  # delta < 50 → S1'e yükselmez
+        assert result2.has_mismatch is False  # delta <= 50 → tolerans içinde
+        assert result2.severity == "INFO"
+        assert result2.delta_reason_candidate == "EXPLAINABLE_ADJUSTMENT"
     
     def test_s1_when_delta_exceeds_500(self):
         """delta >= 500 → S1 (ratio ne olursa olsun)."""

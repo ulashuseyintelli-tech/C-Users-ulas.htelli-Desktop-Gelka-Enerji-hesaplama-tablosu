@@ -413,6 +413,7 @@ def _call_openai_with_retry(
     is_gpt5 = 'gpt-5' in model.lower()
     
     last_error = None
+    last_raw_response = None
     
     for attempt in range(MAX_RETRIES):
         try:
@@ -435,7 +436,25 @@ def _call_openai_with_retry(
                 )
             
             raw_json = response.choices[0].message.content
-            return json.loads(raw_json)
+            last_raw_response = raw_json
+            
+            # Boş yanıt kontrolü
+            if not raw_json or raw_json.strip() == "":
+                logger.warning(f"Empty response from OpenAI, retry {attempt + 1}/{MAX_RETRIES}")
+                last_error = Exception("Empty response from OpenAI")
+                time.sleep(RETRY_DELAY)
+                continue
+            
+            # JSON parse et
+            try:
+                return json.loads(raw_json)
+            except json.JSONDecodeError as je:
+                # JSON repair dene
+                repaired = _try_repair_json(raw_json)
+                if repaired is not None:
+                    logger.info("JSON repaired successfully")
+                    return repaired
+                raise je
             
         except RateLimitError as e:
             last_error = e
@@ -461,16 +480,83 @@ def _call_openai_with_retry(
                 
         except json.JSONDecodeError as e:
             last_error = e
-            logger.warning(f"JSON parse error, retry {attempt + 1}/{MAX_RETRIES}")
+            logger.warning(f"JSON parse error at position {e.pos}: {e.msg}, retry {attempt + 1}/{MAX_RETRIES}")
+            if last_raw_response:
+                # İlk 500 karakteri logla
+                logger.debug(f"Raw response (first 500 chars): {last_raw_response[:500]}")
             time.sleep(RETRY_DELAY)
     
-    raise ExtractionError(f"OpenAI API çağrısı {MAX_RETRIES} denemeden sonra başarısız: {str(last_error)}")
+    error_msg = f"OpenAI API çağrısı {MAX_RETRIES} denemeden sonra başarısız: {str(last_error)}"
+    if last_raw_response:
+        error_msg += f" (raw response length: {len(last_raw_response)})"
+    raise ExtractionError(error_msg)
+
+
+def _try_repair_json(raw_json: str) -> dict | None:
+    """
+    Bozuk JSON'u tamir etmeye çalış.
+    
+    Yaygın sorunlar:
+    - Kesilmiş JSON (max_tokens aşıldı)
+    - Escape edilmemiş karakterler
+    - Trailing comma
+    """
+    import re
+    
+    if not raw_json:
+        return None
+    
+    # 1. Trailing comma temizle
+    cleaned = re.sub(r',\s*}', '}', raw_json)
+    cleaned = re.sub(r',\s*]', ']', cleaned)
+    
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+    
+    # 2. Kesilmiş JSON - eksik kapanış parantezleri ekle
+    open_braces = cleaned.count('{') - cleaned.count('}')
+    open_brackets = cleaned.count('[') - cleaned.count(']')
+    
+    if open_braces > 0 or open_brackets > 0:
+        # Son incomplete string'i kapat
+        if cleaned.rstrip().endswith('"'):
+            pass  # String zaten kapalı
+        elif '"' in cleaned:
+            # Son açık string'i bul ve kapat
+            last_quote = cleaned.rfind('"')
+            # Eğer escape edilmemişse
+            if last_quote > 0 and cleaned[last_quote-1] != '\\':
+                # String içinde miyiz kontrol et
+                quote_count = cleaned[:last_quote+1].count('"') - cleaned[:last_quote+1].count('\\"')
+                if quote_count % 2 == 1:
+                    cleaned += '"'
+        
+        # Eksik parantezleri ekle
+        cleaned += ']' * open_brackets
+        cleaned += '}' * open_braces
+        
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+    
+    # 3. Son çare: json5 veya demjson kullanmayı dene (eğer yüklüyse)
+    try:
+        import json5
+        return json5.loads(raw_json)
+    except (ImportError, Exception):
+        pass
+    
+    return None
 
 
 def extract_invoice_data(
     image_bytes: bytes, 
     mime_type: str = "image/png",
-    fast_mode: bool = True
+    fast_mode: bool = True,
+    text_hint: str = ""
 ) -> InvoiceExtraction:
     """
     OpenAI Vision API ile fatura görselinden veri çıkar (Structured Outputs).
@@ -480,11 +566,13 @@ def extract_invoice_data(
     - PII masking: Log'larda hassas veriler gizlenir
     - Structured Outputs: %100 şemaya uygun JSON garantisi
     - Genişletilmiş tedarikçi desteği: Tüm Türkiye tedarikçileri
+    - Text hint: pdfplumber'dan gelen değerler prompt'a eklenir (cross-validation)
     
     Args:
         image_bytes: Görsel bytes
         mime_type: MIME tipi
         fast_mode: True = gpt-4o-mini + low detail (hızlı), False = gpt-4o + high detail (doğru)
+        text_hint: pdfplumber'dan çıkarılan değerler (OpenAI'a yardımcı kanıt olarak verilir)
     """
     
     # Hash hesapla ve cache kontrol et
@@ -501,16 +589,23 @@ def extract_invoice_data(
     detail = "auto"  # auto = OpenAI otomatik optimize eder
     
     logger.info(f"Cache miss: hash={image_hash[:16]}... calling OpenAI API (model={model}, detail={detail})")
+    if text_hint:
+        logger.info(f"Text hint provided: {len(text_hint)} chars")
     
     # Görsel boyutunu her zaman optimize et (hız için kritik)
     image_bytes = _optimize_image_size(image_bytes, max_size=1200)
     
     base64_image = encode_image(image_bytes)
     
+    # System prompt'a text hint ekle (varsa)
+    system_prompt = EXTRACTION_PROMPT
+    if text_hint:
+        system_prompt = EXTRACTION_PROMPT + text_hint
+    
     messages = [
         {
             "role": "system",
-            "content": EXTRACTION_PROMPT
+            "content": system_prompt
         },
         {
             "role": "user",
@@ -531,7 +626,7 @@ def extract_invoice_data(
     data = _call_openai_with_retry(
         messages=messages,
         response_format={"type": "json_object"},  # Basit JSON mode - çok daha hızlı
-        max_tokens=800,  # Daha az token = daha hızlı
+        max_tokens=2000,  # Yeterli token ver - kesilmiş JSON önle
         temperature=0.1,
         model=model
     )
@@ -550,7 +645,14 @@ def extract_invoice_data(
     dist_total = raw_breakdown_data.get("distribution_total_tl", {}) if raw_breakdown_data else {}
     line_items_data = data.get("line_items", [])
     
+    # DEBUG: invoice_total_with_vat_tl değerini logla
+    invoice_total_raw = data.get("invoice_total_with_vat_tl", {})
+    charges_data = data.get("charges", {})
+    charges_total = charges_data.get("total_amount", {}) if charges_data else {}
+    
     logger.info(f"Extraction complete: vendor={vendor}, distributor={distributor}, period={period}, consumption={consumption} kWh, type={invoice_type}, extra_items={extra_count}")
+    logger.info(f"DEBUG invoice_total_with_vat_tl: {invoice_total_raw}")
+    logger.info(f"DEBUG charges.total_amount: {charges_total}")
     logger.info(f"DEBUG Distribution: unit_price={dist_unit_price}, total={dist_total}")
     logger.info(f"DEBUG Line items count: {len(line_items_data)}")
     for i, item in enumerate(line_items_data[:5]):  # İlk 5 satır
@@ -560,6 +662,9 @@ def extract_invoice_data(
     def parse_field(field_data) -> FieldValue:
         if field_data is None:
             return FieldValue()
+        # Handle case where OpenAI returns a plain number instead of dict
+        if isinstance(field_data, (int, float)):
+            return FieldValue(value=field_data, confidence=0.8, evidence="raw number from hint")
         return FieldValue(
             value=field_data.get("value"),
             confidence=field_data.get("confidence", 0),
@@ -571,6 +676,9 @@ def extract_invoice_data(
         from .models import StringFieldValue
         if field_data is None:
             return StringFieldValue()
+        # Handle case where OpenAI returns a plain string instead of dict
+        if isinstance(field_data, str):
+            return StringFieldValue(value=field_data, confidence=0.5, evidence="raw string")
         return StringFieldValue(
             value=field_data.get("value"),
             confidence=field_data.get("confidence", 0),
@@ -763,11 +871,146 @@ def extract_invoice_data(
         ) if data.get("meta") else InvoiceMeta(invoice_type_guess=invoice_type_mapped)
     )
     
+    # Post-processing: Line items'dan eksik değerleri türet
+    extraction = _derive_missing_values_from_line_items(extraction)
+    
     # Post-processing: Birim fiyat sanity check ve düzeltme
     extraction = _postprocess_unit_prices(extraction)
     
     # Cache'e kaydet
     cache_extraction(image_hash, extraction)
+    
+    return extraction
+
+
+def _derive_missing_values_from_line_items(extraction: InvoiceExtraction) -> InvoiceExtraction:
+    """
+    Line items'dan eksik ana değerleri türet.
+    
+    OpenAI bazen consumption_kwh, current_active_unit_price_tl_per_kwh gibi
+    ana alanları null döndürüyor ama line_items'da değerler var.
+    Bu fonksiyon line_items'dan bu değerleri türetir.
+    """
+    if not extraction.line_items:
+        return extraction
+    
+    # Enerji satırlarını bul
+    energy_keywords = ["enerji", "aktif", "sktt", "tüketim", "kademe", "gündüz", "puant", "gece", "t1", "t2", "t3"]
+    dist_keywords = ["dağıtım", "dskb", "elk. dağıtım", "distribution"]
+    
+    energy_lines = []
+    dist_lines = []
+    
+    for item in extraction.line_items:
+        label_lower = item.label.lower()
+        if any(kw in label_lower for kw in energy_keywords) and item.unit == "kWh":
+            energy_lines.append(item)
+        elif any(kw in label_lower for kw in dist_keywords) and item.unit == "kWh":
+            dist_lines.append(item)
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # consumption_kwh türetme
+    # ═══════════════════════════════════════════════════════════════════════
+    if extraction.consumption_kwh.value is None or extraction.consumption_kwh.value <= 0:
+        if energy_lines:
+            total_kwh = sum(item.qty for item in energy_lines if item.qty)
+            if total_kwh > 0:
+                extraction.consumption_kwh.value = total_kwh
+                extraction.consumption_kwh.confidence = 0.75
+                extraction.consumption_kwh.evidence = f"[LINE_ITEMS'DAN TÜRETİLDİ: {len(energy_lines)} enerji satırı toplamı]"
+                logger.info(f"consumption_kwh türetildi: {total_kwh} kWh (line_items'dan)")
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # current_active_unit_price_tl_per_kwh türetme
+    # ═══════════════════════════════════════════════════════════════════════
+    if extraction.current_active_unit_price_tl_per_kwh.value is None:
+        # Önce line_items'dan birim fiyat bul
+        unit_prices = [item.unit_price for item in energy_lines if item.unit_price and item.unit_price > 0]
+        if unit_prices:
+            # Ağırlıklı ortalama hesapla
+            total_amount = sum(item.amount_tl for item in energy_lines if item.amount_tl)
+            total_qty = sum(item.qty for item in energy_lines if item.qty)
+            if total_qty > 0 and total_amount > 0:
+                weighted_avg = total_amount / total_qty
+                extraction.current_active_unit_price_tl_per_kwh.value = weighted_avg
+                extraction.current_active_unit_price_tl_per_kwh.confidence = 0.70
+                extraction.current_active_unit_price_tl_per_kwh.evidence = f"[LINE_ITEMS'DAN TÜRETİLDİ: ağırlıklı ortalama]"
+                logger.info(f"current_active_unit_price türetildi: {weighted_avg:.4f} TL/kWh (line_items'dan)")
+            elif unit_prices:
+                # Basit ortalama
+                avg_price = sum(unit_prices) / len(unit_prices)
+                extraction.current_active_unit_price_tl_per_kwh.value = avg_price
+                extraction.current_active_unit_price_tl_per_kwh.confidence = 0.65
+                extraction.current_active_unit_price_tl_per_kwh.evidence = f"[LINE_ITEMS'DAN TÜRETİLDİ: basit ortalama]"
+                logger.info(f"current_active_unit_price türetildi: {avg_price:.4f} TL/kWh (line_items'dan)")
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # distribution_unit_price_tl_per_kwh türetme
+    # ═══════════════════════════════════════════════════════════════════════
+    if extraction.distribution_unit_price_tl_per_kwh.value is None:
+        if dist_lines:
+            unit_prices = [item.unit_price for item in dist_lines if item.unit_price and item.unit_price > 0]
+            if unit_prices:
+                avg_price = sum(unit_prices) / len(unit_prices)
+                extraction.distribution_unit_price_tl_per_kwh.value = avg_price
+                extraction.distribution_unit_price_tl_per_kwh.confidence = 0.70
+                extraction.distribution_unit_price_tl_per_kwh.evidence = f"[LINE_ITEMS'DAN TÜRETİLDİ: dağıtım satırı]"
+                logger.info(f"distribution_unit_price türetildi: {avg_price:.4f} TL/kWh (line_items'dan)")
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # invoice_total_with_vat_tl türetme
+    # ⚠️ KRİTİK: Bu değer FATURADAN OKUNMALI, HESAPLANMAMALI!
+    # Ama OpenAI okuyamıyorsa line_items'dan hesapla (son çare)
+    # ═══════════════════════════════════════════════════════════════════════
+    if extraction.invoice_total_with_vat_tl.value is None or extraction.invoice_total_with_vat_tl.value <= 0:
+        # Önce charges.total_amount'a bak
+        if extraction.charges and extraction.charges.total_amount and extraction.charges.total_amount.value:
+            extraction.invoice_total_with_vat_tl.value = extraction.charges.total_amount.value
+            extraction.invoice_total_with_vat_tl.confidence = extraction.charges.total_amount.confidence
+            extraction.invoice_total_with_vat_tl.evidence = f"[CHARGES.TOTAL_AMOUNT'DAN ALINDI]"
+            logger.info(f"invoice_total alındı: {extraction.charges.total_amount.value} TL (charges'dan)")
+        elif extraction.line_items:
+            # SON ÇARE: Line items'dan hesapla
+            # Line items toplamı = KDV HARİÇ tutar
+            # Bazı faturalarda KDV %0 olabilir, bu durumda line_items ≈ fatura tutarı
+            total_from_lines = sum(item.amount_tl for item in extraction.line_items if item.amount_tl)
+            if total_from_lines != 0:
+                # Line items toplamını KDV DAHİL olarak kabul et
+                # (Bazı faturalarda KDV %0 veya dahil olabilir)
+                # Calculator'da KDV kontrolü yapılacak
+                extraction.invoice_total_with_vat_tl.value = round(total_from_lines, 2)
+                extraction.invoice_total_with_vat_tl.confidence = 0.60  # Düşük confidence - hesaplanmış
+                extraction.invoice_total_with_vat_tl.evidence = f"[LINE_ITEMS TOPLAMI: {total_from_lines:.2f} TL]"
+                logger.warning(f"invoice_total LINE_ITEMS TOPLAMINDAN ALINDI: {total_from_lines:.2f} TL (KDV durumu belirsiz)")
+            else:
+                logger.warning("invoice_total_with_vat_tl faturadan okunamadı! Bu değer manuel girilmeli.")
+    
+    # ═══════════════════════════════════════════════════════════════════════
+    # invoice_period düzeltme (fatura numarasından)
+    # ═══════════════════════════════════════════════════════════════════════
+    # CK faturalarında fatura no: BBE2025000297356 (ilk 3 harf + 4 hane yıl)
+    # Eğer dönem yılı fatura numarasındaki yıldan farklıysa düzelt
+    if extraction.invoice_no and extraction.invoice_no.value and extraction.invoice_period:
+        import re
+        invoice_no = extraction.invoice_no.value
+        period = extraction.invoice_period
+        
+        # Fatura numarasından yılı çıkar (BBE2025... veya EAL2025... formatı)
+        year_match = re.search(r'[A-Z]{2,3}(\d{4})', invoice_no)
+        if year_match:
+            invoice_year = year_match.group(1)
+            
+            # Dönemden yılı çıkar (2023-08 formatı)
+            period_match = re.match(r'(\d{4})-(\d{2})', period)
+            if period_match:
+                period_year = period_match.group(1)
+                period_month = period_match.group(2)
+                
+                # Yıllar farklıysa düzelt
+                if invoice_year != period_year:
+                    old_period = period
+                    extraction.invoice_period = f"{invoice_year}-{period_month}"
+                    logger.warning(f"invoice_period düzeltildi: {old_period} → {extraction.invoice_period} (fatura no'dan)")
     
     return extraction
 
@@ -825,9 +1068,10 @@ def _postprocess_unit_prices(extraction: InvoiceExtraction) -> InvoiceExtraction
     if extraction.distribution_unit_price_tl_per_kwh.value is None:
         from .distribution_tariffs import get_distribution_unit_price_from_extraction
         
-        derived_price = get_distribution_unit_price_from_extraction(extraction)
+        lookup_result = get_distribution_unit_price_from_extraction(extraction)
         
-        if derived_price is not None:
+        if lookup_result.success and lookup_result.unit_price is not None:
+            derived_price = lookup_result.unit_price
             # Tarife bilgilerini logla
             tariff_info = ""
             if extraction.tariff:
@@ -919,6 +1163,9 @@ def extract_invoice_data_sectioned(
     def parse_field(field_data) -> FieldValue:
         if field_data is None:
             return FieldValue()
+        # Handle case where OpenAI returns a plain number instead of dict
+        if isinstance(field_data, (int, float)):
+            return FieldValue(value=field_data, confidence=0.8, evidence="raw number from hint")
         return FieldValue(
             value=field_data.get("value"),
             confidence=field_data.get("confidence", 0),

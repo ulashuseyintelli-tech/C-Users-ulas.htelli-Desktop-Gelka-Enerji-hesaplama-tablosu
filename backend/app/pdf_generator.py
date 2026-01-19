@@ -35,6 +35,22 @@ except OSError as e:
     # Cairo/Pango DLL issues on Windows
     logger.warning(f"WeasyPrint system dependency error: {e}. Will use Playwright fallback.")
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# ReportLab - Fallback for Windows (pure Python, no system dependencies)
+# ═══════════════════════════════════════════════════════════════════════════════
+REPORTLAB_AVAILABLE = False
+try:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from io import BytesIO
+    REPORTLAB_AVAILABLE = True
+    logger.info("ReportLab available for PDF generation (fallback)")
+except ImportError as e:
+    logger.warning(f"ReportLab not available: {e}")
+
 # Template directory
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 OUTPUT_DIR = Path(__file__).parent.parent / "outputs"

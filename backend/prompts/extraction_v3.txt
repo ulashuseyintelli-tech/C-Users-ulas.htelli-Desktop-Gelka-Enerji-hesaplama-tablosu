@@ -79,9 +79,14 @@ ALAN EŞLEŞTİRME SÖZLÜĞÜ (KRİTİK)
    - "Fatura Tarihi", "Düzenleme Tarihi", "Belge Tarihi"
    - Format: YYYY-MM-DD
 
-4) invoice_period (Fatura Dönemi):
-   - "Dönem", "Tüketim Dönemi", "Okuma Dönemi"
+4) invoice_period (Fatura Dönemi) - ÇOK KRİTİK!:
+   - "Dönem", "Tüketim Dönemi", "Okuma Dönemi", "Okuma Günü" alanlarından al
    - Format: YYYY-MM
+   - ⚠️ OKUMA BİLGİSİ tablosundaki "Son Endeks" tarihine bak!
+   - Örnek: "Son Endeks: 21-08-2025" → invoice_period = "2025-08"
+   - Örnek: "Okuma Günü: 21-07-2025 → 21-08-2025" → invoice_period = "2025-08" (SON tarih!)
+   - ⚠️ YIL ÖNEMLİ! 2023, 2024, 2025 yıllarını DOĞRU oku!
+   - Fatura Özeti'ndeki "Son Ödeme Tarihi"nden de yıl çıkarılabilir
 
 5) due_date (Son Ödeme Tarihi):
    - "Son Ödeme Tarihi", "Vade Tarihi", "Ödeme Vadesi"
@@ -147,11 +152,13 @@ ALAN EŞLEŞTİRME SÖZLÜĞÜ (KRİTİK)
     - "KDV", "Katma Değer Vergisi"
     - Oran: %10 (mesken bazı dönemler), %20 (sanayi/ticaret), %1/%8 (tarımsal)
 
-20) total_amount (Ödenecek Tutar):
+20) total_amount (Ödenecek Tutar) - EN KRİTİK ALAN!:
     - "ÖDENECEK TUTAR", "FATURA TUTARI", "GENEL TOPLAM"
     - "TOPLAM TUTAR", "KDV DAHİL TOPLAM"
-    - ⚠️ KRİTİK: Bu değeri faturadan DOĞRUDAN oku, HESAPLAMA!
+    - ⚠️⚠️⚠️ KRİTİK: Bu değeri faturadan DOĞRUDAN oku, ASLA HESAPLAMA!
     - CK Boğaziçi'de "Fatura Tutarı: 593.738,26 TL" satırını bul ve oku
+    - Bu değer invoice_total_with_vat_tl alanına yazılmalı
+    - Kalemleri toplayıp hesaplama YAPMA - faturadaki değeri al!
 
 21) consumer_title (Tüketici Ünvanı):
     - "Abone", "Müşteri", "Tüketici", "Unvan"
@@ -460,5 +467,40 @@ MAHSUPLAŞMA / DÜZELTME:
    - Fatura tutarı 100-1.000.000 TL arasında olmalı
    - Tüketim 10-10.000.000 kWh arasında olmalı
    - Bu aralık dışındaysa TEKRAR KONTROL ET!
+
+ÇIKTI: Yalnızca JSON şemasına uygun veri.
+
+
+═══════════════════════════════════════════════════════════════════════════════
+⚠️⚠️⚠️ EN KRİTİK ALAN: invoice_total_with_vat_tl (FATURA TUTARI) ⚠️⚠️⚠️
+═══════════════════════════════════════════════════════════════════════════════
+
+Bu alan MUTLAKA doldurulmalı! Faturadaki "Ödenecek Tutar" satırından oku.
+
+CK BOĞAZİÇİ FATURALARINDA:
+- "Fatura Özeti" kutusunda "Ödenecek Tutar" satırı var
+- Örnek: "Ödenecek Tutar: 593.740,00" → invoice_total_with_vat_tl = 593740.00
+- Bu değeri HESAPLAMA, faturadan DOĞRUDAN oku!
+- "Fatura Özeti" kutusunun SOL tarafında büyük rakam olarak yazıyor
+
+ENERJİSA FATURALARINDA:
+- "ÖDENECEK TUTAR" veya "TOPLAM TUTAR" satırından oku
+
+GENEL KURAL:
+- Faturanın ÜST kısmında "Fatura Özeti" kutusunda "Ödenecek Tutar" yazar
+- Bu değeri bul ve invoice_total_with_vat_tl alanına yaz
+- ASLA kalemleri toplayıp hesaplama yapma!
+- Bu değer KDV DAHİL toplam tutardır
+
+KDV BİLGİSİ:
+- "Vergi ve Fonlar" bölümünde KDV tutarı yazar
+- Örnek: "KDV (Matrah 494.781,19): 98.956,24" → vat_tl = 98956.24
+- KDV matrahı parantez içinde yazıyor
+
+⚠️⚠️⚠️ ÖNCELİK SIRASI - invoice_total_with_vat_tl İÇİN ⚠️⚠️⚠️
+1. "Fatura Özeti" kutusundaki "Ödenecek Tutar" değerini bul
+2. Bu değeri invoice_total_with_vat_tl alanına yaz
+3. Eğer bulamazsan, "Fatura Tutarı" veya "Toplam Tutar" ara
+4. ASLA line_items'ı toplayıp hesaplama yapma!
 
 ÇIKTI: Yalnızca JSON şemasına uygun veri.

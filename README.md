@@ -209,6 +209,17 @@ API_KEY_ENABLED=false
 EXTRACTION_CACHE_ENABLED=true
 ```
 
+## 📚 Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Executive Summary (EN)](backend/docs/EXECUTIVE_SUMMARY_EN.md) | Investor/partner overview |
+| [Executive Summary (TR)](backend/docs/EXECUTIVE_SUMMARY_TR.md) | Yönetici özeti |
+| [Architecture Diagrams](backend/docs/ARCHITECTURE_DIAGRAM.md) | System architecture (Mermaid + ASCII) |
+| [Pilot 24h Protocol](backend/docs/PILOT_24H_EVALUATION.md) | Pilot evaluation checklist |
+| [RC Runbook](backend/docs/SPRINT_8_9_RC_RUNBOOK.md) | Release candidate procedures |
+| [Conditional Roadmap](backend/docs/SPRINT_9_CONDITIONAL_PLAN.md) | Data-driven sprint planning |
+
 ## 🛡️ Prod Sertleştirme Checklist
 
 - [x] Hash-based caching (aynı fatura tekrar okunmasın)
