@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from .models import InvoiceExtraction, OfferParams, CalculationResult, ValidationResult, InvoiceStatus, JobType, JobStatus, FieldValue
+from .models import InvoiceExtraction, OfferParams, CalculationResult, ValidationResult, InvoiceStatus, JobType, JobStatus, FieldValue, InvoiceMeta
 from .extractor import extract_invoice_data, clear_extraction_cache, mask_pii, ExtractionError
 from .calculator import calculate_offer
 from .validator import validate_extraction
@@ -963,7 +963,7 @@ async def full_process(
                 debug_meta.warnings.append(f"Cross-validation: {reconciled['flag']} ({reference_source}={text_total}, vision={vision_total})")
             
             # Eğer referans değer daha güvenilirse, extraction'ı güncelle
-            if reconciled["final"] and reconciled["source"] in ["text_confirmed", "text_with_rounding", "text_only"]:
+            if reconciled["final"] and reconciled["source"] in ["text_confirmed", "text_with_rounding", "text_only", "text_override"]:
                 if extraction.invoice_total_with_vat_tl.value != float(reconciled["final"]):
                     old_value = extraction.invoice_total_with_vat_tl.value
                     extraction.invoice_total_with_vat_tl.value = float(reconciled["final"])
@@ -1750,35 +1750,55 @@ def generate_pdf_simple(
     yekdem_tl_per_mwh: float = Form(364.0),
     agreement_multiplier: float = Form(1.01),
     consumption_kwh: float = Form(...),
-    current_unit_price: float = Form(...),
+    current_unit_price: float = Form(0),
     distribution_unit_price: float = Form(0),
-    invoice_total: float = Form(...),
+    invoice_total: float = Form(0),
     current_energy_tl: float = Form(...),
     current_distribution_tl: float = Form(0),
-    current_btv_tl: float = Form(...),
-    current_vat_tl: float = Form(...),
+    current_btv_tl: float = Form(0),
+    current_vat_tl: float = Form(0),
+    current_vat_matrah_tl: float = Form(0),
+    current_total_with_vat_tl: float = Form(0),
     offer_energy_tl: float = Form(...),
     offer_distribution_tl: float = Form(0),
-    offer_btv_tl: float = Form(...),
-    offer_vat_tl: float = Form(...),
+    offer_btv_tl: float = Form(0),
+    offer_vat_tl: float = Form(0),
+    offer_vat_matrah_tl: float = Form(0),
     offer_total: float = Form(...),
+    difference_incl_vat_tl: float = Form(0),
     savings_ratio: float = Form(...),
     vendor: str = Form("unknown"),
     invoice_period: str = Form(""),
     customer_name: Optional[str] = Form(None),
+    tariff_group: str = Form("Sanayi"),
 ):
     """Basit parametrelerle PDF oluştur - Frontend için"""
     try:
-        # Basit extraction oluştur (tüm gerekli alanlarla)
+        # Mevcut toplam hesapla (eğer gönderilmediyse)
+        if current_total_with_vat_tl == 0 and invoice_total > 0:
+            current_total_with_vat_tl = invoice_total
+        
+        # KDV matrahı hesapla (eğer gönderilmediyse)
+        if current_vat_matrah_tl == 0:
+            current_vat_matrah_tl = current_energy_tl + current_distribution_tl + current_btv_tl
+        if offer_vat_matrah_tl == 0:
+            offer_vat_matrah_tl = offer_energy_tl + offer_distribution_tl + offer_btv_tl
+        
+        # Fark hesapla (eğer gönderilmediyse)
+        if difference_incl_vat_tl == 0:
+            difference_incl_vat_tl = current_total_with_vat_tl - offer_total
+        
+        # Basit extraction oluştur
         extraction = InvoiceExtraction(
             vendor=vendor,
             invoice_period=invoice_period,
             consumption_kwh=FieldValue(value=consumption_kwh, confidence=1.0),
             current_active_unit_price_tl_per_kwh=FieldValue(value=current_unit_price, confidence=1.0),
             distribution_unit_price_tl_per_kwh=FieldValue(value=distribution_unit_price, confidence=1.0),
-            invoice_total_with_vat_tl=FieldValue(value=invoice_total, confidence=1.0),
+            invoice_total_with_vat_tl=FieldValue(value=current_total_with_vat_tl, confidence=1.0),
             demand_qty=FieldValue(value=0, confidence=1.0),
             demand_unit_price_tl_per_unit=FieldValue(value=0, confidence=1.0),
+            meta=InvoiceMeta(tariff_group_guess=tariff_group),
         )
         
         # Params
@@ -1788,17 +1808,13 @@ def generate_pdf_simple(
             agreement_multiplier=agreement_multiplier,
         )
         
-        # Calculation sonucu
-        current_vat_matrah = current_energy_tl + current_distribution_tl + current_btv_tl
-        offer_vat_matrah = offer_energy_tl + offer_distribution_tl + offer_btv_tl
-        
         # kWh başı hesaplamalar
-        current_total_tl_per_kwh = invoice_total / consumption_kwh if consumption_kwh > 0 else 0
+        current_total_tl_per_kwh = current_total_with_vat_tl / consumption_kwh if consumption_kwh > 0 else 0
         offer_total_tl_per_kwh = offer_total / consumption_kwh if consumption_kwh > 0 else 0
         saving_tl_per_kwh = current_total_tl_per_kwh - offer_total_tl_per_kwh
-        annual_saving_tl = (invoice_total - offer_total) * 12
+        annual_saving_tl = difference_incl_vat_tl * 12
         
-        # Birim fiyat tasarrufu
+        # Birim fiyat
         offer_unit_price = (weighted_ptf_tl_per_mwh / 1000 + yekdem_tl_per_mwh / 1000) * agreement_multiplier
         unit_price_savings_ratio = (current_unit_price - offer_unit_price) / current_unit_price if current_unit_price > 0 else 0
         
@@ -1807,9 +1823,9 @@ def generate_pdf_simple(
             current_distribution_tl=current_distribution_tl,
             current_demand_tl=0,
             current_btv_tl=current_btv_tl,
-            current_vat_matrah_tl=current_vat_matrah,
+            current_vat_matrah_tl=current_vat_matrah_tl,
             current_vat_tl=current_vat_tl,
-            current_total_with_vat_tl=invoice_total,
+            current_total_with_vat_tl=current_total_with_vat_tl,
             current_energy_unit_tl_per_kwh=current_unit_price,
             current_distribution_unit_tl_per_kwh=distribution_unit_price,
             offer_ptf_tl=offer_energy_tl / agreement_multiplier if agreement_multiplier else offer_energy_tl,
@@ -1818,13 +1834,13 @@ def generate_pdf_simple(
             offer_distribution_tl=offer_distribution_tl,
             offer_demand_tl=0,
             offer_btv_tl=offer_btv_tl,
-            offer_vat_matrah_tl=offer_vat_matrah,
+            offer_vat_matrah_tl=offer_vat_matrah_tl,
             offer_vat_tl=offer_vat_tl,
             offer_total_with_vat_tl=offer_total,
             offer_energy_unit_tl_per_kwh=offer_unit_price,
             offer_distribution_unit_tl_per_kwh=distribution_unit_price,
-            difference_excl_vat_tl=current_vat_matrah - offer_vat_matrah,
-            difference_incl_vat_tl=invoice_total - offer_total,
+            difference_excl_vat_tl=current_vat_matrah_tl - offer_vat_matrah_tl,
+            difference_incl_vat_tl=difference_incl_vat_tl,
             savings_ratio=savings_ratio,
             unit_price_savings_ratio=unit_price_savings_ratio,
             current_total_tl_per_kwh=current_total_tl_per_kwh,

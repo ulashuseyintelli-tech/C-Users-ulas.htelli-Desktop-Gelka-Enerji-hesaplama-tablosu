@@ -1,252 +1,73 @@
 <!DOCTYPE html>
 <html lang="tr">
 <head>
-    <meta charset="UTF-8">
-    <title>Enerji Teklifi - {{ offer_id }}</title>
+<meta charset="UTF-8">
+<title>Teklif {{ offer_id }}</title>
+<style>
+@page { size: A4; margin: 8mm; }
+@media print { html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: Arial, sans-serif; font-size: 8.5pt; line-height: 1.3; color: #333; }
+.header { display: flex; justify-content: space-between; align-items: flex-start; border-top: 3px solid #4B5563; padding: 5px 0 10px 0; margin-bottom: 8px; overflow: visible; min-height: 50px; }
+.logo { display: flex; align-items: flex-start; gap: 10px; }
+.logo-icon { width: 40px; height: 40px; background: #4B5563; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #F59E0B; font-size: 20px; flex-shrink: 0; }
+.brand-text { display: inline-block; line-height: 1.35; }
+.company-name { font-size: 20pt; font-weight: bold; color: #374151; line-height: 1.1; }
+.company-sub { font-size: 12pt; font-style: italic; color: #F59E0B; display: inline-block; line-height: 1.5; padding-bottom: 5px; }
+.header-right { display: flex; gap: 12px; align-items: flex-start; text-align: right; }
+.header-info { font-size: 9pt; line-height: 1.5; }
+.stripes { display: flex; flex-direction: column; gap: 4px; }
+.stripe { width: 55px; height: 12px; background: #F59E0B; transform: skewX(-15deg); }
+.stripe:nth-child(2) { margin-left: 6px; }
+.stripe:nth-child(3) { margin-left: 12px; }
+.title { text-align: center; font-size: 11pt; font-style: italic; border-bottom: 2px solid #10B981; padding: 5px 0; margin-bottom: 8px; }
+.intro { margin-bottom: 8px; line-height: 1.4; }
+table { width: 100%; border-collapse: collapse; margin-bottom: 8px; font-size: 8pt; break-inside: avoid; }
+th, td { padding: 5px 6px; border: 1px solid #ddd; }
+th { background: #f5f5f5; text-align: left; font-weight: 600; }
+.cmp th { background: #10B981; color: white; text-align: center; }
+.cmp td { text-align: right; }
+.cmp td:first-child { text-align: left; }
+.total { background: #e8f5e9 !important; font-weight: bold; }
+.save { background: #10B981; color: white; padding: 10px; border-radius: 6px; text-align: center; margin: 10px 0; }
+.save .label { font-size: 7pt; }
+.save .amt { font-size: 14pt; font-weight: bold; }
+.terms { background: #f9f9f9; border-left: 3px solid #10B981; padding: 8px 10px; margin: 8px 0; font-size: 8pt; }
+.terms-title { font-size: 10pt; font-weight: bold; color: #1F2937; margin-bottom: 5px; }
+.sig { margin-top: 10px; font-size: 8pt; }
+.foot { margin-top: 10px; padding-top: 5px; border-top: 1px solid #ddd; font-size: 7pt; color: #888; text-align: center; }
+</style>
 </head>
 <body>
-    <div class="header">
-        <div class="logo">GELKA ENERJİ</div>
-        <div class="offer-title">Enerji Tasarruf Teklifi</div>
-        <div class="offer-meta">
-            Teklif No: {{ offer_id }} | Tarih: {{ date }}
-        </div>
-    </div>
-
-    <div class="section">
-        <div class="section-title">Müşteri Bilgileri</div>
-        <p><strong>{{ customer_name }}</strong></p>
-        {% if customer_company %}<p>{{ customer_company }}</p>{% endif %}
-    </div>
-
-    <div class="section">
-        <div class="section-title">Mevcut Fatura Analizi</div>
-        <table>
-            <tr>
-                <th>Tedarikçi</th>
-                <td>{{ vendor | title }}</td>
-                <th>Fatura Dönemi</th>
-                <td>{{ invoice_period }}</td>
-            </tr>
-            <tr>
-                <th>Tüketim</th>
-                <td>{{ consumption_kwh | number }} kWh</td>
-                <th>Aktif Enerji Birim Fiyat</th>
-                <td>{{ current_unit_price | number(4) }} TL/kWh</td>
-            </tr>
-            <tr>
-                <th>Dağıtım Birim Fiyat</th>
-                <td>{{ distribution_unit_price | number(4) }} TL/kWh</td>
-                <th>Demand</th>
-                <td>{{ demand_qty | number }} × {{ demand_unit_price | number(2) }} TL</td>
-            </tr>
-        </table>
-    </div>
-
-    <div class="savings-box">
-        <div class="savings-label">Aylık Tahmini Tasarruf</div>
-        <div class="savings-amount">{{ calc.difference_incl_vat_tl | currency }}</div>
-        <div class="savings-label">{{ calc.savings_ratio | percent }} tasarruf oranı</div>
-    </div>
-
-    <!-- Yıllık Projeksiyon ve Tasarruf Detayı -->
-    <div class="section">
-        <div class="section-title">Tasarruf Projeksiyonu</div>
-        <table>
-            <thead>
-                <tr>
-                    <th>Metrik</th>
-                    <th>Değer</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td>kWh başı toplam maliyet (Mevcut)</td>
-                    <td>{{ calc.current_total_tl_per_kwh | number(4) }} TL/kWh</td>
-                </tr>
-                <tr>
-                    <td>kWh başı toplam maliyet (Teklif)</td>
-                    <td>{{ calc.offer_total_tl_per_kwh | number(4) }} TL/kWh</td>
-                </tr>
-                <tr style="background-color: #ECFDF5;">
-                    <td><strong>kWh başı tasarruf</strong></td>
-                    <td style="color: #059669; font-weight: bold;">{{ calc.saving_tl_per_kwh | number(4) }} TL/kWh</td>
-                </tr>
-                <tr>
-                    <td>Aylık tasarruf</td>
-                    <td>{{ calc.difference_incl_vat_tl | currency }}</td>
-                </tr>
-                <tr style="background-color: #ECFDF5;">
-                    <td><strong>Yıllık tahmini tasarruf (12 ay)</strong></td>
-                    <td style="color: #059669; font-size: 14pt; font-weight: bold;">{{ calc.annual_saving_tl | currency }}</td>
-                </tr>
-            </tbody>
-        </table>
-        <div class="notes" style="margin-top: 10px; font-size: 9pt;">
-            <p>* Yıllık projeksiyon, mevcut ayın tüketim ve fiyat varsayımlarının 12 ay boyunca benzer kaldığı senaryo üzerinden hesaplanır.</p>
-        </div>
-    </div>
-
-    <!-- Enerji Birim Fiyat Kıyası -->
-    <div class="section">
-        <div class="section-title">Enerji Birim Fiyat Karşılaştırması</div>
-        <table>
-            <tr>
-                <th>Mevcut Enerji Birim Fiyat</th>
-                <td class="current-col">{{ calc.current_energy_unit_tl_per_kwh | number(4) }} TL/kWh</td>
-                <th>Teklif Enerji Birim Fiyat</th>
-                <td class="offer-col">{{ calc.offer_energy_unit_tl_per_kwh | number(4) }} TL/kWh</td>
-            </tr>
-            <tr>
-                <th>Birim Fiyat Tasarrufu</th>
-                <td colspan="3" style="color: #059669; font-weight: bold;">
-                    {{ calc.unit_price_savings_ratio | percent }} 
-                    ({{ (calc.current_energy_unit_tl_per_kwh - calc.offer_energy_unit_tl_per_kwh) | number(4) }} TL/kWh)
-                </td>
-            </tr>
-        </table>
-    </div>
-
-    <div class="section">
-        <div class="section-title">Karşılaştırmalı Analiz</div>
-        <table class="comparison-table">
-            <thead>
-                <tr>
-                    <th>Kalem</th>
-                    <th class="current-col">Mevcut Fatura</th>
-                    <th class="offer-col">Teklifimiz</th>
-                    <th>Fark</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td>Aktif Enerji Bedeli</td>
-                    <td class="current-col">{{ calc.current_energy_tl | currency }}</td>
-                    <td class="offer-col">{{ calc.offer_energy_tl | currency }}</td>
-                    <td>{{ (calc.current_energy_tl - calc.offer_energy_tl) | currency }}</td>
-                </tr>
-                <tr>
-                    <td>Dağıtım Bedeli</td>
-                    <td class="current-col">{{ calc.current_distribution_tl | currency }}</td>
-                    <td class="offer-col">{{ calc.offer_distribution_tl | currency }}</td>
-                    <td>{{ (calc.current_distribution_tl - calc.offer_distribution_tl) | currency }}</td>
-                </tr>
-                <tr>
-                    <td>Demand Bedeli</td>
-                    <td class="current-col">{{ calc.current_demand_tl | currency }}</td>
-                    <td class="offer-col">{{ calc.offer_demand_tl | currency }}</td>
-                    <td>-</td>
-                </tr>
-                <tr>
-                    <td>BTV (%1)</td>
-                    <td class="current-col">{{ calc.current_btv_tl | currency }}</td>
-                    <td class="offer-col">{{ calc.offer_btv_tl | currency }}</td>
-                    <td>{{ (calc.current_btv_tl - calc.offer_btv_tl) | currency }}</td>
-                </tr>
-                {% if calc.current_extra_items_tl != 0 %}
-                <tr>
-                    <td>Ek Kalemler</td>
-                    <td class="current-col">{{ calc.current_extra_items_tl | currency }}</td>
-                    <td class="offer-col">{{ calc.offer_extra_items_tl | currency }}</td>
-                    <td>{{ (calc.current_extra_items_tl - calc.offer_extra_items_tl) | currency }}</td>
-                </tr>
-                {% endif %}
-                <tr>
-                    <td>KDV Matrahı</td>
-                    <td class="current-col">{{ calc.current_vat_matrah_tl | currency }}</td>
-                    <td class="offer-col">{{ calc.offer_vat_matrah_tl | currency }}</td>
-                    <td>{{ calc.difference_excl_vat_tl | currency }}</td>
-                </tr>
-                <tr>
-                    <td>KDV (%20)</td>
-                    <td class="current-col">{{ calc.current_vat_tl | currency }}</td>
-                    <td class="offer-col">{{ calc.offer_vat_tl | currency }}</td>
-                    <td>{{ (calc.current_vat_tl - calc.offer_vat_tl) | currency }}</td>
-                </tr>
-                <tr class="highlight-row">
-                    <td><strong>TOPLAM</strong></td>
-                    <td class="current-col"><strong>{{ calc.current_total_with_vat_tl | currency }}</strong></td>
-                    <td class="offer-col"><strong>{{ calc.offer_total_with_vat_tl | currency }}</strong></td>
-                    <td><strong>{{ calc.difference_incl_vat_tl | currency }}</strong></td>
-                </tr>
-            </tbody>
-        </table>
-    </div>
-
-    <div class="section">
-        <div class="section-title">Teklif Parametreleri</div>
-        <table>
-            <tr>
-                <th>Ağırlıklı PTF</th>
-                <td>{{ weighted_ptf | number(2) }} TL/MWh</td>
-                <th>YEKDEM</th>
-                <td>{{ yekdem | number(2) }} TL/MWh</td>
-            </tr>
-            <tr>
-                <th>Anlaşma Çarpanı</th>
-                <td>{{ agreement_multiplier | number(2) }}</td>
-                <th>Teklif Birim Fiyat</th>
-                <td>{{ offer_unit_price | number(4) }} TL/kWh</td>
-            </tr>
-        </table>
-    </div>
-
-    <!-- Teklif Varsayımları ve Kapsam -->
-    <div class="section">
-        <div class="section-title">Teklif Varsayımları ve Kapsam</div>
-        <table>
-            <thead>
-                <tr>
-                    <th>Başlık</th>
-                    <th>Durum</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td>Ek kalemler (reaktif/mahsup/düzeltme vb.) teklife dahil</td>
-                    <td>
-                        {% if extra_items_apply_to_offer %}
-                            <span style="color: #059669; font-weight: bold;">Evet (dahil)</span>
-                        {% else %}
-                            <span style="color: #6B7280;">Hayır (kapsam dışı)</span>
-                        {% endif %}
-                    </td>
-                </tr>
-                <tr>
-                    <td>Dağıtım bedeli teklifte ayrı birim fiyatla hesaplandı</td>
-                    <td>
-                        {% if use_offer_distribution %}
-                            <span style="color: #059669; font-weight: bold;">Evet ({{ offer_distribution_unit_price | number(4) }} TL/kWh)</span>
-                        {% else %}
-                            <span style="color: #6B7280;">Hayır (mevcut dağıtım birimi kullanıldı)</span>
-                        {% endif %}
-                    </td>
-                </tr>
-            </tbody>
-        </table>
-        <div class="notes" style="margin-top: 10px; font-size: 9pt;">
-            <p><strong>Not:</strong> Ek kalemler; reaktif bedel, hizmet bedelleri, mahsuplaşma/iadeler veya düzeltme kalemleri gibi fatura kalemlerini ifade eder.</p>
-            {% if calc.extra_items_note %}
-            <p style="margin-top: 5px;">{{ calc.extra_items_note }}</p>
-            {% endif %}
-        </div>
-    </div>
-
-    <div class="section">
-        <div class="section-title">Notlar</div>
-        <div class="notes">
-            <ul>
-                <li>Bu teklif, mevcut fatura verilerinize dayanılarak hazırlanmıştır.</li>
-                <li>Gerçek tasarruf miktarı, tüketim değişikliklerine göre farklılık gösterebilir.</li>
-                <li>Teklif geçerlilik süresi: 15 gün</li>
-                <li>Dağıtım bedeli ve vergiler mevcut tarifeler üzerinden hesaplanmıştır.</li>
-            </ul>
-        </div>
-    </div>
-
-    <div class="footer">
-        <p>Bu teklif Gelka Enerji tarafından otomatik olarak oluşturulmuştur.</p>
-        <p>İletişim: info@gelkaenerji.com | Tel: 0850 XXX XX XX</p>
-    </div>
+<div class="header">
+<div class="logo">
+<div class="logo-icon">⚡</div>
+<div class="brand-text"><div class="company-name">GELKA</div><div class="company-sub">enerji</div></div>
+</div>
+<div class="header-right">
+<div class="header-info"><strong>Teklif No:</strong> {{ offer_id }}<br><strong>Tarih:</strong> {{ date }}</div>
+<div class="stripes"><div class="stripe"></div><div class="stripe"></div><div class="stripe"></div></div>
+</div>
+</div>
+<div class="title">Enerji Tasarruf Teklifi</div>
+<p class="intro"><strong>Sayın Yetkili,</strong> {{ tariff_group }} abone grubunuz için hazırlanan elektrik enerjisi tedarik teklifimizi bilgilerinize sunarız.</p>
+<table class="cmp">
+<tr><th style="width:28%">Kalem</th><th style="width:24%">Mevcut</th><th style="width:24%">Teklif</th><th style="width:24%">Tasarruf</th></tr>
+<tr><td>Enerji Bedeli</td><td>{{ calc.current_energy_tl | currency }}</td><td>{{ calc.offer_energy_tl | currency }}</td><td>{{ (calc.current_energy_tl - calc.offer_energy_tl) | currency }}</td></tr>
+<tr><td>Dağıtım Bedeli</td><td>{{ calc.current_distribution_tl | currency }}</td><td>{{ calc.offer_distribution_tl | currency }}</td><td>-</td></tr>
+<tr><td>BTV</td><td>{{ calc.current_btv_tl | currency }}</td><td>{{ calc.offer_btv_tl | currency }}</td><td>-</td></tr>
+<tr><td>KDV Matrahı</td><td>{{ calc.current_vat_matrah_tl | currency }}</td><td>{{ calc.offer_vat_matrah_tl | currency }}</td><td>-</td></tr>
+<tr><td>KDV (%20)</td><td>{{ calc.current_vat_tl | currency }}</td><td>{{ calc.offer_vat_tl | currency }}</td><td>-</td></tr>
+<tr class="total"><td>TOPLAM</td><td>{{ calc.current_total_with_vat_tl | currency }}</td><td>{{ calc.offer_total_with_vat_tl | currency }}</td><td>{{ calc.difference_incl_vat_tl | currency }}</td></tr>
+</table>
+<div class="save"><div class="label">Aylık Tasarruf</div><div class="amt">{{ calc.difference_incl_vat_tl | currency }} ({{ calc.savings_ratio | percent }})</div></div>
+<table>
+<tr><th>Ağırlıklı PTF</th><td>{{ weighted_ptf | number(2) }} TL/MWh</td><th>YEKDEM</th><td>{{ yekdem | number(2) }} TL/MWh</td></tr>
+<tr><th>Anlaşma Çarpanı</th><td>{{ agreement_multiplier | number(2) }}</td><th>Teklif Birim Fiyat</th><td>{{ offer_unit_price | number(4) }} TL/kWh</td></tr>
+<tr><th>Tedarikçi</th><td>{{ vendor }}</td><th>Tüketim</th><td>{{ consumption_kwh | number }} kWh</td></tr>
+</table>
+<div class="terms"><div class="terms-title">Ticari Şartlar</div>✓ Fatura vadesi +10 gün ✓ Teminat yok ✓ Güvence yok</div>
+<div class="sig">Bilgilerinize sunarız.<br>Saygılarımızla,<br><strong>Gelka Enerji</strong></div>
+<div class="foot">Teklif No: {{ offer_id }} | {{ date }} | Geçerlilik: 15 Gün | www.gelkaenerji.com.tr</div>
 </body>
 </html>

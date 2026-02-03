@@ -159,12 +159,13 @@ def reconcile_amount(
                 "source": "text_with_rounding"
             }
         
-        # Ciddi fark - manuel kontrol gerekli
+        # Ciddi fark - pdfplumber'a güven (PDF'den direkt metin okuma daha güvenilir)
+        # Vision OCR hataları yapabilir (özellikle Türkçe sayı formatında)
         return {
-            "final": None, 
-            "confidence": 0.20, 
+            "final": text_val, 
+            "confidence": 0.75, 
             "flag": "HARD_MISMATCH",
-            "source": "conflict"
+            "source": "text_override"
         }
     
     if text_val is not None:

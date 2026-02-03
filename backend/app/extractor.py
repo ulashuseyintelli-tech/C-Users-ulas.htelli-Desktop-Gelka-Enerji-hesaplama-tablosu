@@ -914,7 +914,21 @@ def _derive_missing_values_from_line_items(extraction: InvoiceExtraction) -> Inv
     if extraction.consumption_kwh.value is None or extraction.consumption_kwh.value <= 0:
         if energy_lines:
             total_kwh = sum(item.qty for item in energy_lines if item.qty)
+            total_amount = sum(item.amount_tl for item in energy_lines if item.amount_tl)
+            
             if total_kwh > 0:
+                # Türkçe sayı formatı kontrolü: qty çok küçük, amount büyükse binlik ayraç sorunu var
+                # Örnek: 187.552,35 kWh -> 187.55235 olarak okunmuş
+                if total_kwh < 1000 and total_amount > 10000:
+                    # Muhtemelen binlik ayraç sorunu
+                    implied_unit_price = total_amount / total_kwh
+                    if implied_unit_price > 15.0:  # Birim fiyat çok yüksek
+                        corrected_kwh = total_kwh * 1000
+                        corrected_unit_price = total_amount / corrected_kwh
+                        if 0.5 <= corrected_unit_price <= 15.0:
+                            logger.warning(f"consumption_kwh binlik ayraç düzeltmesi: {total_kwh} -> {corrected_kwh} kWh")
+                            total_kwh = corrected_kwh
+                
                 extraction.consumption_kwh.value = total_kwh
                 extraction.consumption_kwh.confidence = 0.75
                 extraction.consumption_kwh.evidence = f"[LINE_ITEMS'DAN TÜRETİLDİ: {len(energy_lines)} enerji satırı toplamı]"
@@ -927,22 +941,43 @@ def _derive_missing_values_from_line_items(extraction: InvoiceExtraction) -> Inv
         # Önce line_items'dan birim fiyat bul
         unit_prices = [item.unit_price for item in energy_lines if item.unit_price and item.unit_price > 0]
         if unit_prices:
-            # Ağırlıklı ortalama hesapla
-            total_amount = sum(item.amount_tl for item in energy_lines if item.amount_tl)
-            total_qty = sum(item.qty for item in energy_lines if item.qty)
-            if total_qty > 0 and total_amount > 0:
-                weighted_avg = total_amount / total_qty
-                extraction.current_active_unit_price_tl_per_kwh.value = weighted_avg
-                extraction.current_active_unit_price_tl_per_kwh.confidence = 0.70
-                extraction.current_active_unit_price_tl_per_kwh.evidence = f"[LINE_ITEMS'DAN TÜRETİLDİ: ağırlıklı ortalama]"
-                logger.info(f"current_active_unit_price türetildi: {weighted_avg:.4f} TL/kWh (line_items'dan)")
-            elif unit_prices:
-                # Basit ortalama
-                avg_price = sum(unit_prices) / len(unit_prices)
+            # Önce doğrudan unit_price değerlerini kontrol et
+            # OpenAI genellikle unit_price'ı doğru parse eder
+            valid_unit_prices = [p for p in unit_prices if 0.5 <= p <= 15.0]
+            
+            if valid_unit_prices:
+                # Geçerli birim fiyatların ağırlıklı ortalaması
+                # (qty'ler yanlış olabilir, sadece unit_price'ları kullan)
+                avg_price = sum(valid_unit_prices) / len(valid_unit_prices)
                 extraction.current_active_unit_price_tl_per_kwh.value = avg_price
-                extraction.current_active_unit_price_tl_per_kwh.confidence = 0.65
-                extraction.current_active_unit_price_tl_per_kwh.evidence = f"[LINE_ITEMS'DAN TÜRETİLDİ: basit ortalama]"
-                logger.info(f"current_active_unit_price türetildi: {avg_price:.4f} TL/kWh (line_items'dan)")
+                extraction.current_active_unit_price_tl_per_kwh.confidence = 0.80
+                extraction.current_active_unit_price_tl_per_kwh.evidence = f"[LINE_ITEMS'DAN: doğrudan unit_price]"
+                logger.info(f"current_active_unit_price türetildi: {avg_price:.4f} TL/kWh (line_items unit_price'dan)")
+            else:
+                # unit_price'lar geçersiz, amount/qty hesapla
+                total_amount = sum(item.amount_tl for item in energy_lines if item.amount_tl)
+                total_qty = sum(item.qty for item in energy_lines if item.qty)
+                if total_qty > 0 and total_amount > 0:
+                    weighted_avg = total_amount / total_qty
+                    
+                    # Türkçe sayı formatı düzeltmesi: Eğer birim fiyat çok yüksekse,
+                    # muhtemelen qty'de binlik ayraç sorunu var (187.552,35 -> 187.55235)
+                    if weighted_avg > 15.0 and total_qty < 1000:
+                        corrected_qty = total_qty * 1000
+                        corrected_avg = total_amount / corrected_qty
+                        if 0.5 <= corrected_avg <= 15.0:
+                            logger.warning(f"Türkçe sayı formatı düzeltmesi: qty {total_qty} -> {corrected_qty}, birim fiyat {weighted_avg:.4f} -> {corrected_avg:.4f}")
+                            weighted_avg = corrected_avg
+                            # consumption_kwh'ı da düzelt
+                            if extraction.consumption_kwh.value and extraction.consumption_kwh.value < 1000:
+                                extraction.consumption_kwh.value = extraction.consumption_kwh.value * 1000
+                                extraction.consumption_kwh.evidence += " [BINLIK AYRAÇ DÜZELTMESİ]"
+                                logger.warning(f"consumption_kwh düzeltildi: {extraction.consumption_kwh.value} kWh")
+                    
+                    extraction.current_active_unit_price_tl_per_kwh.value = weighted_avg
+                    extraction.current_active_unit_price_tl_per_kwh.confidence = 0.70
+                    extraction.current_active_unit_price_tl_per_kwh.evidence = f"[LINE_ITEMS'DAN TÜRETİLDİ: ağırlıklı ortalama]"
+                    logger.info(f"current_active_unit_price türetildi: {weighted_avg:.4f} TL/kWh (line_items'dan)")
     
     # ═══════════════════════════════════════════════════════════════════════
     # distribution_unit_price_tl_per_kwh türetme

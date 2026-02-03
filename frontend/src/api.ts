@@ -169,20 +169,28 @@ export async function generateOfferPdf(
   formData.append('consumption_kwh', (extraction.consumption_kwh?.value || 0).toString());
   formData.append('current_unit_price', (extraction.current_active_unit_price_tl_per_kwh?.value || 0).toString());
   formData.append('distribution_unit_price', (extraction.distribution_unit_price_tl_per_kwh?.value || 0).toString());
-  formData.append('invoice_total', (extraction.invoice_total_with_vat_tl?.value || 0).toString());
+  formData.append('invoice_total', (calculation.current_total_with_vat_tl || 0).toString());
   formData.append('vendor', extraction.vendor || 'unknown');
   formData.append('invoice_period', extraction.invoice_period || '');
   
-  // Calculation data
+  // Calculation data - Mevcut fatura
   formData.append('current_energy_tl', calculation.current_energy_tl.toString());
   formData.append('current_distribution_tl', calculation.current_distribution_tl.toString());
   formData.append('current_btv_tl', calculation.current_btv_tl.toString());
   formData.append('current_vat_tl', calculation.current_vat_tl.toString());
+  formData.append('current_vat_matrah_tl', calculation.current_vat_matrah_tl.toString());
+  formData.append('current_total_with_vat_tl', calculation.current_total_with_vat_tl.toString());
+  
+  // Calculation data - Teklif
   formData.append('offer_energy_tl', calculation.offer_energy_tl.toString());
   formData.append('offer_distribution_tl', calculation.offer_distribution_tl.toString());
   formData.append('offer_btv_tl', calculation.offer_btv_tl.toString());
   formData.append('offer_vat_tl', calculation.offer_vat_tl.toString());
+  formData.append('offer_vat_matrah_tl', calculation.offer_vat_matrah_tl.toString());
   formData.append('offer_total', calculation.offer_total_with_vat_tl.toString());
+  
+  // Fark ve tasarruf
+  formData.append('difference_incl_vat_tl', calculation.difference_incl_vat_tl.toString());
   formData.append('savings_ratio', calculation.savings_ratio.toString());
   
   if (customerName) {

@@ -1,4 +1,4 @@
-"""Incident Service - Sprint 8.3 + 8.5 (Actionability)"""
+"""Incident Service - Sprint 8.3 + 8.5 (Actionability) + 8.8 (Config)"""
 
 import hashlib
 import logging
@@ -8,10 +8,14 @@ from dataclasses import dataclass, field
 from enum import Enum
 from sqlalchemy.orm import Session
 
+from .config import THRESHOLDS
+
 logger = logging.getLogger(__name__)
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
 # SPRINT 8.5: ACTIONABILITY
+# ═══════════════════════════════════════════════════════════════════════════════
 
 
 class ActionClass(str, Enum):
@@ -49,13 +53,20 @@ CHECKS_ACCEPT_ROUNDING: List[str] = [
     "Kuruş hassasiyeti",
 ]
 
-# Rounding tolerance thresholds
-ROUNDING_DELTA_THRESHOLD = 10.0  # TL
-ROUNDING_RATIO_THRESHOLD = 0.005  # %0.5
+# Rounding tolerance thresholds - NOW FROM CONFIG
+# DEPRECATED: Use THRESHOLDS.Mismatch.ROUNDING_DELTA and THRESHOLDS.Mismatch.ROUNDING_RATIO
+ROUNDING_DELTA_THRESHOLD = THRESHOLDS.Mismatch.ROUNDING_DELTA
+ROUNDING_RATIO_THRESHOLD = THRESHOLDS.Mismatch.ROUNDING_RATIO
 
 
 @dataclass
 class ActionHint:
+    """
+    Incident için actionability rehberi.
+    
+    Amaç: İlk 3 adımda karar verilebilir olması.
+    Kural: Deterministik - aynı input → aynı output.
+    """
     action_class: ActionClass
     primary_suspect: PrimarySuspect
     recommended_checks: List[str]
@@ -70,24 +81,70 @@ class ActionHint:
         }
 
 
-def generate_action_hint(flag_code: str, mismatch_info: Optional[dict], extraction_confidence: float = 1.0) -> Optional[ActionHint]:
+def generate_action_hint(
+    flag_code: str,
+    mismatch_info: Optional[dict],
+    extraction_confidence: float = 1.0,
+) -> Optional[ActionHint]:
+    """
+    Flag ve mismatch bilgisinden ActionHint üret.
+    
+    Decision Tree (INVOICE_TOTAL_MISMATCH için):
+    1. suspect_reason == "OCR_LOCALE_SUSPECT" → VERIFY_OCR
+    2. delta < 10 AND ratio < 0.005 → ACCEPT_ROUNDING_TOLERANCE
+    3. else → VERIFY_INVOICE_LOGIC
+    """
+    # Sadece INVOICE_TOTAL_MISMATCH destekleniyor
     if flag_code != "INVOICE_TOTAL_MISMATCH":
         return None
+    
+    # mismatch_info zorunlu alanları kontrol et
     if not mismatch_info:
         return None
+    
     required_fields = {"has_mismatch", "delta", "ratio", "severity"}
     if not required_fields.issubset(mismatch_info.keys()):
         return None
+    
+    # Mismatch yoksa hint yok
     if not mismatch_info.get("has_mismatch", False):
         return None
+    
     delta = mismatch_info.get("delta", 0)
     ratio = mismatch_info.get("ratio", 0)
     suspect_reason = mismatch_info.get("suspect_reason")
+    
+    # Decision Tree
+    # 1. OCR_LOCALE_SUSPECT → VERIFY_OCR
     if suspect_reason == "OCR_LOCALE_SUSPECT":
-        return ActionHint(action_class=ActionClass.VERIFY_OCR, primary_suspect=PrimarySuspect.OCR_LOCALE_SUSPECT, recommended_checks=CHECKS_VERIFY_OCR.copy(), confidence_note=f"Extraction confidence: {extraction_confidence:.2f}")
+        return ActionHint(
+            action_class=ActionClass.VERIFY_OCR,
+            primary_suspect=PrimarySuspect.OCR_LOCALE_SUSPECT,
+            recommended_checks=CHECKS_VERIFY_OCR.copy(),
+            confidence_note=f"Extraction confidence: {extraction_confidence:.2f}",
+        )
+    
+    # 2. delta < 10 AND ratio < 0.005 → ACCEPT_ROUNDING_TOLERANCE
     if delta < ROUNDING_DELTA_THRESHOLD and ratio < ROUNDING_RATIO_THRESHOLD:
-        return ActionHint(action_class=ActionClass.ACCEPT_ROUNDING_TOLERANCE, primary_suspect=PrimarySuspect.ROUNDING, recommended_checks=CHECKS_ACCEPT_ROUNDING.copy(), confidence_note=None)
-    return ActionHint(action_class=ActionClass.VERIFY_INVOICE_LOGIC, primary_suspect=PrimarySuspect.INVOICE_LOGIC, recommended_checks=CHECKS_VERIFY_INVOICE_LOGIC.copy(), confidence_note=None)
+        return ActionHint(
+            action_class=ActionClass.ACCEPT_ROUNDING_TOLERANCE,
+            primary_suspect=PrimarySuspect.ROUNDING,
+            recommended_checks=CHECKS_ACCEPT_ROUNDING.copy(),
+            confidence_note=None,
+        )
+    
+    # 3. else → VERIFY_INVOICE_LOGIC
+    return ActionHint(
+        action_class=ActionClass.VERIFY_INVOICE_LOGIC,
+        primary_suspect=PrimarySuspect.INVOICE_LOGIC,
+        recommended_checks=CHECKS_VERIFY_INVOICE_LOGIC.copy(),
+        confidence_note=None,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EXISTING CODE - Severity, Category, QualityFlags, etc.
+# ═══════════════════════════════════════════════════════════════════════════════
 
 
 class Severity:
@@ -138,7 +195,23 @@ QUALITY_FLAGS = {
 }
 
 
-FLAG_PRIORITY = {"CALC_BUG": 5, "MARKET_PRICE_MISSING": 10, "CONSUMPTION_MISSING": 15, "TARIFF_LOOKUP_FAILED": 20, "TARIFF_META_MISSING": 25, "DISTRIBUTION_MISSING": 30, "INVOICE_TOTAL_MISMATCH": 35, "MISSING_FIELDS": 40, "TOTAL_AVG_UNIT_PRICE_USED": 50, "DISTRIBUTION_MISMATCH": 60, "JSON_REPAIR_APPLIED": 70, "LOW_CONFIDENCE": 80, "VALIDATION_WARNINGS": 90, "OUTLIER_PTF": 100, "OUTLIER_CONSUMPTION": 110}
+FLAG_PRIORITY = {
+    "CALC_BUG": 5,
+    "MARKET_PRICE_MISSING": 10,
+    "CONSUMPTION_MISSING": 15,
+    "TARIFF_LOOKUP_FAILED": 20,
+    "TARIFF_META_MISSING": 25,
+    "DISTRIBUTION_MISSING": 30,
+    "INVOICE_TOTAL_MISMATCH": 35,
+    "MISSING_FIELDS": 40,
+    "TOTAL_AVG_UNIT_PRICE_USED": 50,
+    "DISTRIBUTION_MISMATCH": 60,
+    "JSON_REPAIR_APPLIED": 70,
+    "LOW_CONFIDENCE": 80,
+    "VALIDATION_WARNINGS": 90,
+    "OUTLIER_PTF": 100,
+    "OUTLIER_CONSUMPTION": 110,
+}
 
 
 class IncidentAction:
@@ -183,7 +256,23 @@ class ActionRecommendation:
     hint_text: str
 
 
-ACTION_MAP = {"CALC_BUG": ActionRecommendation(IncidentAction.BUG_REPORT, IncidentOwner.CALC, HintCode.ENGINE_REGRESSION, "engine regression"), "MARKET_PRICE_MISSING": ActionRecommendation(IncidentAction.RETRY_LOOKUP, IncidentOwner.MARKET_PRICE, HintCode.PTF_YEKDEM_CHECK, "PTF/YEKDEM kontrol"), "CONSUMPTION_MISSING": ActionRecommendation(IncidentAction.USER_FIX, IncidentOwner.USER, HintCode.CONSUMPTION_MANUAL_ENTRY, "manuel gir"), "TARIFF_LOOKUP_FAILED": ActionRecommendation(IncidentAction.RETRY_LOOKUP, IncidentOwner.TARIFF, HintCode.EPDK_TARIFF_LOOKUP, "EPDK lookup"), "TARIFF_META_MISSING": ActionRecommendation(IncidentAction.USER_FIX, IncidentOwner.USER, HintCode.MANUAL_META_ENTRY, "manuel meta"), "DISTRIBUTION_MISSING": ActionRecommendation(IncidentAction.RETRY_LOOKUP, IncidentOwner.TARIFF, HintCode.DISTRIBUTION_SOURCE_CHECK, "dagitim kontrol"), "MISSING_FIELDS": ActionRecommendation(IncidentAction.USER_FIX, IncidentOwner.USER, HintCode.MISSING_FIELDS_COMPLETE, "eksik alanlar"), "TOTAL_AVG_UNIT_PRICE_USED": ActionRecommendation(IncidentAction.FALLBACK_OK, IncidentOwner.EXTRACTION, HintCode.AVG_PRICE_FALLBACK, "ortalama fiyat"), "DISTRIBUTION_MISMATCH": ActionRecommendation(IncidentAction.USER_FIX, IncidentOwner.USER, HintCode.DISTRIBUTION_MISMATCH_REVIEW, "dagitim uyusmazligi"), "INVOICE_TOTAL_MISMATCH": ActionRecommendation(IncidentAction.USER_FIX, IncidentOwner.USER, HintCode.INVOICE_TOTAL_MISMATCH_REVIEW, "toplam uyusmazligi"), "JSON_REPAIR_APPLIED": ActionRecommendation(IncidentAction.FALLBACK_OK, IncidentOwner.EXTRACTION, HintCode.JSON_REPAIR_REVIEW, "JSON repair"), "LOW_CONFIDENCE": ActionRecommendation(IncidentAction.USER_FIX, IncidentOwner.USER, HintCode.LOW_CONFIDENCE_REVIEW, "dusuk confidence"), "VALIDATION_WARNINGS": ActionRecommendation(IncidentAction.FALLBACK_OK, IncidentOwner.EXTRACTION, HintCode.VALIDATION_REVIEW, "validation uyari"), "OUTLIER_PTF": ActionRecommendation(IncidentAction.FALLBACK_OK, IncidentOwner.MARKET_PRICE, HintCode.OUTLIER_PTF_REVIEW, "PTF outlier"), "OUTLIER_CONSUMPTION": ActionRecommendation(IncidentAction.FALLBACK_OK, IncidentOwner.USER, HintCode.OUTLIER_CONSUMPTION_REVIEW, "tuketim outlier")}
+ACTION_MAP = {
+    "CALC_BUG": ActionRecommendation(IncidentAction.BUG_REPORT, IncidentOwner.CALC, HintCode.ENGINE_REGRESSION, "engine regression"),
+    "MARKET_PRICE_MISSING": ActionRecommendation(IncidentAction.RETRY_LOOKUP, IncidentOwner.MARKET_PRICE, HintCode.PTF_YEKDEM_CHECK, "PTF/YEKDEM kontrol"),
+    "CONSUMPTION_MISSING": ActionRecommendation(IncidentAction.USER_FIX, IncidentOwner.USER, HintCode.CONSUMPTION_MANUAL_ENTRY, "manuel gir"),
+    "TARIFF_LOOKUP_FAILED": ActionRecommendation(IncidentAction.RETRY_LOOKUP, IncidentOwner.TARIFF, HintCode.EPDK_TARIFF_LOOKUP, "EPDK lookup"),
+    "TARIFF_META_MISSING": ActionRecommendation(IncidentAction.USER_FIX, IncidentOwner.USER, HintCode.MANUAL_META_ENTRY, "manuel meta"),
+    "DISTRIBUTION_MISSING": ActionRecommendation(IncidentAction.RETRY_LOOKUP, IncidentOwner.TARIFF, HintCode.DISTRIBUTION_SOURCE_CHECK, "dagitim kontrol"),
+    "MISSING_FIELDS": ActionRecommendation(IncidentAction.USER_FIX, IncidentOwner.USER, HintCode.MISSING_FIELDS_COMPLETE, "eksik alanlar"),
+    "TOTAL_AVG_UNIT_PRICE_USED": ActionRecommendation(IncidentAction.FALLBACK_OK, IncidentOwner.EXTRACTION, HintCode.AVG_PRICE_FALLBACK, "ortalama fiyat"),
+    "DISTRIBUTION_MISMATCH": ActionRecommendation(IncidentAction.USER_FIX, IncidentOwner.USER, HintCode.DISTRIBUTION_MISMATCH_REVIEW, "dagitim uyusmazligi"),
+    "INVOICE_TOTAL_MISMATCH": ActionRecommendation(IncidentAction.USER_FIX, IncidentOwner.USER, HintCode.INVOICE_TOTAL_MISMATCH_REVIEW, "toplam uyusmazligi"),
+    "JSON_REPAIR_APPLIED": ActionRecommendation(IncidentAction.FALLBACK_OK, IncidentOwner.EXTRACTION, HintCode.JSON_REPAIR_REVIEW, "JSON repair"),
+    "LOW_CONFIDENCE": ActionRecommendation(IncidentAction.USER_FIX, IncidentOwner.USER, HintCode.LOW_CONFIDENCE_REVIEW, "dusuk confidence"),
+    "VALIDATION_WARNINGS": ActionRecommendation(IncidentAction.FALLBACK_OK, IncidentOwner.EXTRACTION, HintCode.VALIDATION_REVIEW, "validation uyari"),
+    "OUTLIER_PTF": ActionRecommendation(IncidentAction.FALLBACK_OK, IncidentOwner.MARKET_PRICE, HintCode.OUTLIER_PTF_REVIEW, "PTF outlier"),
+    "OUTLIER_CONSUMPTION": ActionRecommendation(IncidentAction.FALLBACK_OK, IncidentOwner.USER, HintCode.OUTLIER_CONSUMPTION_REVIEW, "tuketim outlier"),
+}
 
 
 def get_action_recommendation(flag_code: str) -> dict:
@@ -264,6 +353,7 @@ def calculate_quality_score(extraction: dict, validation: dict, calculation: Opt
     score = 100
     flags = []
     flag_details = []
+    
     def add_flag(flag_code: str, extra_info: str = "", severity_override: str = None, suspect_reason: str = None, delta: float = None, ratio: float = None):
         nonlocal score
         if flag_code in QUALITY_FLAGS:
@@ -271,7 +361,12 @@ def calculate_quality_score(extraction: dict, validation: dict, calculation: Opt
             score -= qf.deduction
             flags.append(flag_code)
             severity = severity_override if severity_override else qf.severity
-            detail = {"code": flag_code, "severity": severity, "message": qf.message + (f" ({extra_info})" if extra_info else ""), "deduction": qf.deduction}
+            detail = {
+                "code": flag_code,
+                "severity": severity,
+                "message": qf.message + (f" ({extra_info})" if extra_info else ""),
+                "deduction": qf.deduction
+            }
             if suspect_reason:
                 detail["suspect_reason"] = suspect_reason
             if delta is not None:
@@ -279,6 +374,7 @@ def calculate_quality_score(extraction: dict, validation: dict, calculation: Opt
             if ratio is not None:
                 detail["ratio"] = ratio
             flag_details.append(detail)
+    
     if calculation_error:
         if "referans fiyat bulunamadi" in calculation_error.lower():
             add_flag("MARKET_PRICE_MISSING")
@@ -288,6 +384,7 @@ def calculate_quality_score(extraction: dict, validation: dict, calculation: Opt
             add_flag("CONSUMPTION_MISSING")
         else:
             add_flag("TARIFF_LOOKUP_FAILED", calculation_error[:100])
+    
     if validation:
         if not validation.get("is_ready_for_pricing", True):
             missing = validation.get("missing_fields", [])
@@ -304,6 +401,7 @@ def calculate_quality_score(extraction: dict, validation: dict, calculation: Opt
             add_flag("TARIFF_LOOKUP_FAILED")
         if validation.get("distribution_line_mismatch"):
             add_flag("DISTRIBUTION_MISMATCH")
+    
     if calculation:
         dist_source = calculation.get("meta_distribution_source", "")
         if dist_source == "not_found":
@@ -329,7 +427,15 @@ def calculate_quality_score(extraction: dict, validation: dict, calculation: Opt
             ratio = mismatch_info.get("ratio", 0)
             severity = mismatch_info.get("severity", "S2")
             suspect_reason = mismatch_info.get("suspect_reason")
-            add_flag("INVOICE_TOTAL_MISMATCH", f"fark={delta:.2f} TL (%{ratio*100:.1f})", severity_override=severity, suspect_reason=suspect_reason, delta=delta, ratio=ratio)
+            add_flag(
+                "INVOICE_TOTAL_MISMATCH",
+                f"fark={delta:.2f} TL (%{ratio*100:.1f})",
+                severity_override=severity,
+                suspect_reason=suspect_reason,
+                delta=delta,
+                ratio=ratio,
+            )
+    
     if debug_meta:
         if debug_meta.get("json_repair_applied"):
             add_flag("JSON_REPAIR_APPLIED")
@@ -337,6 +443,7 @@ def calculate_quality_score(extraction: dict, validation: dict, calculation: Opt
             for w in debug_meta.get("warnings", [])[:2]:
                 if "mismatch" in w.lower() and "DISTRIBUTION_MISMATCH" not in flags:
                     add_flag("DISTRIBUTION_MISMATCH", w[:50])
+    
     if extraction:
         consumption = extraction.get("consumption_kwh", {})
         if consumption and consumption.get("confidence", 1) < 0.7:
@@ -344,6 +451,7 @@ def calculate_quality_score(extraction: dict, validation: dict, calculation: Opt
         unit_price = extraction.get("current_active_unit_price_tl_per_kwh", {})
         if unit_price and unit_price.get("confidence", 1) < 0.7:
             add_flag("LOW_CONFIDENCE", "unit_price")
+    
     score = max(0, min(100, score))
     if score >= 80:
         grade = "OK"
@@ -386,7 +494,7 @@ def increment_incident_occurrence(db: Session, incident_id: int) -> bool:
     return True
 
 
-def create_incident(db: Session, trace_id: str, severity: str, category: str, message: str, tenant_id: str = "default", invoice_id: Optional[str] = None, offer_id: Optional[int] = None, details: Optional[dict] = None, period: str = "", invoice_fingerprint: str = "") -> int:
+def create_incident(db: Session, trace_id: str, severity: str, category: str, message: str, tenant_id: str = "default", invoice_id: Optional[str] = None, offer_id: Optional[int] = None, details: Optional[dict] = None, period: str = "", invoice_fingerprint: str = "", primary_flag: Optional[str] = None) -> int:
     from .database import Incident
     dedupe_key = generate_dedupe_key(tenant_id, category, period, invoice_fingerprint)
     existing_id = find_existing_incident(db, dedupe_key)
@@ -394,7 +502,10 @@ def create_incident(db: Session, trace_id: str, severity: str, category: str, me
         increment_incident_occurrence(db, existing_id)
         return existing_id
     now = datetime.utcnow()
-    incident = Incident(trace_id=trace_id, tenant_id=tenant_id, invoice_id=invoice_id, offer_id=offer_id, severity=severity, category=category, message=message, details_json=details, status="OPEN", dedupe_key=dedupe_key, occurrence_count=1, first_seen_at=now, last_seen_at=now)
+    # Extract primary_flag from details if not provided directly
+    if primary_flag is None and details:
+        primary_flag = details.get("primary_flag")
+    incident = Incident(trace_id=trace_id, tenant_id=tenant_id, invoice_id=invoice_id, offer_id=offer_id, severity=severity, category=category, primary_flag=primary_flag, message=message, details_json=details, status="OPEN", dedupe_key=dedupe_key, occurrence_count=1, first_seen_at=now, last_seen_at=now)
     db.add(incident)
     db.commit()
     db.refresh(incident)
@@ -419,14 +530,24 @@ def create_incidents_from_quality(db: Session, trace_id: str, quality: QualitySc
     for fd in critical_flags:
         if fd["code"] == primary_flag:
             primary_severity = fd["severity"]
+            # Extract mismatch_info for action hint generation
             if fd["code"] == "INVOICE_TOTAL_MISMATCH":
-                mismatch_info = {"has_mismatch": True, "delta": fd.get("delta", 0), "ratio": fd.get("ratio", 0), "severity": fd["severity"], "suspect_reason": fd.get("suspect_reason")}
+                mismatch_info = {
+                    "has_mismatch": True,
+                    "delta": fd.get("delta", 0),
+                    "ratio": fd.get("ratio", 0),
+                    "severity": fd["severity"],
+                    "suspect_reason": fd.get("suspect_reason"),
+                }
             break
     primary_message = QUALITY_FLAGS.get(primary_flag, QualityFlag(primary_flag, Severity.S2, primary_flag, 0)).message
     message = f"{primary_message} (+{len(secondary_flags)} ek sorun)" if secondary_flags else primary_message
     action_info = get_action_recommendation(primary_flag)
+    
+    # Generate action hint for actionability (Sprint 8.5)
     action_hint = generate_action_hint(primary_flag, mismatch_info, extraction_confidence)
     action_hint_dict = action_hint.to_dict() if action_hint else None
+    
     incident_id = create_incident(db=db, trace_id=trace_id, severity=primary_severity, category=primary_category, message=message, tenant_id=tenant_id, invoice_id=invoice_id, details={"primary_flag": primary_flag, "primary_category": primary_category, "all_flags": all_flags, "flag_details": critical_flags, "secondary_flags": secondary_flags, "secondary_categories": secondary_categories, "quality_score": quality.score, "quality_grade": quality.grade, "action": action_info, "action_hint": action_hint_dict}, period=period, invoice_fingerprint=invoice_fingerprint)
     return [incident_id]
 
