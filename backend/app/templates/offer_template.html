@@ -50,14 +50,14 @@ th { background: #f5f5f5; text-align: left; font-weight: 600; }
 </div>
 </div>
 <div class="title">Enerji Tasarruf Teklifi</div>
-<p class="intro"><strong>Sayın Yetkili,</strong> {{ tariff_group }} abone grubunuz için hazırlanan elektrik enerjisi tedarik teklifimizi bilgilerinize sunarız.</p>
+<p class="intro"><strong>{{ greeting }}</strong><br>{% if customer_name %}{{ customer_name }} için {% endif %}{{ tariff_group }} abone grubunuz için hazırlanan elektrik enerjisi tedarik teklifimizi bilgilerinize sunarız.</p>
 <table class="cmp">
 <tr><th style="width:28%">Kalem</th><th style="width:24%">Mevcut</th><th style="width:24%">Teklif</th><th style="width:24%">Tasarruf</th></tr>
 <tr><td>Enerji Bedeli</td><td>{{ calc.current_energy_tl | currency }}</td><td>{{ calc.offer_energy_tl | currency }}</td><td>{{ (calc.current_energy_tl - calc.offer_energy_tl) | currency }}</td></tr>
 <tr><td>Dağıtım Bedeli</td><td>{{ calc.current_distribution_tl | currency }}</td><td>{{ calc.offer_distribution_tl | currency }}</td><td>-</td></tr>
 <tr><td>BTV</td><td>{{ calc.current_btv_tl | currency }}</td><td>{{ calc.offer_btv_tl | currency }}</td><td>-</td></tr>
 <tr><td>KDV Matrahı</td><td>{{ calc.current_vat_matrah_tl | currency }}</td><td>{{ calc.offer_vat_matrah_tl | currency }}</td><td>-</td></tr>
-<tr><td>KDV (%20)</td><td>{{ calc.current_vat_tl | currency }}</td><td>{{ calc.offer_vat_tl | currency }}</td><td>-</td></tr>
+<tr><td>KDV (%{{ (calc.meta_vat_rate * 100) | int if calc.meta_vat_rate else 20 }})</td><td>{{ calc.current_vat_tl | currency }}</td><td>{{ calc.offer_vat_tl | currency }}</td><td>-</td></tr>
 <tr class="total"><td>TOPLAM</td><td>{{ calc.current_total_with_vat_tl | currency }}</td><td>{{ calc.offer_total_with_vat_tl | currency }}</td><td>{{ calc.difference_incl_vat_tl | currency }}</td></tr>
 </table>
 <div class="save"><div class="label">Aylık Tasarruf</div><div class="amt">{{ calc.difference_incl_vat_tl | currency }} ({{ calc.savings_ratio | percent }})</div></div>
@@ -67,7 +67,7 @@ th { background: #f5f5f5; text-align: left; font-weight: 600; }
 <tr><th>Tedarikçi</th><td>{{ vendor }}</td><th>Tüketim</th><td>{{ consumption_kwh | number }} kWh</td></tr>
 </table>
 <div class="terms"><div class="terms-title">Ticari Şartlar</div>✓ Fatura vadesi +10 gün ✓ Teminat yok ✓ Güvence yok</div>
-<div class="sig">Bilgilerinize sunarız.<br>Saygılarımızla,<br><strong>Gelka Enerji</strong></div>
-<div class="foot">Teklif No: {{ offer_id }} | {{ date }} | Geçerlilik: 15 Gün | www.gelkaenerji.com.tr</div>
+<div class="sig">{% if contact_person %}İlgili: {{ contact_person }}<br>{% endif %}Bilgilerinize sunarız.<br>Saygılarımızla,<br><strong>Gelka Enerji</strong></div>
+<div class="foot">Teklif No: {{ offer_id }} | {{ date }} | Geçerlilik: {{ offer_validity_days }} Gün | www.gelkaenerji.com.tr</div>
 </body>
 </html>

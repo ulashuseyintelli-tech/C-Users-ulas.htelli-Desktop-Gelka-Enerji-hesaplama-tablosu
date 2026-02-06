@@ -412,8 +412,7 @@ def calculate_offer(
     
     if current_total_with_vat_tl == 0 and line_items_subtotal != 0:
         # Fatura tutarı okunamadı - line_items'dan hesapla
-        # NOT: KDV oranı bilinmiyor, %20 varsayıyoruz
-        # Ama bazı faturalarda KDV %0 olabilir (tarımsal, vb.)
+        # KDV oranı params'dan alınır (default %20, tarımsal sulama için %10)
         
         # BTV (%1 enerji bedeli üzerinden)
         calculated_btv = abs(line_items_energy_total) * 0.01
@@ -421,14 +420,14 @@ def calculate_offer(
         # KDV matrahı
         calculated_matrah = line_items_subtotal + calculated_btv
         
-        # KDV (%20) - varsayılan
-        calculated_vat = calculated_matrah * 0.20
+        # KDV (params'dan gelen oran)
+        calculated_vat = calculated_matrah * params.vat_rate
         
         # KDV dahil toplam
         current_total_with_vat_tl = calculated_matrah + calculated_vat
         
         logger.warning(
-            f"invoice_total LINE_ITEMS'DAN HESAPLANDI (KDV %20 varsayıldı): "
+            f"invoice_total LINE_ITEMS'DAN HESAPLANDI (KDV %{int(params.vat_rate * 100)} varsayıldı): "
             f"enerji={line_items_energy_total:.2f} + dağıtım={line_items_dist_total:.2f} + "
             f"btv={calculated_btv:.2f} + kdv={calculated_vat:.2f} = {current_total_with_vat_tl:.2f} TL"
         )
@@ -442,7 +441,7 @@ def calculate_offer(
     else:
         # Fallback: hesapla
         current_vat_matrah_tl = current_energy_tl + current_distribution_tl + current_demand_tl + current_btv_tl
-        current_vat_tl = current_vat_matrah_tl * 0.20
+        current_vat_tl = current_vat_matrah_tl * params.vat_rate
         # Eğer fatura toplamı yoksa hesaplanan değeri kullan
         if current_total_with_vat_tl == 0:
             current_total_with_vat_tl = current_vat_matrah_tl + current_vat_tl
@@ -462,7 +461,9 @@ def calculate_offer(
     offer_btv_tl = offer_energy_tl * 0.01
     # Teklif matrah: ek kalemler switch'e göre
     offer_vat_matrah_tl = offer_energy_tl + offer_distribution_tl + offer_demand_tl + offer_btv_tl + offer_extra_items
-    offer_vat_tl = offer_vat_matrah_tl * 0.20
+    # KDV oranı params'dan (default %20, tarımsal sulama için %10)
+    vat_rate = params.vat_rate
+    offer_vat_tl = offer_vat_matrah_tl * vat_rate
     offer_total_with_vat_tl = offer_vat_matrah_tl + offer_vat_tl
     
     # === FARK VE TASARRUF ===
@@ -598,6 +599,7 @@ def calculate_offer(
         meta_use_offer_distribution=params.use_offer_distribution,
         meta_include_yekdem_in_offer=should_include_yekdem,  # Faturadan otomatik tespit
         meta_consumption_kwh=round(kwh, 2),
+        meta_vat_rate=params.vat_rate,
         # Dağıtım kaynağı bilgisi
         meta_distribution_source=distribution_source,
         meta_distribution_tariff_key=tariff_lookup.tariff_key if tariff_lookup.success else None,

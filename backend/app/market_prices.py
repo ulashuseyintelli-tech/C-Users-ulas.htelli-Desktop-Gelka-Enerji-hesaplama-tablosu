@@ -1,16 +1,20 @@
 """
 Piyasa Referans Fiyatları Servisi (PTF/YEKDEM)
 
-Faz 1: Manuel güncelleme + DB tabanlı referans
-Faz 2: EPİAŞ API/scraping entegrasyonu (opsiyonel)
+Veri Kaynakları (öncelik sırasına göre):
+1. DB'deki manuel/cache değerler
+2. EPİAŞ Şeffaflık Platformu API (otomatik çekme)
+3. Default değerler (fallback)
 
 Kullanım:
 - get_market_prices(period) → PTF/YEKDEM for given period
 - get_latest_market_prices() → En güncel dönem
 - upsert_market_prices(period, ptf, yekdem) → Admin güncelleme
+- fetch_and_cache_from_epias(period) → EPİAŞ'tan çek ve cache'le
 """
 
 import logging
+import asyncio
 from datetime import datetime
 from typing import Optional, Tuple
 from dataclasses import dataclass
@@ -321,3 +325,196 @@ def get_previous_period(period: str) -> str:
     if month == 1:
         return f"{year-1}-12"
     return f"{year}-{month-1:02d}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EPİAŞ ENTEGRASYONU
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def fetch_and_cache_from_epias(
+    db: Session,
+    period: str,
+    force_refresh: bool = False,
+    use_mock: bool = False
+) -> Tuple[bool, MarketPrices, str]:
+    """
+    EPİAŞ'tan piyasa fiyatlarını çek ve DB'ye cache'le.
+    
+    Args:
+        db: Database session
+        period: Dönem (YYYY-MM)
+        force_refresh: True ise mevcut cache'i yoksay
+        use_mock: True ise mock veri kullan (test/demo için)
+    
+    Returns:
+        (success, market_prices, message)
+    """
+    from .epias_client import fetch_market_prices_from_epias, EpiasApiError, EpiasAuthError
+    
+    # Önce DB'de var mı kontrol et
+    if not force_refresh:
+        existing = get_market_prices(db, period)
+        if existing and existing.source in ("epias", "mock"):
+            logger.info(f"Dönem {period} için cache kullanılıyor")
+            return (True, existing, "Cache'den alındı")
+    
+    # EPİAŞ'tan çek (veya mock kullan)
+    try:
+        result = await fetch_market_prices_from_epias(period, use_mock=use_mock)
+        
+        if result.ptf_tl_per_mwh is None:
+            return (False, None, f"EPİAŞ'tan PTF verisi alınamadı: {', '.join(result.warnings)}")
+        
+        # DB'ye kaydet
+        source_note = f"Mock data" if use_mock else f"EPİAŞ API ({result.ptf_data_points} data points)"
+        success, msg = upsert_market_prices(
+            db=db,
+            period=period,
+            ptf_tl_per_mwh=result.ptf_tl_per_mwh,
+            yekdem_tl_per_mwh=result.yekdem_tl_per_mwh or 0,
+            source_note=source_note,
+            updated_by="epias_sync" if not use_mock else "mock_sync"
+        )
+        
+        if not success:
+            return (False, None, f"DB kayıt hatası: {msg}")
+        
+        # Yeni kaydı döndür
+        prices = MarketPrices(
+            period=period,
+            ptf_tl_per_mwh=result.ptf_tl_per_mwh,
+            yekdem_tl_per_mwh=result.yekdem_tl_per_mwh or 0,
+            source="mock" if use_mock else "epias",
+            is_locked=False
+        )
+        
+        warnings_str = f" (Uyarılar: {', '.join(result.warnings)})" if result.warnings else ""
+        source_str = "Mock veriden" if use_mock else "EPİAŞ'tan"
+        return (True, prices, f"{source_str} alındı ve cache'lendi{warnings_str}")
+        
+    except EpiasAuthError as e:
+        logger.error(f"EPİAŞ kimlik doğrulama hatası: {e}")
+        return (False, None, f"EPİAŞ kimlik doğrulama hatası: {str(e)}")
+    except Exception as e:
+        logger.error(f"EPİAŞ fetch hatası: {e}")
+        return (False, None, f"EPİAŞ API hatası: {str(e)}")
+
+
+def get_market_prices_with_epias_fallback(
+    db: Session,
+    period: str,
+    auto_fetch: bool = True
+) -> Tuple[MarketPrices, str]:
+    """
+    Piyasa fiyatlarını al - DB yoksa EPİAŞ'tan çek.
+    
+    Öncelik sırası:
+    1. DB'deki kayıt
+    2. EPİAŞ API (auto_fetch=True ise)
+    3. Default değerler
+    
+    Args:
+        db: Database session
+        period: Dönem (YYYY-MM)
+        auto_fetch: EPİAŞ'tan otomatik çek
+    
+    Returns:
+        (market_prices, source_description)
+    """
+    # 1. DB'de ara
+    prices = get_market_prices(db, period)
+    if prices:
+        return (prices, f"DB ({prices.source})")
+    
+    # 2. EPİAŞ'tan çek (sync wrapper)
+    if auto_fetch:
+        try:
+            # Async fonksiyonu sync context'te çalıştır
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                success, epias_prices, msg = loop.run_until_complete(
+                    fetch_and_cache_from_epias(db, period)
+                )
+                if success and epias_prices:
+                    return (epias_prices, f"EPİAŞ API: {msg}")
+            finally:
+                loop.close()
+        except Exception as e:
+            logger.warning(f"EPİAŞ auto-fetch başarısız: {e}")
+    
+    # 3. Default
+    logger.warning(f"Dönem {period} için piyasa fiyatı bulunamadı, default kullanılıyor")
+    return (
+        MarketPrices(
+            period=period,
+            ptf_tl_per_mwh=DEFAULT_PTF_TL_PER_MWH,
+            yekdem_tl_per_mwh=DEFAULT_YEKDEM_TL_PER_MWH,
+            source="default",
+            is_locked=False
+        ),
+        "Default (EPİAŞ ve DB'de bulunamadı)"
+    )
+
+
+async def sync_multiple_periods_from_epias(
+    db: Session,
+    periods: list[str],
+    force_refresh: bool = False
+) -> dict[str, Tuple[bool, str]]:
+    """
+    Birden fazla dönem için EPİAŞ'tan veri çek.
+    
+    Args:
+        db: Database session
+        periods: Dönem listesi (YYYY-MM)
+        force_refresh: Mevcut cache'i yoksay
+    
+    Returns:
+        {period: (success, message)}
+    """
+    results = {}
+    
+    for period in periods:
+        success, _, msg = await fetch_and_cache_from_epias(db, period, force_refresh)
+        results[period] = (success, msg)
+    
+    return results
+
+
+def get_periods_needing_sync(db: Session, months_back: int = 12) -> list[str]:
+    """
+    Sync edilmesi gereken dönemleri listele.
+    
+    DB'de kaydı olmayan veya source="default" olan dönemler.
+    
+    Args:
+        db: Database session
+        months_back: Kaç ay geriye bak
+    
+    Returns:
+        Dönem listesi
+    """
+    from datetime import datetime
+    
+    current = datetime.now()
+    periods_to_check = []
+    
+    for i in range(months_back):
+        year = current.year
+        month = current.month - i
+        
+        while month <= 0:
+            month += 12
+            year -= 1
+        
+        periods_to_check.append(f"{year}-{month:02d}")
+    
+    # DB'de olmayanları veya default olanları filtrele
+    missing = []
+    for period in periods_to_check:
+        prices = get_market_prices(db, period)
+        if not prices or prices.source == "default":
+            missing.append(period)
+    
+    return missing

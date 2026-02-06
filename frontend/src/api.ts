@@ -59,6 +59,8 @@ export interface CalculateResponse {
   meta_pricing_period?: string;  // "2025-01"
   meta_ptf_tl_per_mwh?: number;
   meta_yekdem_tl_per_mwh?: number;
+  // KDV oranı
+  meta_vat_rate?: number;  // 0.20 = %20, 0.10 = %10
 }
 
 export interface DebugMeta {
@@ -156,7 +158,10 @@ export async function generateOfferPdf(
     yekdem_tl_per_mwh: number;
     agreement_multiplier: number;
   },
-  customerName?: string
+  customerName?: string,
+  contactPerson?: string,
+  offerDate?: string,
+  offerValidityDays?: number
 ): Promise<Blob> {
   const formData = new FormData();
   
@@ -193,8 +198,23 @@ export async function generateOfferPdf(
   formData.append('difference_incl_vat_tl', calculation.difference_incl_vat_tl.toString());
   formData.append('savings_ratio', calculation.savings_ratio.toString());
   
+  // KDV oranı
+  if (calculation.meta_vat_rate !== undefined) {
+    formData.append('vat_rate', calculation.meta_vat_rate.toString());
+  }
+  
+  // Müşteri bilgileri
   if (customerName) {
     formData.append('customer_name', customerName);
+  }
+  if (contactPerson) {
+    formData.append('contact_person', contactPerson);
+  }
+  if (offerDate) {
+    formData.append('offer_date', offerDate);
+  }
+  if (offerValidityDays) {
+    formData.append('offer_validity_days', offerValidityDays.toString());
   }
   
   const response = await api.post('/generate-pdf-simple', formData, {
@@ -449,4 +469,117 @@ export async function updateIncidentStatus(
 export async function getIncidentStats(): Promise<IncidentStatsResponse> {
   const response = await adminApi.get('/admin/incidents/stats');
   return response.data;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EPİAŞ Piyasa Fiyatları (PTF/YEKDEM)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface EpiasPricesResponse {
+  period: string;
+  ptf_tl_per_mwh: number | null;
+  yekdem_tl_per_mwh: number | null;
+  source: string;
+  source_description: string;
+  is_locked?: boolean;
+}
+
+/**
+ * Belirli bir dönem için PTF/YEKDEM fiyatlarını çek.
+ * 
+ * Öncelik sırası:
+ * 1. DB'deki kayıt
+ * 2. EPİAŞ API (auto_fetch=true ise)
+ * 3. Default değerler
+ * 
+ * @param period Dönem (YYYY-MM format, örn: "2025-01")
+ * @param autoFetch EPİAŞ'tan otomatik çek (default: true)
+ */
+export async function getEpiasPrices(period: string, autoFetch: boolean = true): Promise<EpiasPricesResponse> {
+  const response = await api.get(`/api/epias/prices/${period}?auto_fetch=${autoFetch}`);
+  return response.data;
+}
+
+/**
+ * EPİAŞ'tan belirli dönem için veri çek ve cache'le.
+ * 
+ * @param period Dönem (YYYY-MM format)
+ * @param forceRefresh Mevcut cache'i yoksay
+ * @param useMock Mock veri kullan (test için)
+ */
+export async function syncEpiasPrices(
+  period: string, 
+  forceRefresh: boolean = false,
+  useMock: boolean = false
+): Promise<{
+  status: string;
+  period: string;
+  ptf_tl_per_mwh?: number;
+  yekdem_tl_per_mwh?: number;
+  source?: string;
+  message: string;
+}> {
+  const params = new URLSearchParams();
+  if (forceRefresh) params.append('force_refresh', 'true');
+  if (useMock) params.append('use_mock', 'true');
+  
+  const response = await api.post(`/api/epias/sync/${period}?${params}`);
+  return response.data;
+}
+
+/**
+ * Fatura dönemini YYYY-MM formatına çevir.
+ * 
+ * Desteklenen formatlar:
+ * - "11/2025" → "2025-11"
+ * - "2025-11" → "2025-11"
+ * - "Kasım 2025" → "2025-11"
+ * - "KASIM 2025" → "2025-11"
+ * - "11.2025" → "2025-11"
+ */
+export function normalizeInvoicePeriod(period: string): string | null {
+  if (!period) return null;
+  
+  const trimmed = period.trim();
+  
+  // Zaten YYYY-MM formatında mı?
+  if (/^\d{4}-\d{2}$/.test(trimmed)) {
+    return trimmed;
+  }
+  
+  // MM/YYYY formatı (11/2025)
+  const slashMatch = trimmed.match(/^(\d{1,2})\/(\d{4})$/);
+  if (slashMatch) {
+    const month = slashMatch[1].padStart(2, '0');
+    const year = slashMatch[2];
+    return `${year}-${month}`;
+  }
+  
+  // MM.YYYY formatı (11.2025)
+  const dotMatch = trimmed.match(/^(\d{1,2})\.(\d{4})$/);
+  if (dotMatch) {
+    const month = dotMatch[1].padStart(2, '0');
+    const year = dotMatch[2];
+    return `${year}-${month}`;
+  }
+  
+  // Türkçe ay isimleri
+  const turkishMonths: Record<string, string> = {
+    'ocak': '01', 'şubat': '02', 'mart': '03', 'nisan': '04',
+    'mayıs': '05', 'haziran': '06', 'temmuz': '07', 'ağustos': '08',
+    'eylül': '09', 'ekim': '10', 'kasım': '11', 'aralık': '12',
+  };
+  
+  // "Kasım 2025" veya "KASIM 2025" formatı
+  const turkishMatch = trimmed.toLowerCase().match(/^([a-zğüşıöç]+)\s*(\d{4})$/);
+  if (turkishMatch) {
+    const monthName = turkishMatch[1];
+    const year = turkishMatch[2];
+    const month = turkishMonths[monthName];
+    if (month) {
+      return `${year}-${month}`;
+    }
+  }
+  
+  return null;
 }

@@ -101,6 +101,9 @@ def generate_offer_html(
     customer_name: Optional[str] = None,
     customer_company: Optional[str] = None,
     offer_id: Optional[int] = None,
+    contact_person: Optional[str] = None,
+    offer_date: Optional[str] = None,
+    offer_validity_days: int = 15,
 ) -> str:
     """
     Generate HTML offer document from calculation results.
@@ -130,11 +133,31 @@ def generate_offer_html(
         else:
             tariff_group = f"{tg} {vg}".strip() if tg != "unknown" else "Sanayi"
     
+    # Teklif tarihi
+    if offer_date:
+        try:
+            from datetime import datetime as dt
+            parsed_date = dt.strptime(offer_date, "%Y-%m-%d")
+            formatted_offer_date = parsed_date.strftime("%d.%m.%Y")
+        except:
+            formatted_offer_date = datetime.now().strftime("%d.%m.%Y")
+    else:
+        formatted_offer_date = datetime.now().strftime("%d.%m.%Y")
+    
+    # Hitap metni
+    if customer_name:
+        greeting = f"Sayın {customer_name} Yetkilisi,"
+    else:
+        greeting = "Sayın Yetkili,"
+    
     context = {
         "offer_id": offer_id or datetime.now().strftime("%Y%m%d%H%M%S"),
-        "date": datetime.now().strftime("%d.%m.%Y"),
-        "customer_name": customer_name or "Sayın Müşterimiz",
+        "date": formatted_offer_date,
+        "customer_name": customer_name or "",
         "customer_company": customer_company,
+        "contact_person": contact_person or "",
+        "greeting": greeting,
+        "offer_validity_days": offer_validity_days,
         
         # Extraction data
         "vendor": extraction.vendor,
@@ -180,6 +203,9 @@ def generate_offer_pdf(
     customer_company: Optional[str] = None,
     offer_id: Optional[int] = None,
     output_filename: Optional[str] = None,
+    contact_person: Optional[str] = None,
+    offer_date: Optional[str] = None,
+    offer_validity_days: int = 15,
 ) -> str:
     """
     Generate PDF offer document and save to file.
@@ -198,7 +224,10 @@ def generate_offer_pdf(
     # Generate PDF bytes using the fallback-enabled function
     pdf_bytes = generate_offer_pdf_bytes(
         extraction, calculation, params,
-        customer_name, customer_company, offer_id
+        customer_name, customer_company, offer_id,
+        contact_person=contact_person,
+        offer_date=offer_date,
+        offer_validity_days=offer_validity_days,
     )
     
     # Write to file
@@ -679,7 +708,7 @@ def _generate_pdf_reportlab(
         ["Dağıtım Bedeli", fmt_tl(calculation.current_distribution_tl), fmt_tl(calculation.offer_distribution_tl), "-"],
         ["BTV", fmt_tl(calculation.current_btv_tl), fmt_tl(calculation.offer_btv_tl), "-"],
         ["KDV Matrahı", fmt_tl(calculation.current_vat_matrah_tl), fmt_tl(calculation.offer_vat_matrah_tl), "-"],
-        ["KDV (%20)", fmt_tl(calculation.current_vat_tl), fmt_tl(calculation.offer_vat_tl), "-"],
+        [f"KDV (%{int(getattr(calculation, 'meta_vat_rate', 0.20) * 100)})", fmt_tl(calculation.current_vat_tl), fmt_tl(calculation.offer_vat_tl), "-"],
         ["TOPLAM", fmt_tl(calculation.current_total_with_vat_tl), fmt_tl(calculation.offer_total_with_vat_tl), fmt_tl(total_diff)],
     ]
     # Eşit sütun genişlikleri - toplam 17cm (A4 - 2cm sol - 2cm sağ margin)
@@ -795,6 +824,9 @@ def generate_offer_pdf_bytes(
     customer_name: Optional[str] = None,
     customer_company: Optional[str] = None,
     offer_id: Optional[int] = None,
+    contact_person: Optional[str] = None,
+    offer_date: Optional[str] = None,
+    offer_validity_days: int = 15,
 ) -> bytes:
     """
     Generate PDF offer document as bytes.
@@ -808,7 +840,10 @@ def generate_offer_pdf_bytes(
     try:
         html_content = generate_offer_html(
             extraction, calculation, params,
-            customer_name, customer_company, offer_id
+            customer_name, customer_company, offer_id,
+            contact_person=contact_person,
+            offer_date=offer_date,
+            offer_validity_days=offer_validity_days,
         )
         logger.info(f"HTML generated successfully, length: {len(html_content)}")
     except Exception as e:

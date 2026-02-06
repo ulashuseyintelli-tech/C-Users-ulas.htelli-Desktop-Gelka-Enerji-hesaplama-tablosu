@@ -338,6 +338,9 @@ class OfferParams(BaseModel):
     # Override flag: True ise kullanıcı değerleri kullan, False ise DB'den çek
     use_reference_prices: bool = True  # Default: DB'den çek
     
+    # KDV oranı (default %20, tarımsal sulama için %10)
+    vat_rate: float = 0.20  # 0.20 = %20, 0.10 = %10
+    
     # UI Switches
     include_yekdem_in_offer: bool = False  # YEKDEM'i teklife dahil et? (default: hayır)
     extra_items_apply_to_offer: bool = False  # Ek kalemleri teklife dahil et?
@@ -399,6 +402,7 @@ class CalculationResult(BaseModel):
     meta_use_offer_distribution: bool = False
     meta_include_yekdem_in_offer: bool = False  # YEKDEM teklife dahil mi?
     meta_consumption_kwh: float = 0  # Tüketim (projeksiyon için)
+    meta_vat_rate: float = 0.20  # KDV oranı (0.20 = %20, 0.10 = %10)
     
     # Dağıtım kaynağı bilgisi (debug/UI için)
     meta_distribution_source: str = "unknown"  # "epdk_tariff:sanayi/OG/çift_terim", "manual_override", "extracted_from_invoice", "not_found"

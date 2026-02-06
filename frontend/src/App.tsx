@@ -1,20 +1,75 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { Upload, FileText, Zap, TrendingDown, AlertCircle, CheckCircle, Loader2, RefreshCw, Download, Settings } from 'lucide-react';
-import { fullProcess, generateOfferPdf, FullProcessResponse } from './api';
+import { fullProcess, generateOfferPdf, FullProcessResponse, syncEpiasPrices } from './api';
 import AdminPanel from './AdminPanel';
 
-// EPDK Dağıtım Tarifeleri (Ocak 2025)
+// EPDK Dağıtım Tarifeleri (Şubat 2026)
 const DISTRIBUTION_TARIFFS = [
-  { key: 'sanayi_og_cift', label: 'Sanayi OG Çift Terim', price: 0.810595 },
-  { key: 'sanayi_og_tek', label: 'Sanayi OG Tek Terim', price: 0.895372 },
-  { key: 'sanayi_ag_tek', label: 'Sanayi AG Tek Terim', price: 1.385324 },
-  { key: 'kamu_og_cift', label: 'Kamu/Özel OG Çift Terim', price: 1.263293 },
-  { key: 'kamu_og_tek', label: 'Kamu/Özel OG Tek Terim', price: 1.57581 },
-  { key: 'kamu_ag_tek', label: 'Kamu/Özel AG Tek Terim', price: 1.87741 },
-  { key: 'custom', label: 'Manuel Giriş', price: 0 },
+  // OG Çift Terim
+  { key: 'sanayi_og_cift', label: 'Sanayi OG Çift Terim', price: 0.81060, group: 'sanayi' },
+  { key: 'ticarethane_og_cift', label: 'Ticarethane OG Çift Terim', price: 1.26329, group: 'ticarethane' },
+  { key: 'mesken_og_cift', label: 'Mesken OG Çift Terim', price: 1.25129, group: 'mesken' },
+  { key: 'aydinlatma_og_cift', label: 'Aydınlatma OG Çift Terim', price: 1.21249, group: 'aydinlatma' },
+  { key: 'tarimsal_og_cift', label: 'Tarımsal OG Çift Terim', price: 1.04042, group: 'tarimsal' },
+  
+  // OG Tek Terim
+  { key: 'sanayi_og_tek', label: 'Sanayi OG Tek Terim', price: 0.89537, group: 'sanayi' },
+  { key: 'ticarethane_og_tek', label: 'Ticarethane OG Tek Terim', price: 1.57581, group: 'ticarethane' },
+  { key: 'mesken_og_tek', label: 'Mesken OG Tek Terim', price: 1.54502, group: 'mesken' },
+  { key: 'aydinlatma_og_tek', label: 'Aydınlatma OG Tek Terim', price: 1.51248, group: 'aydinlatma' },
+  { key: 'tarimsal_og_tek', label: 'Tarımsal OG Tek Terim', price: 1.29543, group: 'tarimsal' },
+  
+  // AG Tek Terim
+  { key: 'sanayi_ag_tek', label: 'Sanayi AG Tek Terim', price: 1.38532, group: 'sanayi' },
+  { key: 'ticarethane_ag_tek', label: 'Ticarethane AG Tek Terim', price: 1.87741, group: 'ticarethane' },
+  { key: 'mesken_ag_tek', label: 'Mesken AG Tek Terim', price: 1.83617, group: 'mesken' },
+  { key: 'mesken_sehit_gazi_ag_tek', label: 'Mesken Şehit Gazi AG Tek Terim', price: 1.03557, group: 'mesken' },
+  { key: 'tarimsal_ag_tek', label: 'Tarımsal AG Tek Terim', price: 1.54263, group: 'tarimsal' },
+  { key: 'aydinlatma_ag_tek', label: 'Aydınlatma AG Tek Terim', price: 1.79815, group: 'aydinlatma' },
+  
+  // Manuel giriş
+  { key: 'custom', label: 'Manuel Giriş', price: 0, group: 'custom' },
 ];
 
+// Son 24 ay için dönem seçenekleri oluştur
+const generatePeriodOptions = () => {
+  const options: { value: string; label: string }[] = [];
+  const now = new Date();
+  
+  // Türkçe ay isimleri
+  const monthNames = [
+    'Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
+    'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'
+  ];
+  
+  for (let i = 0; i < 24; i++) {
+    const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const value = `${year}-${String(month + 1).padStart(2, '0')}`;
+    const label = `${monthNames[month]} ${year}`;
+    options.push({ value, label });
+  }
+  
+  return options;
+};
+
+const PERIOD_OPTIONS = generatePeriodOptions();
+
 function App() {
+  // Türkçe sayı formatını parse et: 58.761,15 -> 58761.15
+  const parseNumber = (value: string): number => {
+    // Önce binlik ayırıcı noktaları kaldır, sonra virgülü noktaya çevir
+    const normalized = value.replace(/\./g, '').replace(',', '.');
+    return parseFloat(normalized) || 0;
+  };
+  
+  // Sayıyı Türkçe formata çevir: 58761.15 -> 58.761,15
+  const formatNumber = (value: number): string => {
+    if (!value) return '';
+    return value.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+  
   // Admin panel state
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   
@@ -33,12 +88,27 @@ function App() {
   // PTF/YEKDEM kaynağı: true = DB'den otomatik, false = manuel override
   const [useReferencePrices, setUseReferencePrices] = useState(true);
   
+  // PTF/YEKDEM fiyat çekme durumu
+  const [priceLoading, setPriceLoading] = useState(false);
+  const [priceError, setPriceError] = useState<string | null>(null);
+  
   // Dağıtım birim fiyatı (manuel override)
   const [distributionTariffKey, setDistributionTariffKey] = useState<string>('');
   const [customDistributionPrice, setCustomDistributionPrice] = useState<number>(0);
   
   // BTV oranı: Sanayi %1, Ticarethane/Kamu/Özel %5
   const [btvRate, setBtvRate] = useState<number>(0.01);
+  
+  // Müşteri bilgileri (PDF için)
+  const [customerInfo, setCustomerInfo] = useState({
+    company_name: '',      // Firma adı
+    contact_person: '',    // Yetkili kişi
+    offer_date: new Date().toISOString().split('T')[0],  // Teklif tarihi (YYYY-MM-DD)
+    offer_validity_days: 15,  // Teklif geçerlilik süresi (gün)
+  });
+  
+  // KDV oranı: Normal %20, Tarımsal Sulama %10
+  const [vatRate, setVatRate] = useState<number>(0.20);
   
   // Manuel fatura değerleri override
   const [manualMode, setManualMode] = useState(false);
@@ -90,13 +160,14 @@ function App() {
       const ptfKwh = ptfPrice / 1000;
       const yekdemKwh = yekdemPrice / 1000;
       
-      // Mevcut fatura değerleri: Manuel girişten
+      // Mevcut fatura değerleri: Manuel girişten enerji ve dağıtım
       const current_energy_tl = manualValues.current_energy_tl;
       const current_distribution_tl = manualValues.current_distribution_tl;
-      const current_btv_tl = manualValues.current_btv_tl;
-      const current_vat_matrah_tl = manualValues.current_vat_matrah_tl;
-      const current_vat_tl = manualValues.current_vat_tl;
-      const current_total_with_vat_tl = manualValues.current_total_with_vat_tl;
+      // BTV ve KDV: Seçilen oranlara göre HESAPLA
+      const current_btv_tl = current_energy_tl * btvRate;
+      const current_vat_matrah_tl = current_energy_tl + current_distribution_tl + current_btv_tl;
+      const current_vat_tl = current_vat_matrah_tl * vatRate;
+      const current_total_with_vat_tl = current_vat_matrah_tl + current_vat_tl;
       
       // YEKDEM dahil et (manuel modda her zaman dahil)
       const includeYekdem = yekdemPrice > 0;
@@ -109,7 +180,7 @@ function App() {
       // BTV oranı: Sanayi %1, Ticarethane/Kamu/Özel %5
       const offer_btv_tl = offer_energy_tl * btvRate;
       const offer_vat_matrah_tl = offer_energy_tl + offer_distribution_tl + offer_btv_tl;
-      const offer_vat_tl = offer_vat_matrah_tl * 0.20;
+      const offer_vat_tl = offer_vat_matrah_tl * vatRate;
       const offer_total_with_vat_tl = offer_vat_matrah_tl + offer_vat_tl;
       
       // Fark ve tasarruf
@@ -150,22 +221,22 @@ function App() {
     const backendCalc = result.calculation;
     
     // Eğer parametreler değiştiyse frontend'de yeniden hesapla
-    // Ama mevcut fatura değerleri her zaman backend'den gelsin (faturadan okunan gerçek değerler)
     const kwh = result.extraction.consumption_kwh?.value || 0;
     const distUnitPrice = getDistributionUnitPrice();
     
     const ptfKwh = ptfPrice / 1000;
     const yekdemKwh = yekdemPrice / 1000;
     
-    // Mevcut fatura değerleri: Backend'den gelen gerçek değerler (faturadan okunan)
+    // Mevcut fatura değerleri: Backend'den gelen enerji ve dağıtım
     const current_energy_tl = backendCalc?.current_energy_tl || 0;
-    // Mevcut dağıtım: Backend'den gelen veya manuel override ile hesapla
     const backendDistUnitPrice = result.extraction.distribution_unit_price_tl_per_kwh?.value || 0;
     const current_distribution_tl = backendCalc?.current_distribution_tl || (kwh * backendDistUnitPrice);
-    const current_btv_tl = backendCalc?.current_btv_tl || 0;
-    const current_vat_matrah_tl = backendCalc?.current_vat_matrah_tl || 0;
-    const current_vat_tl = backendCalc?.current_vat_tl || 0;
-    const current_total_with_vat_tl = backendCalc?.current_total_with_vat_tl || 0;
+    
+    // BTV ve KDV: Seçilen oranlara göre HESAPLA (karşılaştırma için)
+    const current_btv_tl = current_energy_tl * btvRate;
+    const current_vat_matrah_tl = current_energy_tl + current_distribution_tl + current_btv_tl;
+    const current_vat_tl = current_vat_matrah_tl * vatRate;
+    const current_total_with_vat_tl = current_vat_matrah_tl + current_vat_tl;
     
     // YEKDEM: Backend'in kararını kullan (faturada YEKDEM varsa dahil et, yoksa etme)
     // meta_include_yekdem_in_offer backend tarafından faturaya göre belirleniyor
@@ -183,9 +254,10 @@ function App() {
     
     const offer_distribution_tl = kwh * distUnitPrice;
     // BTV oranı: Sanayi %1, Ticarethane/Kamu/Özel %5
+    // BTV oranı: Sanayi %1, Ticarethane/Kamu/Özel %5
     const offer_btv_tl = offer_energy_tl * btvRate;
     const offer_vat_matrah_tl = offer_energy_tl + offer_distribution_tl + offer_btv_tl;
-    const offer_vat_tl = offer_vat_matrah_tl * 0.20;
+    const offer_vat_tl = offer_vat_matrah_tl * vatRate;
     const offer_total_with_vat_tl = offer_vat_matrah_tl + offer_vat_tl;
     
     // Fark ve tasarruf
@@ -218,7 +290,40 @@ function App() {
       include_yekdem: includeYekdem,  // UI'da göstermek için
       distribution_unit_price: distUnitPrice,  // UI'da göstermek için
     };
-  }, [result?.extraction, result?.calculation, ptfPrice, yekdemPrice, multiplier, getDistributionUnitPrice, manualMode, manualValues]);
+  }, [result?.extraction, result?.calculation, ptfPrice, yekdemPrice, multiplier, getDistributionUnitPrice, manualMode, manualValues, btvRate, vatRate]);
+
+  // Dönem değiştiğinde PTF/YEKDEM fiyatlarını otomatik çek
+  useEffect(() => {
+    // Sadece manuel modda ve dönem seçilmişse çalış
+    if (!manualMode || !manualValues.invoice_period) return;
+    
+    // Dönem zaten YYYY-MM formatında (dropdown'dan geliyor)
+    const period = manualValues.invoice_period;
+    
+    const fetchPrices = async () => {
+      setPriceLoading(true);
+      setPriceError(null);
+      
+      try {
+        // Mock veri kullan (test için) - production'da use_mock=false yapılacak
+        const response = await syncEpiasPrices(period, false, true);
+        
+        if (response.status === 'ok' && response.ptf_tl_per_mwh) {
+          setPtfPrice(response.ptf_tl_per_mwh);
+          if (response.yekdem_tl_per_mwh !== undefined) {
+            setYekdemPrice(response.yekdem_tl_per_mwh);
+          }
+        }
+      } catch (err: any) {
+        const errorMsg = err.response?.data?.detail || err.message || 'Fiyat çekilemedi';
+        setPriceError(typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg));
+      } finally {
+        setPriceLoading(false);
+      }
+    };
+    
+    fetchPrices();
+  }, [manualMode, manualValues.invoice_period]);
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -377,12 +482,17 @@ function App() {
           difference_incl_vat_tl: liveCalculation.difference_incl_vat_tl,
           savings_ratio: liveCalculation.savings_ratio,
           meta_include_yekdem_in_offer: liveCalculation.include_yekdem,
+          meta_vat_rate: vatRate,
         },
         {
           weighted_ptf_tl_per_mwh: ptfPrice,
           yekdem_tl_per_mwh: liveCalculation.include_yekdem ? yekdemPrice : 0,
           agreement_multiplier: multiplier,
-        }
+        },
+        customerInfo.company_name || undefined,  // customer_name
+        customerInfo.contact_person || undefined,  // contact_person
+        customerInfo.offer_date || undefined,  // offer_date
+        customerInfo.offer_validity_days || 15  // offer_validity_days
       );
       
       // Download the PDF
@@ -557,13 +667,14 @@ function App() {
                   <div>
                     <label className="text-xs font-medium text-gray-700 mb-1 block">
                       PTF (TL/MWh)
+                      {priceLoading && <Loader2 className="w-3 h-3 inline ml-1 animate-spin text-primary-500" />}
                       {useReferencePrices && !manualMode && result?.calculation?.meta_ptf_tl_per_mwh && (
                         <span className="text-primary-600 ml-1">({result.calculation.meta_ptf_tl_per_mwh})</span>
                       )}
                     </label>
                     <input
                       type="number"
-                      className={`w-full px-2 py-1.5 text-sm border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 focus:border-primary-500 outline-none ${useReferencePrices && !manualMode ? 'bg-gray-50' : ''}`}
+                      className={`w-full px-2 py-1.5 text-sm border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 focus:border-primary-500 outline-none ${useReferencePrices && !manualMode ? 'bg-gray-50' : ''} ${priceLoading ? 'animate-pulse' : ''}`}
                       value={ptfPrice}
                       onChange={(e) => setPtfPrice(parseFloat(e.target.value) || 0)}
                       step="0.1"
@@ -632,18 +743,27 @@ function App() {
                       if (key !== 'custom') {
                         setCustomDistributionPrice(0);
                       }
-                      // Tarife grubuna göre BTV oranını ve tarife grubu adını otomatik ayarla
-                      if (key.startsWith('sanayi')) {
-                        setBtvRate(0.01);
-                        const tariff = DISTRIBUTION_TARIFFS.find(t => t.key === key);
-                        if (tariff) {
-                          setManualValues(prev => ({...prev, tariff_group: tariff.label}));
+                      // Tarife grubuna göre BTV ve KDV oranlarını otomatik ayarla
+                      const tariff = DISTRIBUTION_TARIFFS.find(t => t.key === key);
+                      if (tariff) {
+                        setManualValues(prev => ({...prev, tariff_group: tariff.label}));
+                        
+                        // BTV Oranları (2464 sayılı Kanun Madde 34):
+                        // Sanayi (imal/istihsal kapsamı): %1
+                        // Diğer tüm gruplar: %5
+                        if (tariff.group === 'sanayi') {
+                          setBtvRate(0.01);
+                        } else if (tariff.group !== 'custom') {
+                          setBtvRate(0.05);
                         }
-                      } else if (key.startsWith('kamu')) {
-                        setBtvRate(0.05);
-                        const tariff = DISTRIBUTION_TARIFFS.find(t => t.key === key);
-                        if (tariff) {
-                          setManualValues(prev => ({...prev, tariff_group: tariff.label}));
+                        
+                        // KDV Oranları:
+                        // Mesken ve Tarımsal: %10 (indirimli - II sayılı liste)
+                        // Sanayi, Ticarethane, Aydınlatma: %20
+                        if (tariff.group === 'tarimsal' || tariff.group === 'mesken') {
+                          setVatRate(0.10);
+                        } else if (tariff.group !== 'custom') {
+                          setVatRate(0.20);
                         }
                       }
                     }}
@@ -660,7 +780,7 @@ function App() {
                     <input
                       type="number"
                       className="w-full mt-1 px-2 py-1.5 text-sm border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 focus:border-primary-500 outline-none"
-                      placeholder="TL/kWh"
+                      placeholder="1.836166"
                       value={customDistributionPrice || ''}
                       onChange={(e) => setCustomDistributionPrice(parseFloat(e.target.value) || 0)}
                       step="0.000001"
@@ -700,6 +820,35 @@ function App() {
                       }`}
                     >
                       %5 (Ticari/Kamu)
+                    </button>
+                  </div>
+                </div>
+                
+                {/* KDV Oranı */}
+                <div className="pt-2 border-t border-gray-100">
+                  <label className="text-xs font-medium text-gray-700 mb-1 block">KDV Oranı</label>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setVatRate(0.20)}
+                      className={`flex-1 px-2 py-1.5 text-xs rounded transition-colors ${
+                        vatRate === 0.20
+                          ? 'bg-primary-600 text-white'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      %20 (Normal)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setVatRate(0.10)}
+                      className={`flex-1 px-2 py-1.5 text-xs rounded transition-colors ${
+                        vatRate === 0.10
+                          ? 'bg-primary-600 text-white'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      %10 (Mesken/Tarımsal)
                     </button>
                   </div>
                 </div>
@@ -824,6 +973,42 @@ function App() {
                   </div>
                 </div>
 
+                {/* Müşteri Bilgileri (PDF için) */}
+                <div className="card p-3">
+                  <h3 className="text-sm font-semibold text-gray-900 mb-2">📋 Müşteri Bilgileri</h3>
+                  <div className="grid grid-cols-4 gap-2">
+                    <div className="col-span-2">
+                      <label className="text-xs text-gray-500 block mb-1">Firma Adı</label>
+                      <input
+                        type="text"
+                        className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500"
+                        value={customerInfo.company_name}
+                        onChange={(e) => setCustomerInfo({...customerInfo, company_name: e.target.value})}
+                        placeholder="Örn: ABC Sanayi A.Ş."
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-500 block mb-1">Yetkili Kişi</label>
+                      <input
+                        type="text"
+                        className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500"
+                        value={customerInfo.contact_person}
+                        onChange={(e) => setCustomerInfo({...customerInfo, contact_person: e.target.value})}
+                        placeholder="Örn: Ahmet Yılmaz"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-500 block mb-1">Teklif Tarihi</label>
+                      <input
+                        type="date"
+                        className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500"
+                        value={customerInfo.offer_date}
+                        onChange={(e) => setCustomerInfo({...customerInfo, offer_date: e.target.value})}
+                      />
+                    </div>
+                  </div>
+                </div>
+
                 {/* Fatura Detayları */}
                 <div className="card p-3">
                   <div className="flex items-center justify-between mb-2">
@@ -876,14 +1061,27 @@ function App() {
                           />
                         </div>
                         <div>
-                          <label className="text-xs text-gray-500 block mb-1">Dönem</label>
-                          <input
-                            type="text"
-                            className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500"
+                          <label className="text-xs text-gray-500 block mb-1">
+                            Dönem
+                            {priceLoading && <Loader2 className="w-3 h-3 inline ml-1 animate-spin text-primary-500" />}
+                          </label>
+                          <select
+                            className={`w-full px-2 py-1 text-xs border rounded focus:ring-1 focus:ring-primary-500 ${
+                              priceError ? 'border-red-300 bg-red-50' : 'border-gray-200'
+                            } ${priceLoading ? 'animate-pulse' : ''}`}
                             value={manualValues.invoice_period}
                             onChange={(e) => setManualValues({...manualValues, invoice_period: e.target.value})}
-                            placeholder="Örn: 2025-12"
-                          />
+                          >
+                            <option value="">Dönem Seçin</option>
+                            {PERIOD_OPTIONS.map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </option>
+                            ))}
+                          </select>
+                          {priceError && (
+                            <p className="text-xs text-red-500 mt-0.5">{priceError}</p>
+                          )}
                         </div>
                         <div>
                           <label className="text-xs text-gray-500 block mb-1">Tüketim (kWh)</label>
@@ -891,7 +1089,7 @@ function App() {
                             type="number"
                             className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500"
                             value={manualValues.consumption_kwh || ''}
-                            onChange={(e) => setManualValues({...manualValues, consumption_kwh: parseFloat(e.target.value) || 0})}
+                            onChange={(e) => setManualValues({...manualValues, consumption_kwh: parseNumber(e.target.value)})}
                             placeholder="168330"
                           />
                         </div>
@@ -913,73 +1111,79 @@ function App() {
                           <div>
                             <label className="text-xs text-gray-500 block mb-1">Enerji Bedeli</label>
                             <input
-                              type="number"
+                              type="text"
                               className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500"
-                              value={manualValues.current_energy_tl || ''}
-                              onChange={(e) => setManualValues({...manualValues, current_energy_tl: parseFloat(e.target.value) || 0})}
-                              step="0.01"
+                              placeholder="58761,15"
+                              defaultValue=""
+                              onBlur={(e) => {
+                                const val = parseNumber(e.target.value);
+                                setManualValues({...manualValues, current_energy_tl: val});
+                                e.target.value = val ? formatNumber(val) : '';
+                              }}
                             />
                           </div>
                           <div>
                             <label className="text-xs text-gray-500 block mb-1">Dağıtım Bedeli</label>
                             <input
-                              type="number"
+                              type="text"
                               className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500"
-                              value={manualValues.current_distribution_tl || ''}
-                              onChange={(e) => setManualValues({...manualValues, current_distribution_tl: parseFloat(e.target.value) || 0})}
-                              step="0.01"
+                              placeholder="33098,73"
+                              defaultValue=""
+                              onBlur={(e) => {
+                                const val = parseNumber(e.target.value);
+                                setManualValues({...manualValues, current_distribution_tl: val});
+                                e.target.value = val ? formatNumber(val) : '';
+                              }}
                             />
                           </div>
                           <div>
                             <label className="text-xs text-gray-500 block mb-1">BTV</label>
                             <input
-                              type="number"
-                              className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500"
-                              value={manualValues.current_btv_tl || ''}
-                              onChange={(e) => setManualValues({...manualValues, current_btv_tl: parseFloat(e.target.value) || 0})}
-                              step="0.01"
+                              type="text"
+                              className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 bg-gray-50"
+                              value={liveCalculation?.current_btv_tl?.toLocaleString('tr-TR', {minimumFractionDigits: 2}) || ''}
+                              readOnly
                             />
                           </div>
                           <div>
                             <label className="text-xs text-gray-500 block mb-1">KDV Matrahı</label>
                             <input
-                              type="number"
-                              className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500"
-                              value={manualValues.current_vat_matrah_tl || ''}
-                              onChange={(e) => setManualValues({...manualValues, current_vat_matrah_tl: parseFloat(e.target.value) || 0})}
-                              step="0.01"
+                              type="text"
+                              className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 bg-gray-50"
+                              value={liveCalculation?.current_vat_matrah_tl?.toLocaleString('tr-TR', {minimumFractionDigits: 2}) || ''}
+                              readOnly
                             />
                           </div>
                         </div>
                         <div className="grid grid-cols-4 gap-2 mt-2">
                           <div>
-                            <label className="text-xs text-gray-500 block mb-1">KDV (%20)</label>
+                            <label className="text-xs text-gray-500 block mb-1">KDV (%{Math.round(vatRate * 100)})</label>
                             <input
-                              type="number"
-                              className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500"
-                              value={manualValues.current_vat_tl || ''}
-                              onChange={(e) => setManualValues({...manualValues, current_vat_tl: parseFloat(e.target.value) || 0})}
-                              step="0.01"
+                              type="text"
+                              className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 bg-gray-50"
+                              value={liveCalculation?.current_vat_tl?.toLocaleString('tr-TR', {minimumFractionDigits: 2}) || ''}
+                              readOnly
                             />
                           </div>
                           <div className="col-span-2">
                             <label className="text-xs text-gray-500 block mb-1">TOPLAM (KDV Dahil)</label>
                             <input
-                              type="number"
+                              type="text"
                               className="w-full px-2 py-1 text-xs border border-amber-300 bg-amber-50 rounded focus:ring-1 focus:ring-amber-500 font-medium"
-                              value={manualValues.current_total_with_vat_tl || ''}
-                              onChange={(e) => setManualValues({...manualValues, current_total_with_vat_tl: parseFloat(e.target.value) || 0})}
-                              step="0.01"
+                              value={liveCalculation?.current_total_with_vat_tl?.toLocaleString('tr-TR', {minimumFractionDigits: 2}) || ''}
+                              readOnly
                             />
                           </div>
                           <div className="flex items-end">
                             <button
                               onClick={() => {
-                                // Otomatik toplam hesapla
-                                const vat_matrah = manualValues.current_energy_tl + manualValues.current_distribution_tl + manualValues.current_btv_tl;
-                                const vat = vat_matrah * 0.20;
+                                // Otomatik toplam hesapla - seçilen oranlara göre
+                                const btv = manualValues.current_energy_tl * btvRate;
+                                const vat_matrah = manualValues.current_energy_tl + manualValues.current_distribution_tl + btv;
+                                const vat = vat_matrah * vatRate;
                                 setManualValues({
                                   ...manualValues,
+                                  current_btv_tl: btv,
                                   current_vat_matrah_tl: vat_matrah,
                                   current_vat_tl: vat,
                                   current_total_with_vat_tl: vat_matrah + vat,
@@ -1177,7 +1381,7 @@ function App() {
                         </td>
                       </tr>
                       <tr>
-                        <td className="py-1 px-2 text-gray-700">KDV (%20)</td>
+                        <td className="py-1 px-2 text-gray-700">KDV (%{Math.round(vatRate * 100)})</td>
                         <td className="py-1 px-2 text-right text-gray-900">{formatCurrency(liveCalculation.current_vat_tl)}</td>
                         <td className="py-1 px-2 text-right text-gray-900">{formatCurrency(liveCalculation.offer_vat_tl)}</td>
                         <td className="py-1 px-2 text-right text-gray-500">-</td>

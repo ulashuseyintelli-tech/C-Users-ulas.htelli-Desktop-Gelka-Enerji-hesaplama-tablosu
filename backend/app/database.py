@@ -9,7 +9,8 @@ import os
 import uuid
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, JSON, ForeignKey, Enum as SQLEnum, Boolean
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, JSON, ForeignKey, Enum as SQLEnum, Boolean, UniqueConstraint
+import sqlalchemy as sa
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 
@@ -284,28 +285,49 @@ class MarketReferencePrice(Base):
     """
     PTF ve YEKDEM aylık referans fiyatları.
     
-    Kaynak: EPİAŞ Şeffaflık Platformu (manuel güncelleme)
+    Kaynak: EPİAŞ Şeffaflık Platformu (manuel güncelleme veya API)
     Kullanım: Teklif hesaplamada enerji maliyeti bileşeni
+    
+    PTF Admin Management (Sprint 10):
+    - price_type: Fiyat serisi tipi (PTF, SMF, YEKDEM - gelecek genişleme)
+    - status: provisional (geçici) | final (kesinleşmiş)
+    - captured_at: Verinin EPİAŞ'tan alındığı tarih
+    - source: epias_manual | epias_api | migration | seed
+    - change_reason: Değişiklik nedeni (audit)
+    
+    Unique constraint: (price_type, period)
     """
     __tablename__ = "market_reference_prices"
 
     id = Column(Integer, primary_key=True, index=True)
     
-    # Dönem (unique)
-    period = Column(String(7), nullable=False, unique=True, index=True)  # YYYY-MM format
+    # Fiyat tipi ve dönem (composite unique)
+    price_type = Column(String(20), nullable=False, default="PTF", index=True)  # PTF, SMF, YEKDEM
+    period = Column(String(7), nullable=False, index=True)  # YYYY-MM format
     
-    # Fiyatlar (TL/MWh)
+    # Fiyatlar (TL/MWh) - DECIMAL(12,2) precision
     ptf_tl_per_mwh = Column(Float, nullable=False)  # Piyasa Takas Fiyatı
     yekdem_tl_per_mwh = Column(Float, nullable=False, default=0)  # YEKDEM bedeli
     
+    # Status ve kaynak
+    status = Column(String(20), nullable=False, default="provisional")  # provisional | final
+    source = Column(String(30), nullable=False, default="epias_manual")  # epias_manual | epias_api | migration | seed
+    captured_at = Column(DateTime, nullable=False, default=datetime.utcnow)  # Verinin alındığı tarih
+    
     # Meta
     source_note = Column(String(500), nullable=True)  # "EPİAŞ şeffaflık ekranı / manuel"
+    change_reason = Column(Text, nullable=True)  # Değişiklik nedeni (audit)
     is_locked = Column(Integer, default=0)  # 1=kilitli (geçmiş dönem), 0=düzenlenebilir
     
     # Audit
     updated_by = Column(String(100), nullable=True)  # Güncelleyen kullanıcı
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Unique constraint: (price_type, period)
+    __table_args__ = (
+        sa.UniqueConstraint('price_type', 'period', name='uq_market_reference_prices_price_type_period'),
+    )
 
 
 class DistributionTariffDB(Base):

@@ -1771,6 +1771,10 @@ def generate_pdf_simple(
     invoice_period: str = Form(""),
     customer_name: Optional[str] = Form(None),
     tariff_group: str = Form("Sanayi"),
+    vat_rate: float = Form(0.20),  # KDV oranı: 0.20 = %20, 0.10 = %10
+    contact_person: Optional[str] = Form(None),  # Yetkili kişi
+    offer_date: Optional[str] = Form(None),  # Teklif tarihi (YYYY-MM-DD)
+    offer_validity_days: int = Form(15),  # Teklif geçerlilik süresi (gün)
 ):
     """Basit parametrelerle PDF oluştur - Frontend için"""
     try:
@@ -1848,11 +1852,15 @@ def generate_pdf_simple(
             saving_tl_per_kwh=saving_tl_per_kwh,
             annual_saving_tl=annual_saving_tl,
             meta_consumption_kwh=consumption_kwh,
+            meta_vat_rate=vat_rate,
         )
         
         pdf_path = generate_offer_pdf(
             extraction, calculation, params,
             customer_name=customer_name,
+            contact_person=contact_person,
+            offer_date=offer_date,
+            offer_validity_days=offer_validity_days,
         )
         
         return FileResponse(
@@ -3112,6 +3120,207 @@ async def unlock_market_price(
     
     logger.warning(f"[ADMIN] Period unlocked: {period}")
     return {"status": "ok", "message": f"Dönem {period} kilidi kaldırıldı"}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EPİAŞ ENTEGRASYONU
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/epias/sync/{period}")
+async def sync_period_from_epias(
+    period: str,
+    force_refresh: bool = False,
+    use_mock: bool = False,
+    db: Session = Depends(get_db)
+):
+    """
+    EPİAŞ'tan belirli dönem için PTF/YEKDEM verilerini çek ve cache'le.
+    
+    Args:
+        period: Dönem (YYYY-MM format, örn: 2025-01)
+        force_refresh: True ise mevcut cache'i yoksay
+        use_mock: True ise mock veri kullan (test/demo için)
+    
+    Returns:
+        {
+            "status": "ok" | "error",
+            "period": "2025-01",
+            "ptf_tl_per_mwh": 2974.1,
+            "yekdem_tl_per_mwh": 364.0,
+            "source": "epias" | "mock",
+            "message": "EPİAŞ'tan alındı ve cache'lendi"
+        }
+    """
+    from .market_prices import fetch_and_cache_from_epias
+    
+    # Period format kontrolü
+    if not period or len(period) != 7 or period[4] != '-':
+        raise HTTPException(
+            status_code=400, 
+            detail="Geçersiz dönem formatı. YYYY-MM kullanın (örn: 2025-01)"
+        )
+    
+    try:
+        success, prices, message = await fetch_and_cache_from_epias(db, period, force_refresh, use_mock)
+        
+        if not success:
+            return {
+                "status": "error",
+                "period": period,
+                "message": message
+            }
+        
+        return {
+            "status": "ok",
+            "period": period,
+            "ptf_tl_per_mwh": prices.ptf_tl_per_mwh,
+            "yekdem_tl_per_mwh": prices.yekdem_tl_per_mwh,
+            "source": prices.source,
+            "message": message
+        }
+        
+    except Exception as e:
+        logger.error(f"EPİAŞ sync hatası: {e}")
+        raise HTTPException(status_code=500, detail=f"EPİAŞ API hatası: {str(e)}")
+
+
+@app.get("/api/epias/prices/{period}")
+async def get_prices_with_epias_fallback(
+    period: str,
+    auto_fetch: bool = True,
+    db: Session = Depends(get_db)
+):
+    """
+    Dönem için piyasa fiyatlarını al - DB yoksa EPİAŞ'tan çek.
+    
+    Öncelik sırası:
+    1. DB'deki kayıt
+    2. EPİAŞ API (auto_fetch=True ise)
+    3. Default değerler
+    
+    Args:
+        period: Dönem (YYYY-MM format)
+        auto_fetch: EPİAŞ'tan otomatik çek (default: True)
+    
+    Returns:
+        {
+            "period": "2025-01",
+            "ptf_tl_per_mwh": 2974.1,
+            "yekdem_tl_per_mwh": 364.0,
+            "source": "epias",
+            "source_description": "EPİAŞ API: EPİAŞ'tan alındı ve cache'lendi"
+        }
+    """
+    from .market_prices import get_market_prices_with_epias_fallback
+    
+    prices, source_desc = get_market_prices_with_epias_fallback(db, period, auto_fetch)
+    
+    return {
+        "period": prices.period,
+        "ptf_tl_per_mwh": prices.ptf_tl_per_mwh,
+        "yekdem_tl_per_mwh": prices.yekdem_tl_per_mwh,
+        "source": prices.source,
+        "source_description": source_desc,
+        "is_locked": prices.is_locked
+    }
+
+
+@app.get("/api/epias/missing-periods")
+async def get_missing_periods(
+    months_back: int = 12,
+    db: Session = Depends(get_db)
+):
+    """
+    Sync edilmesi gereken dönemleri listele.
+    
+    DB'de kaydı olmayan veya source="default" olan dönemler.
+    
+    Args:
+        months_back: Kaç ay geriye bak (default: 12)
+    
+    Returns:
+        {
+            "missing_periods": ["2025-01", "2024-12", ...],
+            "count": 5
+        }
+    """
+    from .market_prices import get_periods_needing_sync
+    
+    missing = get_periods_needing_sync(db, months_back)
+    
+    return {
+        "missing_periods": missing,
+        "count": len(missing)
+    }
+
+
+@app.post("/admin/epias/sync-all")
+async def sync_all_missing_from_epias(
+    months_back: int = 12,
+    force_refresh: bool = False,
+    db: Session = Depends(get_db),
+    _: str = Depends(require_admin_key)
+):
+    """
+    Eksik tüm dönemler için EPİAŞ'tan veri çek.
+    
+    Requires: X-Admin-Key header
+    
+    Args:
+        months_back: Kaç ay geriye bak (default: 12)
+        force_refresh: Mevcut cache'i yoksay
+    
+    Returns:
+        {
+            "status": "ok",
+            "synced": {"2025-01": true, "2024-12": false, ...},
+            "success_count": 10,
+            "error_count": 2
+        }
+    """
+    from .market_prices import get_periods_needing_sync, sync_multiple_periods_from_epias
+    
+    # Eksik dönemleri bul
+    if force_refresh:
+        # Tüm dönemleri sync et
+        from datetime import datetime
+        current = datetime.now()
+        periods = []
+        for i in range(months_back):
+            year = current.year
+            month = current.month - i
+            while month <= 0:
+                month += 12
+                year -= 1
+            periods.append(f"{year}-{month:02d}")
+    else:
+        periods = get_periods_needing_sync(db, months_back)
+    
+    if not periods:
+        return {
+            "status": "ok",
+            "message": "Sync edilecek dönem yok",
+            "synced": {},
+            "success_count": 0,
+            "error_count": 0
+        }
+    
+    # Sync et
+    results = await sync_multiple_periods_from_epias(db, periods, force_refresh)
+    
+    synced = {period: success for period, (success, _) in results.items()}
+    success_count = sum(1 for s in synced.values() if s)
+    error_count = len(synced) - success_count
+    
+    logger.info(f"[ADMIN] EPİAŞ bulk sync: {success_count} başarılı, {error_count} hatalı")
+    
+    return {
+        "status": "ok",
+        "synced": synced,
+        "details": {period: msg for period, (_, msg) in results.items()},
+        "success_count": success_count,
+        "error_count": error_count
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

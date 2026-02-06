@@ -40,27 +40,57 @@ class TariffLookupResult:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# EPDK DAĞITIM TARİFELERİ (Ocak 2025)
+# EPDK DAĞITIM TARİFELERİ (Şubat 2026)
 # ═══════════════════════════════════════════════════════════════════════════════
 # Bu tablo EPDK tarafından belirlenir ve periyodik olarak güncellenir.
 # Kaynak: EPDK Elektrik Piyasası Tarifeler Yönetmeliği
+# Son güncelleme: 2026-02
 
 DISTRIBUTION_TARIFFS = [
-    # OG (Orta Gerilim) - Çift Terim
-    DistributionTariff("sanayi", "OG", "çift_terim", 0.810595),
-    DistributionTariff("kamu_ozel", "OG", "çift_terim", 1.263293),
+    # ═══════════════════════════════════════════════════════════════════════════
+    # OG (Orta Gerilim) - Çift Terim (ÇT)
+    # ═══════════════════════════════════════════════════════════════════════════
+    DistributionTariff("sanayi", "OG", "çift_terim", 0.81060),       # DSK Sanayi ÇT OG
+    DistributionTariff("ticarethane", "OG", "çift_terim", 1.26329),  # DSK Ticarethane ÇT OG
+    DistributionTariff("mesken", "OG", "çift_terim", 1.25129),       # DSK Mesken ÇT OG
+    DistributionTariff("aydinlatma", "OG", "çift_terim", 1.21249),   # DSK Aydınlatma ÇT OG
+    DistributionTariff("tarimsal", "OG", "çift_terim", 1.04042),     # DSK Tarımsal ÇT OG
     
-    # OG (Orta Gerilim) - Tek Terim
-    DistributionTariff("sanayi", "OG", "tek_terim", 0.895372),
-    DistributionTariff("kamu_ozel", "OG", "tek_terim", 1.57581),
+    # ═══════════════════════════════════════════════════════════════════════════
+    # OG (Orta Gerilim) - Tek Terim (TT)
+    # ═══════════════════════════════════════════════════════════════════════════
+    DistributionTariff("sanayi", "OG", "tek_terim", 0.89537),        # DSK Sanayi TT OG
+    DistributionTariff("ticarethane", "OG", "tek_terim", 1.57581),   # DSK Ticarethane TT OG
+    DistributionTariff("mesken", "OG", "tek_terim", 1.54502),        # DSK Mesken TT OG
+    DistributionTariff("aydinlatma", "OG", "tek_terim", 1.51248),    # DSK Aydınlatma TT OG
+    DistributionTariff("tarimsal", "OG", "tek_terim", 1.29543),      # DSK Tarımsal TT OG
     
-    # AG (Alçak Gerilim) - Tek Terim
-    DistributionTariff("sanayi", "AG", "tek_terim", 1.385324),
-    DistributionTariff("kamu_ozel", "AG", "tek_terim", 1.87741),
+    # ═══════════════════════════════════════════════════════════════════════════
+    # AG (Alçak Gerilim) - Tek Terim (TT)
+    # ═══════════════════════════════════════════════════════════════════════════
+    DistributionTariff("sanayi", "AG", "tek_terim", 1.38532),        # DSK Sanayi TT AG
+    DistributionTariff("ticarethane", "AG", "tek_terim", 1.87741),   # DSK Ticarethane TT AG
+    DistributionTariff("mesken", "AG", "tek_terim", 1.83617),        # DSK Mesken TT AG
+    DistributionTariff("mesken_sehit_gazi", "AG", "tek_terim", 1.03557),  # DSK Mesken Şehit Gazi
+    DistributionTariff("tarimsal", "AG", "tek_terim", 1.54263),      # DSK Tarımsal TT AG
+    DistributionTariff("aydinlatma", "AG", "tek_terim", 1.79815),    # DSK Aydınlatma TT AG
     
-    # AG (Alçak Gerilim) - Çift Terim (tahmini değerler)
-    DistributionTariff("sanayi", "AG", "çift_terim", 1.20),
-    DistributionTariff("kamu_ozel", "AG", "çift_terim", 1.65),
+    # ═══════════════════════════════════════════════════════════════════════════
+    # AG (Alçak Gerilim) - Çift Terim (ÇT) - Görüntüde yok, tahmini değerler
+    # ═══════════════════════════════════════════════════════════════════════════
+    DistributionTariff("sanayi", "AG", "çift_terim", 1.20),          # Tahmini
+    DistributionTariff("ticarethane", "AG", "çift_terim", 1.65),     # Tahmini
+    DistributionTariff("mesken", "AG", "çift_terim", 1.60),          # Tahmini
+    DistributionTariff("tarimsal", "AG", "çift_terim", 1.35),        # Tahmini
+    DistributionTariff("aydinlatma", "AG", "çift_terim", 1.55),      # Tahmini
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Geriye uyumluluk için kamu_ozel alias'ları (ticarethane ile eşleşir)
+    # ═══════════════════════════════════════════════════════════════════════════
+    DistributionTariff("kamu_ozel", "OG", "çift_terim", 1.26329),    # = ticarethane OG ÇT
+    DistributionTariff("kamu_ozel", "OG", "tek_terim", 1.57581),     # = ticarethane OG TT
+    DistributionTariff("kamu_ozel", "AG", "tek_terim", 1.87741),     # = ticarethane AG TT
+    DistributionTariff("kamu_ozel", "AG", "çift_terim", 1.65),       # = ticarethane AG ÇT (tahmini)
 ]
 
 # Hızlı lookup için dict
@@ -82,9 +112,12 @@ def normalize_tariff_group(raw: str) -> str:
     - "SANAYİ" → "sanayi"
     - "Sanayi" → "sanayi"
     - "KAMU VE ÖZEL SEKTÖR" → "kamu_ozel"
-    - "Ticarethane" → "kamu_ozel"
-    - "Mesken" → "kamu_ozel"
-    - "TİCARETHANE AG TEK TERİM" → "kamu_ozel" (tam string'den de çıkarır)
+    - "Ticarethane" → "ticarethane"
+    - "Mesken" → "mesken"
+    - "Tarımsal" → "tarimsal"
+    - "Aydınlatma" → "aydinlatma"
+    - "Mesken Şehit Gazi" → "mesken_sehit_gazi"
+    - "TİCARETHANE AG TEK TERİM" → "ticarethane" (tam string'den de çıkarır)
     """
     if not raw:
         return "unknown"
@@ -95,17 +128,34 @@ def normalize_tariff_group(raw: str) -> str:
     tr_map = str.maketrans('İIŞĞÜÖÇ', 'iışğüöç')
     raw_lower = raw_normalized.translate(tr_map).lower().strip()
     
-    # Sanayi - en önce kontrol et (daha spesifik)
+    # Şehit Gazi - en spesifik, önce kontrol et
+    if "şehit" in raw_lower or "sehit" in raw_lower or "gazi" in raw_lower:
+        return "mesken_sehit_gazi"
+    
+    # Sanayi
     if "sanayi" in raw_lower or "sanayı" in raw_lower or "sanayii" in raw_lower:
         return "sanayi"
     
-    # Kamu ve Özel Sektör (ticarethane, mesken, vb. dahil)
-    kamu_keywords = [
-        "kamu", "özel", "ozel", 
-        "ticarethane", "ticaret", "ticari",
-        "mesken", "konut", "ev",
-        "resmi", "daire", "kurum"
-    ]
+    # Tarımsal
+    if "tarım" in raw_lower or "tarim" in raw_lower or "zirai" in raw_lower:
+        return "tarimsal"
+    
+    # Aydınlatma
+    if "aydınlatma" in raw_lower or "aydinlatma" in raw_lower or "sokak" in raw_lower:
+        return "aydinlatma"
+    
+    # Ticarethane (ticari, dükkan, mağaza, vb.)
+    ticarethane_keywords = ["ticarethane", "ticaret", "ticari", "dükkan", "dukkan", "mağaza", "magaza", "işyeri", "isyeri"]
+    if any(kw in raw_lower for kw in ticarethane_keywords):
+        return "ticarethane"
+    
+    # Mesken (konut, ev, daire)
+    mesken_keywords = ["mesken", "konut", "ev", "daire", "apartman", "site"]
+    if any(kw in raw_lower for kw in mesken_keywords):
+        return "mesken"
+    
+    # Kamu ve Özel Sektör (genel kategori - ticarethane ile eşleşir)
+    kamu_keywords = ["kamu", "özel", "ozel", "resmi", "kurum"]
     if any(kw in raw_lower for kw in kamu_keywords):
         return "kamu_ozel"
     
@@ -378,16 +428,26 @@ def get_all_tariffs() -> list[dict]:
     """
     Tüm tarifeleri liste olarak döndür (UI için).
     """
+    group_labels = {
+        "sanayi": "Sanayi",
+        "ticarethane": "Ticarethane",
+        "mesken": "Mesken",
+        "mesken_sehit_gazi": "Mesken Şehit Gazi",
+        "tarimsal": "Tarımsal",
+        "aydinlatma": "Aydınlatma",
+        "kamu_ozel": "Kamu ve Özel Sektör",
+    }
+    
     return [
         {
             "key": f"{t.tariff_group}_{t.voltage_level}_{t.term_type}".lower().replace("ç", "c"),
             "tariff_group": t.tariff_group,
-            "tariff_group_label": "Sanayi" if t.tariff_group == "sanayi" else "Kamu ve Özel Sektör",
+            "tariff_group_label": group_labels.get(t.tariff_group, t.tariff_group.title()),
             "voltage_level": t.voltage_level,
             "term_type": t.term_type,
             "term_type_label": "Tek Terim" if t.term_type == "tek_terim" else "Çift Terim",
             "unit_price_tl_per_kwh": t.unit_price_tl_per_kwh,
-            "label": f"{'Sanayi' if t.tariff_group == 'sanayi' else 'Kamu/Özel'} {t.voltage_level} {'Tek' if t.term_type == 'tek_terim' else 'Çift'} Terim"
+            "label": f"{group_labels.get(t.tariff_group, t.tariff_group.title())} {t.voltage_level} {'Tek' if t.term_type == 'tek_terim' else 'Çift'} Terim"
         }
         for t in DISTRIBUTION_TARIFFS
     ]
