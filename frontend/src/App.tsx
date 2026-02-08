@@ -462,6 +462,22 @@ function App() {
     
     setPdfLoading(true);
     try {
+      // Seçili tarife grubunun tam label'ını al
+      const tariffLabel = distributionTariffKey 
+        ? DISTRIBUTION_TARIFFS.find(t => t.key === distributionTariffKey)?.label 
+        : manualValues.tariff_group || 'Sanayi';
+      
+      // DEBUG: PDF'e gönderilen değerleri logla
+      console.log('PDF Generation Debug:', {
+        customerName: customerInfo.company_name,
+        contactPerson: customerInfo.contact_person,
+        tariffLabel,
+        distributionTariffKey,
+        vendor: extraction.vendor,
+        offer_energy_tl: liveCalculation.offer_energy_tl,
+        offer_total_with_vat_tl: liveCalculation.offer_total_with_vat_tl,
+      });
+      
       const pdfBlob = await generateOfferPdf(
         extraction,
         {
@@ -492,7 +508,8 @@ function App() {
         customerInfo.company_name || undefined,  // customer_name
         customerInfo.contact_person || undefined,  // contact_person
         customerInfo.offer_date || undefined,  // offer_date
-        customerInfo.offer_validity_days || 15  // offer_validity_days
+        customerInfo.offer_validity_days || 15,  // offer_validity_days
+        tariffLabel || 'Sanayi'  // tariff_group
       );
       
       // Download the PDF
@@ -1338,9 +1355,28 @@ function App() {
 
                 {/* Karşılaştırma Tablosu */}
                 <div className="card p-3">
-                  <h3 className="text-sm font-semibold text-gray-900 mb-2">
-                    Detaylı Karşılaştırma
-                  </h3>
+                  <div className="flex justify-between items-center mb-2">
+                    <h3 className="text-sm font-semibold text-gray-900">
+                      Detaylı Karşılaştırma
+                    </h3>
+                    <button
+                      onClick={handleDownloadPdf}
+                      disabled={pdfLoading}
+                      className="btn-primary flex items-center gap-1 px-3 py-1 text-xs"
+                    >
+                      {pdfLoading ? (
+                        <>
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          PDF...
+                        </>
+                      ) : (
+                        <>
+                          <Download className="w-3 h-3" />
+                          PDF İndir
+                        </>
+                      )}
+                    </button>
+                  </div>
                   
                   <table className="w-full text-xs">
                     <thead>

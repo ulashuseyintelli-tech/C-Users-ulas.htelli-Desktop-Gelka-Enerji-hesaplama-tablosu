@@ -330,6 +330,52 @@ class MarketReferencePrice(Base):
     )
 
 
+class PriceChangeHistory(Base):
+    """
+    Piyasa fiyat değişiklik geçmişi — append-only audit tablosu.
+    
+    Her başarılı INSERT veya UPDATE işlemi sonrası bir kayıt oluşturulur.
+    No-op (aynı değer + aynı status) durumunda kayıt OLUŞTURULMAZ.
+    
+    Audit History Spec:
+    - action: INSERT (yeni kayıt) | UPDATE (güncelleme)
+    - old_value/old_status: INSERT'te NULL, UPDATE'te önceki değerler
+    - Append-only: Bu tabloda UPDATE veya DELETE yapılmaz
+    - Best-effort: History write hatası parent upsert'ü etkilemez
+    
+    FK: price_record_id → market_reference_prices.id (ON DELETE RESTRICT)
+    Denormalized: price_type, period (JOIN'siz query performansı için)
+    """
+    __tablename__ = "price_change_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    price_record_id = Column(
+        Integer,
+        ForeignKey("market_reference_prices.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    
+    # Denormalized — query performance (JOIN'siz filtreleme)
+    price_type = Column(String(20), nullable=False)   # PTF, SMF, YEKDEM
+    period = Column(String(7), nullable=False)         # YYYY-MM
+    
+    # Değişiklik detayları
+    action = Column(String(10), nullable=False)        # INSERT | UPDATE
+    old_value = Column(Float, nullable=True)           # NULL for INSERT
+    new_value = Column(Float, nullable=False)
+    old_status = Column(String(20), nullable=True)     # NULL for INSERT
+    new_status = Column(String(20), nullable=False)
+    
+    # Audit alanları
+    change_reason = Column(Text, nullable=True)
+    updated_by = Column(String(100), nullable=True)
+    source = Column(String(30), nullable=True)         # epias_manual, epias_api, migration, seed
+    
+    # Timestamp
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
 class DistributionTariffDB(Base):
     """
     EPDK Dağıtım Tarifeleri - dönem bazlı sürümleme.

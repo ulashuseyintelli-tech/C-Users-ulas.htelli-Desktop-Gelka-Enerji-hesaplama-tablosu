@@ -123,7 +123,7 @@ class MarketPriceValidator:
     """
     
     def validate_period(self, period: str) -> ValidationResult:
-        """
+        r"""
         Period format validation.
         
         Kabul: YYYY-MM (örn: 2026-02)

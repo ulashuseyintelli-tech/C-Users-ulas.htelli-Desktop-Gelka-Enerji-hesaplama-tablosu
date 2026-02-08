@@ -31,6 +31,13 @@ class MarketPrices:
     yekdem_tl_per_mwh: float
     source: str  # "db", "default", "override"
     is_locked: bool = False
+    # Yeni alanlar (backward compatible - default değerlerle)
+    status: str = "final"  # provisional | final (null status = final for backward compat)
+    price_type: str = "PTF"  # PTF, SMF, YEKDEM
+    captured_at: Optional[datetime] = None
+    change_reason: Optional[str] = None
+    source_detail: Optional[str] = None  # epias_manual | epias_api | migration | seed
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -52,13 +59,16 @@ MAX_YEKDEM_TL_PER_MWH = 1000.0  # Çok yüksek = muhtemelen hata
 # DB FONKSİYONLARI
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def get_market_prices(db: Session, period: str) -> Optional[MarketPrices]:
+def get_market_prices(db: Session, period: str, price_type: str = "PTF") -> Optional[MarketPrices]:
     """
     Belirli dönem için piyasa fiyatlarını getir.
+    
+    Backward compatibility: null status DB kayıtları "final" olarak döner.
     
     Args:
         db: Database session
         period: Dönem (YYYY-MM format)
+        price_type: Fiyat tipi (default: "PTF")
     
     Returns:
         MarketPrices veya None (bulunamazsa)
@@ -66,58 +76,80 @@ def get_market_prices(db: Session, period: str) -> Optional[MarketPrices]:
     from .database import MarketReferencePrice
     
     record = db.query(MarketReferencePrice).filter(
-        MarketReferencePrice.period == period
+        MarketReferencePrice.period == period,
+        MarketReferencePrice.price_type == price_type
     ).first()
     
     if record:
+        # Backward compatibility: null status = "final"
+        record_status = record.status if record.status else "final"
         return MarketPrices(
             period=record.period,
             ptf_tl_per_mwh=record.ptf_tl_per_mwh,
             yekdem_tl_per_mwh=record.yekdem_tl_per_mwh,
             source="db",
-            is_locked=bool(record.is_locked)
+            is_locked=bool(record.is_locked),
+            status=record_status,
+            price_type=getattr(record, 'price_type', 'PTF') or 'PTF',
+            captured_at=getattr(record, 'captured_at', None),
+            change_reason=getattr(record, 'change_reason', None),
+            source_detail=getattr(record, 'source', None),
         )
     
     return None
 
 
-def get_latest_market_prices(db: Session) -> Optional[MarketPrices]:
+def get_latest_market_prices(db: Session, price_type: str = "PTF") -> Optional[MarketPrices]:
     """
     En güncel dönemin piyasa fiyatlarını getir.
+    
+    Args:
+        db: Database session
+        price_type: Fiyat tipi (default: "PTF")
     
     Returns:
         MarketPrices veya None
     """
     from .database import MarketReferencePrice
     
-    record = db.query(MarketReferencePrice).order_by(
+    record = db.query(MarketReferencePrice).filter(
+        MarketReferencePrice.price_type == price_type
+    ).order_by(
         MarketReferencePrice.period.desc()
     ).first()
     
     if record:
+        # Backward compatibility: null status = "final"
+        record_status = record.status if record.status else "final"
         return MarketPrices(
             period=record.period,
             ptf_tl_per_mwh=record.ptf_tl_per_mwh,
             yekdem_tl_per_mwh=record.yekdem_tl_per_mwh,
             source="db",
-            is_locked=bool(record.is_locked)
+            is_locked=bool(record.is_locked),
+            status=record_status,
+            price_type=getattr(record, 'price_type', 'PTF') or 'PTF',
+            captured_at=getattr(record, 'captured_at', None),
+            change_reason=getattr(record, 'change_reason', None),
+            source_detail=getattr(record, 'source', None),
         )
     
     return None
 
 
-def get_market_prices_or_default(db: Session, period: str) -> MarketPrices:
+def get_market_prices_or_default(db: Session, period: str, price_type: str = "PTF") -> MarketPrices:
     """
     Dönem için piyasa fiyatlarını getir, yoksa default döndür.
     
     Args:
         db: Database session
         period: Dönem (YYYY-MM format)
+        price_type: Fiyat tipi (default: "PTF")
     
     Returns:
         MarketPrices (her zaman bir değer döner)
     """
-    prices = get_market_prices(db, period)
+    prices = get_market_prices(db, period, price_type=price_type)
     
     if prices:
         return prices
@@ -129,7 +161,9 @@ def get_market_prices_or_default(db: Session, period: str) -> MarketPrices:
         ptf_tl_per_mwh=DEFAULT_PTF_TL_PER_MWH,
         yekdem_tl_per_mwh=DEFAULT_YEKDEM_TL_PER_MWH,
         source="default",
-        is_locked=False
+        is_locked=False,
+        status="final",
+        price_type=price_type,
     )
 
 
@@ -139,10 +173,22 @@ def upsert_market_prices(
     ptf_tl_per_mwh: float,
     yekdem_tl_per_mwh: float,
     source_note: Optional[str] = None,
-    updated_by: Optional[str] = None
+    updated_by: Optional[str] = None,
+    status: Optional[str] = None,
+    price_type: str = "PTF",
+    captured_at: Optional[datetime] = None,
+    change_reason: Optional[str] = None,
+    source: Optional[str] = None,
 ) -> Tuple[bool, str]:
     """
     Piyasa fiyatlarını ekle veya güncelle.
+    
+    Backward compatibility:
+    - status=None → yeni kayıtlarda "provisional", mevcut kayıtlarda değiştirilmez
+    - Null status DB kayıtları "final" olarak kabul edilir (Requirement 1.6)
+    - price_type default "PTF"
+    - captured_at default datetime.utcnow()
+    - source default "epias_manual"
     
     Args:
         db: Database session
@@ -151,6 +197,11 @@ def upsert_market_prices(
         yekdem_tl_per_mwh: YEKDEM fiyatı
         source_note: Kaynak notu
         updated_by: Güncelleyen kullanıcı
+        status: Durum (provisional/final, None=backward compat)
+        price_type: Fiyat tipi (default: "PTF")
+        captured_at: Verinin alındığı tarih (default: now UTC)
+        change_reason: Değişiklik nedeni (audit)
+        source: Kaynak (epias_manual/epias_api/migration/seed)
     
     Returns:
         (success, message)
@@ -162,9 +213,10 @@ def upsert_market_prices(
     if validation_error:
         return (False, validation_error)
     
-    # Mevcut kayıt var mı?
+    # Mevcut kayıt var mı? (price_type + period unique)
     existing = db.query(MarketReferencePrice).filter(
-        MarketReferencePrice.period == period
+        MarketReferencePrice.period == period,
+        MarketReferencePrice.price_type == price_type
     ).first()
     
     if existing:
@@ -179,18 +231,37 @@ def upsert_market_prices(
         existing.updated_by = updated_by
         existing.updated_at = datetime.utcnow()
         
+        # Yeni alanları güncelle (sadece verilmişse)
+        if status is not None:
+            existing.status = status
+        if captured_at is not None:
+            existing.captured_at = captured_at
+        if change_reason is not None:
+            existing.change_reason = change_reason
+        if source is not None:
+            existing.source = source
+        
         db.commit()
         logger.info(f"Piyasa fiyatları güncellendi: {period} PTF={ptf_tl_per_mwh}, YEKDEM={yekdem_tl_per_mwh}")
         return (True, f"Dönem {period} güncellendi")
     else:
-        # Yeni kayıt
+        # Yeni kayıt - status default "provisional" (Requirement 1.5)
+        effective_status = status if status is not None else "provisional"
+        effective_captured_at = captured_at if captured_at is not None else datetime.utcnow()
+        effective_source = source if source is not None else "epias_manual"
+        
         new_record = MarketReferencePrice(
             period=period,
             ptf_tl_per_mwh=ptf_tl_per_mwh,
             yekdem_tl_per_mwh=yekdem_tl_per_mwh,
             source_note=source_note,
             updated_by=updated_by,
-            is_locked=0
+            is_locked=0,
+            price_type=price_type,
+            status=effective_status,
+            captured_at=effective_captured_at,
+            change_reason=change_reason,
+            source=effective_source,
         )
         db.add(new_record)
         db.commit()
@@ -217,13 +288,20 @@ def lock_market_prices(db: Session, period: str) -> Tuple[bool, str]:
     return (True, f"Dönem {period} kilitlendi")
 
 
-def get_all_market_prices(db: Session, limit: int = 24) -> list[MarketPrices]:
+def get_all_market_prices(db: Session, limit: int = 24, price_type: str = "PTF") -> list[MarketPrices]:
     """
     Tüm piyasa fiyatlarını getir (son N dönem).
+    
+    Args:
+        db: Database session
+        limit: Maksimum kayıt sayısı
+        price_type: Fiyat tipi (default: "PTF")
     """
     from .database import MarketReferencePrice
     
-    records = db.query(MarketReferencePrice).order_by(
+    records = db.query(MarketReferencePrice).filter(
+        MarketReferencePrice.price_type == price_type
+    ).order_by(
         MarketReferencePrice.period.desc()
     ).limit(limit).all()
     
@@ -233,7 +311,12 @@ def get_all_market_prices(db: Session, limit: int = 24) -> list[MarketPrices]:
             ptf_tl_per_mwh=r.ptf_tl_per_mwh,
             yekdem_tl_per_mwh=r.yekdem_tl_per_mwh,
             source="db",
-            is_locked=bool(r.is_locked)
+            is_locked=bool(r.is_locked),
+            status=r.status if r.status else "final",
+            price_type=getattr(r, 'price_type', 'PTF') or 'PTF',
+            captured_at=getattr(r, 'captured_at', None),
+            change_reason=getattr(r, 'change_reason', None),
+            source_detail=getattr(r, 'source', None),
         )
         for r in records
     ]
@@ -373,7 +456,8 @@ async def fetch_and_cache_from_epias(
             ptf_tl_per_mwh=result.ptf_tl_per_mwh,
             yekdem_tl_per_mwh=result.yekdem_tl_per_mwh or 0,
             source_note=source_note,
-            updated_by="epias_sync" if not use_mock else "mock_sync"
+            updated_by="epias_sync" if not use_mock else "mock_sync",
+            source="epias_api",
         )
         
         if not success:

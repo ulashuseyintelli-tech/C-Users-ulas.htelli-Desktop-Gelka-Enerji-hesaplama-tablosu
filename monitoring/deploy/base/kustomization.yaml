@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: ptf-admin-monitoring
+
+resources:
+  - ../../prometheus/ptf-admin-alerts.yml
+
+configMapGenerator:
+  - name: ptf-admin-dashboard
+    files:
+      - ptf-admin-dashboard.json=../../grafana/ptf-admin-dashboard.json
+    options:
+      disableNameSuffixHash: true
+      labels:
+        grafana_dashboard: "1"
+      annotations:
+        grafana_folder: "PTF Admin"

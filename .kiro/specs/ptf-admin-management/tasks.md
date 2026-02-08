@@ -38,8 +38,8 @@ EPİAŞ PTF verilerinin Admin Panel üzerinden yönetilmesi için gerekli verita
 - [x] 2. Checkpoint - Migration ve seed data doğrulama
   - Ensure migration runs successfully, seed data is loaded correctly
 
-- [-] 3. MarketPriceValidator Component
-  - [-] 3.1 backend/app/market_price_validator.py oluştur
+- [x] 3. MarketPriceValidator Component
+  - [x] 3.1 backend/app/market_price_validator.py oluştur
     - ValidationResult dataclass
     - Period regex validation (^\d{4}-(0[1-9]|1[0-2])$)
     - Value bounds validation (<=0 reject, >100000 reject, 1000-5000 warning)
@@ -47,52 +47,52 @@ EPİAŞ PTF verilerinin Admin Panel üzerinden yönetilmesi için gerekli verita
     - Future period rejection (Europe/Istanbul timezone)
     - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7_
   
-  - [ ] 3.2 Property test: Period format validation
+  - [x] 3.2 Property test: Period format validation
     - **Property 1: Period Format Validation**
     - **Validates: Requirements 3.1, 3.7**
   
-  - [ ] 3.3 Property test: PTF value bounds validation
+  - [x] 3.3 Property test: PTF value bounds validation
     - **Property 2: PTF Value Bounds Validation**
     - **Validates: Requirements 3.2, 3.3, 3.4**
   
-  - [ ] 3.4 Property test: Status enum validation
+  - [x] 3.4 Property test: Status enum validation
     - **Property 3: Status Enum Validation**
     - **Validates: Requirements 3.6**
 
-- [ ] 4. MarketPriceAdminService Component
-  - [ ] 4.1 backend/app/market_price_admin_service.py oluştur
+- [x] 4. MarketPriceAdminService Component
+  - [x] 4.1 backend/app/market_price_admin_service.py oluştur
     - MarketPriceEntry, MarketPriceLookupResult dataclasses
     - upsert() method with status transition rules
     - get_for_calculation() method with final > provisional priority
     - list_prices() method with pagination, sorting, filtering
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 4.1, 4.2, 4.3, 4.4, 4.5, 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7_
   
-  - [ ] 4.2 Property test: Status transition rules
+  - [x] 4.2 Property test: Status transition rules
     - **Property 7: Status Transition Rules**
     - **Validates: Requirements 2.4, 2.5, 10.1, 10.2, 10.3**
   
-  - [ ] 4.3 Property test: force_update policy
+  - [x] 4.3 Property test: force_update policy
     - final overwrite without force_update → reject
     - provisional→final upgrade without force_update → allow
     - **Validates: Requirements 2.4, 2.5, 10.1, 10.3**
   
-  - [ ] 4.4 Property test: Calculation lookup priority
+  - [x] 4.4 Property test: Calculation lookup priority
     - **Property 8: Calculation Lookup Priority**
     - **Validates: Requirements 7.1, 7.2, 7.3, 7.5, 7.6, 7.7**
   
-  - [ ] 4.5 Property test: Pagination correctness
+  - [x] 4.5 Property test: Pagination correctness
     - **Property 9: Pagination Correctness**
     - **Validates: Requirements 4.1, 4.2**
   
-  - [ ] 4.6 Property test: Filter correctness
+  - [x] 4.6 Property test: Filter correctness
     - **Property 10: Filter Correctness**
     - **Validates: Requirements 4.5**
 
-- [ ] 5. Checkpoint - Service layer doğrulama
+- [x] 5. Checkpoint - Service layer doğrulama
   - Ensure all service methods work correctly, ask the user if questions arise
 
-- [ ] 6. BulkImporter Component
-  - [ ] 6.1 backend/app/bulk_importer.py oluştur
+- [x] 6. BulkImporter Component
+  - [x] 6.1 backend/app/bulk_importer.py oluştur
     - ImportRow, ImportPreview, ImportResult dataclasses
     - parse_csv() method (dot decimal only)
     - parse_json() method
@@ -101,57 +101,57 @@ EPİAŞ PTF verilerinin Admin Panel üzerinden yönetilmesi için gerekli verita
     - Result contract: accepted_count, rejected_count, rejected_rows with error details
     - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 6.1, 6.2, 6.3_
   
-  - [ ] 6.2 Property test: Decimal parsing
+  - [x] 6.2 Property test: Decimal parsing
     - **Property 11: Decimal Parsing**
     - **Validates: Requirements 9.3, 9.4, 9.1**
   
-  - [ ] 6.3 Property test: Bulk import mode behavior
+  - [x] 6.3 Property test: Bulk import mode behavior
     - **Property 12: Bulk Import Mode Behavior**
     - **Validates: Requirements 5.4, 5.5, 5.7**
   
-  - [ ] 6.4 Property test: Import preview accuracy
+  - [x] 6.4 Property test: Import preview accuracy
     - **Property 13: Import Preview Accuracy**
     - **Validates: Requirements 6.1, 6.2, 6.3**
 
-- [ ] 7. API Endpoints
-  - [ ] 7.1 GET /admin/market-prices endpoint (list)
+- [x] 7. API Endpoints
+  - [x] 7.1 GET /admin/market-prices endpoint (list)
     - Query params: page, page_size, sort_by, sort_order, price_type, status, from_period, to_period
     - Pagination response with total count
     - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5_
   
-  - [ ] 7.2 POST /admin/market-prices endpoint (upsert)
+  - [x] 7.2 POST /admin/market-prices endpoint (upsert)
     - JSON body: period, value, price_type, status, source_note, change_reason, force_update
     - Validation + status transition enforcement
     - Error response with standard schema
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7_
   
-  - [ ] 7.3 POST /admin/market-prices/import/preview endpoint
+  - [x] 7.3 POST /admin/market-prices/import/preview endpoint
     - Multipart form: file, price_type, force_update
     - Preview response with counts and errors
     - _Requirements: 6.1, 6.2, 6.3, 6.4_
   
-  - [ ] 7.4 POST /admin/market-prices/import/apply endpoint
+  - [x] 7.4 POST /admin/market-prices/import/apply endpoint
     - Multipart form: file, price_type, force_update, strict_mode
     - Import result: accepted_count, rejected_count, rejected_rows (row_index, error_code, field, message)
     - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8_
   
-  - [ ] 7.5 GET /api/market-prices/{price_type}/{period} endpoint (calculation lookup)
+  - [x] 7.5 GET /api/market-prices/{price_type}/{period} endpoint (calculation lookup)
     - Path params: price_type (PTF, SMF, etc.), period (YYYY-MM)
     - Calculation lookup with is_provisional_used flag
     - Future-proof: price_type in path for SMF/YEKDEM support
     - _Requirements: 7.1, 7.2, 7.3, 7.5, 7.6, 7.7_
 
-- [ ] 8. Checkpoint - API endpoints doğrulama
+- [x] 8. Checkpoint - API endpoints doğrulama
   - Ensure all endpoints work correctly, ask the user if questions arise
 
-- [ ] 9. Integration ve Backward Compatibility
-  - [ ] 9.1 Mevcut market_prices.py fonksiyonlarını güncelle
+- [x] 9. Integration ve Backward Compatibility
+  - [x] 9.1 Mevcut market_prices.py fonksiyonlarını güncelle
     - get_market_prices() → status field desteği
     - upsert_market_prices() → yeni alanlar desteği
     - Backward compatibility: null status = final
     - _Requirements: 1.6_
   
-  - [ ] 9.2 Deprecation: Mevcut /admin/market-prices endpoint'lerini yeni yapıya yönlendir
+  - [x] 9.2 Deprecation: Mevcut /admin/market-prices endpoint'lerini yeni yapıya yönlendir
     - Mevcut POST /admin/market-prices (Form-based) → yeni JSON-based endpoint'e alias
     - Mevcut GET /admin/market-prices → yeni pagination destekli endpoint
     - Deprecation headers: Deprecation, Sunset (veya doc notu)
@@ -159,18 +159,18 @@ EPİAŞ PTF verilerinin Admin Panel üzerinden yönetilmesi için gerekli verita
     - Plan: 2 release sonra kaldırılır
     - _Requirements: 1.6_
   
-  - [ ] 9.3 Property test: Audit trail completeness
+  - [x] 9.3 Property test: Audit trail completeness
     - **Property 14: Audit Trail Completeness**
     - **Validates: Requirements 1.7, 1.8, 2.7, 4.4**
 
-- [ ]* 10. Observability (Opsiyonel)
-  - [ ]* 10.1 Metrics ekle
+- [x] 10. Observability (Opsiyonel)
+  - [x] 10.1 Metrics ekle
     - import_apply_duration_seconds
     - import_rows_total{outcome=accepted|rejected}
     - upsert_total{status=provisional|final}
     - lookup_total{hit=true|false, status=provisional|final}
 
-- [ ] 11. Final Checkpoint
+- [x] 11. Final Checkpoint
   - Ensure all tests pass, ask the user if questions arise
 
 ## Notes
@@ -185,3 +185,4 @@ EPİAŞ PTF verilerinin Admin Panel üzerinden yönetilmesi için gerekli verita
   - POST /admin/market-prices/import/preview
   - POST /admin/market-prices/import/apply
   - GET /api/market-prices/{price_type}/{period} (calculation lookup)
+KDVYİ YANLIŞ HESAPLIYORSUN

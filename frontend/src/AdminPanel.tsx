@@ -1,16 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
 import { 
-  Settings, Database, DollarSign, Lock, Unlock, Plus, 
+  Settings, Database, DollarSign,
   RefreshCw, AlertCircle, CheckCircle, Search, ArrowLeft,
   AlertTriangle, Eye, CheckSquare
 } from 'lucide-react';
 import {
-  getMarketPrices, upsertMarketPrice, lockMarketPrice, unlockMarketPrice,
   getDistributionTariffs, lookupDistributionTariff,
-  setAdminApiKey, getAdminApiKey, clearAdminApiKey,
+  setAdminApiKey, clearAdminApiKey,
   getIncidents, updateIncidentStatus, getIncidentStats,
-  MarketPrice, DistributionTariff, TariffLookupResult, Incident, IncidentStatsResponse
+  DistributionTariff, TariffLookupResult, Incident, IncidentStatsResponse
 } from './api';
+import { MarketPricesTab } from './market-prices/MarketPricesTab';
 
 type Tab = 'market-prices' | 'distribution-tariffs' | 'tariff-lookup' | 'incidents';
 
@@ -24,15 +24,6 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-
-  // Market Prices state
-  const [marketPrices, setMarketPrices] = useState<MarketPrice[]>([]);
-  const [loadingPrices, setLoadingPrices] = useState(false);
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [newPeriod, setNewPeriod] = useState('');
-  const [newPtf, setNewPtf] = useState(2974.1);
-  const [newYekdem, setNewYekdem] = useState(364.0);
-  const [newSourceNote, setNewSourceNote] = useState('');
 
   // Distribution Tariffs state
   const [tariffs, setTariffs] = useState<DistributionTariff[]>([]);
@@ -64,23 +55,6 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
     setIsAuthenticated(false);
     setApiKey('');
   };
-
-  const loadMarketPrices = useCallback(async () => {
-    setLoadingPrices(true);
-    setError(null);
-    try {
-      const response = await getMarketPrices(24);
-      setMarketPrices(response.prices);
-    } catch (err: any) {
-      const msg = err.response?.data?.detail?.message || err.response?.data?.detail || err.message;
-      setError(`Fiyatlar yüklenemedi: ${msg}`);
-      if (err.response?.status === 401 || err.response?.status === 403) {
-        setIsAuthenticated(false);
-      }
-    } finally {
-      setLoadingPrices(false);
-    }
-  }, []);
 
   const loadTariffs = useCallback(async () => {
     setLoadingTariffs(true);
@@ -116,58 +90,13 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
 
   useEffect(() => {
     if (isAuthenticated) {
-      if (activeTab === 'market-prices') {
-        loadMarketPrices();
-      } else if (activeTab === 'distribution-tariffs') {
+      if (activeTab === 'distribution-tariffs') {
         loadTariffs();
       } else if (activeTab === 'incidents') {
         loadIncidents();
       }
     }
-  }, [isAuthenticated, activeTab, loadMarketPrices, loadTariffs, loadIncidents]);
-
-  const handleAddPrice = async () => {
-    if (!newPeriod || newPtf <= 0) {
-      setError('Dönem ve PTF zorunlu');
-      return;
-    }
-    
-    setError(null);
-    try {
-      await upsertMarketPrice(newPeriod, newPtf, newYekdem, newSourceNote || undefined);
-      setSuccess(`Dönem ${newPeriod} eklendi/güncellendi`);
-      setShowAddForm(false);
-      setNewPeriod('');
-      setNewSourceNote('');
-      loadMarketPrices();
-    } catch (err: any) {
-      const msg = err.response?.data?.detail?.message || err.response?.data?.detail || err.message;
-      setError(`Kaydetme hatası: ${msg}`);
-    }
-  };
-
-  const handleLock = async (period: string) => {
-    try {
-      await lockMarketPrice(period);
-      setSuccess(`Dönem ${period} kilitlendi`);
-      loadMarketPrices();
-    } catch (err: any) {
-      const msg = err.response?.data?.detail?.message || err.response?.data?.detail || err.message;
-      setError(`Kilitleme hatası: ${msg}`);
-    }
-  };
-
-  const handleUnlock = async (period: string) => {
-    if (!confirm(`${period} döneminin kilidini kaldırmak istediğinize emin misiniz?`)) return;
-    try {
-      await unlockMarketPrice(period);
-      setSuccess(`Dönem ${period} kilidi kaldırıldı`);
-      loadMarketPrices();
-    } catch (err: any) {
-      const msg = err.response?.data?.detail?.message || err.response?.data?.detail || err.message;
-      setError(`Kilit kaldırma hatası: ${msg}`);
-    }
-  };
+  }, [isAuthenticated, activeTab, loadTariffs, loadIncidents]);
 
   const handleLookup = async () => {
     setLookupLoading(true);
@@ -343,26 +272,7 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
 
       {/* Content */}
       <main className="max-w-7xl mx-auto px-6 py-6">
-        {activeTab === 'market-prices' && (
-          <MarketPricesTab
-            prices={marketPrices}
-            loading={loadingPrices}
-            onRefresh={loadMarketPrices}
-            onLock={handleLock}
-            onUnlock={handleUnlock}
-            showAddForm={showAddForm}
-            setShowAddForm={setShowAddForm}
-            newPeriod={newPeriod}
-            setNewPeriod={setNewPeriod}
-            newPtf={newPtf}
-            setNewPtf={setNewPtf}
-            newYekdem={newYekdem}
-            setNewYekdem={setNewYekdem}
-            newSourceNote={newSourceNote}
-            setNewSourceNote={setNewSourceNote}
-            onAdd={handleAddPrice}
-          />
-        )}
+        {activeTab === 'market-prices' && <MarketPricesTab />}
 
         {activeTab === 'distribution-tariffs' && (
           <DistributionTariffsTab
@@ -402,213 +312,6 @@ export default function AdminPanel({ onBack }: AdminPanelProps) {
   );
 }
 
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Market Prices Tab
-// ═══════════════════════════════════════════════════════════════════════════════
-
-interface MarketPricesTabProps {
-  prices: MarketPrice[];
-  loading: boolean;
-  onRefresh: () => void;
-  onLock: (period: string) => void;
-  onUnlock: (period: string) => void;
-  showAddForm: boolean;
-  setShowAddForm: (show: boolean) => void;
-  newPeriod: string;
-  setNewPeriod: (period: string) => void;
-  newPtf: number;
-  setNewPtf: (ptf: number) => void;
-  newYekdem: number;
-  setNewYekdem: (yekdem: number) => void;
-  newSourceNote: string;
-  setNewSourceNote: (note: string) => void;
-  onAdd: () => void;
-}
-
-function MarketPricesTab({
-  prices, loading, onRefresh, onLock, onUnlock,
-  showAddForm, setShowAddForm,
-  newPeriod, setNewPeriod, newPtf, setNewPtf, newYekdem, setNewYekdem,
-  newSourceNote, setNewSourceNote, onAdd
-}: MarketPricesTabProps) {
-  // Generate period options (last 12 months + next 3 months)
-  const periodOptions = [];
-  const now = new Date();
-  for (let i = -3; i <= 12; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    periodOptions.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
-  }
-
-  return (
-    <div className="space-y-6">
-      {/* Actions */}
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-gray-900">PTF/YEKDEM Referans Fiyatları</h2>
-        <div className="flex gap-2">
-          <button
-            onClick={onRefresh}
-            disabled={loading}
-            className="btn-secondary flex items-center gap-2"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            Yenile
-          </button>
-          <button
-            onClick={() => setShowAddForm(!showAddForm)}
-            className="btn-primary flex items-center gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            Yeni Dönem
-          </button>
-        </div>
-      </div>
-
-      {/* Add Form */}
-      {showAddForm && (
-        <div className="card bg-primary-50 border-primary-200">
-          <h3 className="font-medium text-gray-900 mb-4">Yeni Dönem Ekle / Güncelle</h3>
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-            <div>
-              <label className="label">Dönem</label>
-              <select
-                className="input"
-                value={newPeriod}
-                onChange={(e) => setNewPeriod(e.target.value)}
-              >
-                <option value="">Seçin...</option>
-                {periodOptions.map(p => (
-                  <option key={p} value={p}>{p}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="label">PTF (TL/MWh)</label>
-              <input
-                type="number"
-                className="input"
-                value={newPtf}
-                onChange={(e) => setNewPtf(parseFloat(e.target.value) || 0)}
-                step="0.1"
-                min="0"
-              />
-            </div>
-            <div>
-              <label className="label">YEKDEM (TL/MWh)</label>
-              <input
-                type="number"
-                className="input"
-                value={newYekdem}
-                onChange={(e) => setNewYekdem(parseFloat(e.target.value) || 0)}
-                step="0.1"
-                min="0"
-              />
-            </div>
-            <div>
-              <label className="label">Kaynak Notu</label>
-              <input
-                type="text"
-                className="input"
-                value={newSourceNote}
-                onChange={(e) => setNewSourceNote(e.target.value)}
-                placeholder="EPİAŞ, manuel, vb."
-              />
-            </div>
-            <div className="flex items-end">
-              <button onClick={onAdd} className="btn-primary w-full">
-                Kaydet
-              </button>
-            </div>
-          </div>
-          
-          {/* Validation warnings */}
-          {newPtf > 0 && (newPtf < 500 || newPtf > 10000) && (
-            <p className="text-xs text-amber-600 mt-2">
-              ⚠️ PTF değeri olağandışı görünüyor (beklenen: 500-10000 TL/MWh)
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* Table */}
-      <div className="card overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="bg-gray-50 border-b border-gray-200">
-                <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Dönem</th>
-                <th className="text-right py-3 px-4 text-sm font-medium text-gray-500">PTF (TL/MWh)</th>
-                <th className="text-right py-3 px-4 text-sm font-medium text-gray-500">YEKDEM (TL/MWh)</th>
-                <th className="text-center py-3 px-4 text-sm font-medium text-gray-500">Durum</th>
-                <th className="text-right py-3 px-4 text-sm font-medium text-gray-500">İşlem</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {loading ? (
-                <tr>
-                  <td colSpan={5} className="py-8 text-center text-gray-500">
-                    <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2" />
-                    Yükleniyor...
-                  </td>
-                </tr>
-              ) : prices.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="py-8 text-center text-gray-500">
-                    Henüz veri yok
-                  </td>
-                </tr>
-              ) : (
-                prices.map((price) => (
-                  <tr key={price.period} className={price.is_locked ? 'bg-gray-50' : ''}>
-                    <td className="py-3 px-4 text-sm font-medium text-gray-900">
-                      {price.period}
-                    </td>
-                    <td className="py-3 px-4 text-sm text-right text-gray-900 font-mono">
-                      {price.ptf_tl_per_mwh.toLocaleString('tr-TR', { minimumFractionDigits: 1 })}
-                    </td>
-                    <td className="py-3 px-4 text-sm text-right text-gray-900 font-mono">
-                      {price.yekdem_tl_per_mwh.toLocaleString('tr-TR', { minimumFractionDigits: 1 })}
-                    </td>
-                    <td className="py-3 px-4 text-center">
-                      {price.is_locked ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-gray-200 text-gray-700">
-                          <Lock className="w-3 h-3" />
-                          Kilitli
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
-                          <Unlock className="w-3 h-3" />
-                          Açık
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      {price.is_locked ? (
-                        <button
-                          onClick={() => onUnlock(price.period)}
-                          className="text-xs text-amber-600 hover:text-amber-700 font-medium"
-                        >
-                          Kilidi Kaldır
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => onLock(price.period)}
-                          className="text-xs text-gray-600 hover:text-gray-700 font-medium"
-                        >
-                          Kilitle
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Distribution Tariffs Tab

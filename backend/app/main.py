@@ -408,6 +408,154 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Metrics Middleware ────────────────────────────────────────────────────────
+from .metrics_middleware import MetricsMiddleware
+app.add_middleware(MetricsMiddleware)
+
+
+# ── Prometheus Metrics Endpoint ───────────────────────────────────────────────
+@app.get("/metrics", include_in_schema=False)
+async def prometheus_metrics():
+    """
+    GET /metrics — Prometheus text exposition format.
+    No authentication required (standard for metrics scraping).
+    Instance-level registry only — no global/default registry.
+    """
+    from .ptf_metrics import get_ptf_metrics
+    from fastapi.responses import Response
+
+    return Response(
+        content=get_ptf_metrics().generate_metrics(),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
+
+
+# ── Telemetry Event Ingestion ─────────────────────────────────────────────────
+import re as _re
+import time as _time
+import collections as _collections
+from pydantic import BaseModel as _PydanticBaseModel
+
+_EVENT_NAME_PREFIX = "ptf_admin."
+_MAX_BATCH_SIZE = 100
+_RATE_LIMIT_WINDOW = 60  # seconds
+_RATE_LIMIT_MAX = 60  # requests per window per IP
+_EVENT_NAME_MAX_LEN = 100  # max chars for event name
+_EVENT_NAME_PATTERN = _re.compile(r"^[a-z0-9._]+$")  # ASCII slug: lowercase + digits + dot + underscore
+_MAX_PROPERTIES_KEYS = 20  # max number of keys in properties dict
+
+# Simple in-memory rate limiter: IP → deque of timestamps
+_rate_limit_buckets: dict[str, _collections.deque] = {}
+
+
+class TelemetryEvent(_PydanticBaseModel):
+    event: str
+    properties: dict = {}
+    timestamp: str  # ISO 8601
+
+
+class TelemetryEventsRequest(_PydanticBaseModel):
+    events: List[TelemetryEvent]
+
+
+def _check_rate_limit(client_ip: str) -> bool:
+    """Return True if request is allowed, False if rate-limited."""
+    now = _time.monotonic()
+    bucket = _rate_limit_buckets.setdefault(client_ip, _collections.deque())
+    # Evict expired entries
+    while bucket and bucket[0] < now - _RATE_LIMIT_WINDOW:
+        bucket.popleft()
+    if len(bucket) >= _RATE_LIMIT_MAX:
+        return False
+    bucket.append(now)
+    return True
+
+
+def _validate_event_name(name: str) -> str | None:
+    """Validate event name. Returns rejection reason or None if valid."""
+    if not name.startswith(_EVENT_NAME_PREFIX):
+        return "UNKNOWN_PREFIX"
+    if len(name) > _EVENT_NAME_MAX_LEN:
+        return "NAME_TOO_LONG"
+    if not _EVENT_NAME_PATTERN.match(name):
+        return "INVALID_CHARSET"
+    return None
+
+
+@app.post("/admin/telemetry/events", include_in_schema=False)
+async def ingest_telemetry_events(body: TelemetryEventsRequest, request: Request):
+    """
+    POST /admin/telemetry/events — Frontend event ingestion.
+
+    Auth: YOK (bilinçli istisna). Endpoint yalnızca counter artırır,
+    başka write/read yapmaz. Risk profili GET /metrics ile aynı sınıfta.
+
+    Validation rules:
+    - event name: must start with "ptf_admin.", max 100 chars, ASCII slug [a-z0-9._]
+    - properties: max 20 keys (values not inspected, never stored/labeled)
+    - batch: max 100 events per request
+    - rate limit: 60 req/min/IP
+
+    Dedupe: intentionally absent. Fire-and-forget semantics mean retries
+    may inflate counters. Accepted trade-off for simplicity.
+    """
+    # Rate limit check
+    client_ip = request.client.host if request.client else "unknown"
+    if not _check_rate_limit(client_ip):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+    # Max batch size check
+    if len(body.events) > _MAX_BATCH_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Batch size {len(body.events)} exceeds maximum {_MAX_BATCH_SIZE}",
+        )
+
+    from .ptf_metrics import get_ptf_metrics
+    from .event_store import get_event_store
+
+    metrics = get_ptf_metrics()
+    store = get_event_store()
+
+    accepted = 0
+    rejected = 0
+    reject_reasons: dict[str, int] = {}
+
+    for ev in body.events:
+        # Validate event name
+        reason = _validate_event_name(ev.event)
+        if reason is not None:
+            store.increment_rejected()
+            rejected += 1
+            reject_reasons[reason] = reject_reasons.get(reason, 0) + 1
+            continue
+
+        # Validate properties key count (defense against payload bloat)
+        if len(ev.properties) > _MAX_PROPERTIES_KEYS:
+            store.increment_rejected()
+            rejected += 1
+            reject_reasons["TOO_MANY_PROPS"] = reject_reasons.get("TOO_MANY_PROPS", 0) + 1
+            continue
+
+        # Valid event — increment counters
+        store.increment(ev.event)
+        metrics.inc_frontend_event(ev.event)
+        accepted += 1
+
+    # Single INFO line: counts only, no event names (PII/garbage risk)
+    logger.info(
+        f"telemetry_ingest accepted={accepted} rejected={rejected}"
+        f" distinct_events={store.get_counters().__len__()}"
+        + (f" reject_reasons={reject_reasons}" if reject_reasons else "")
+    )
+
+    return {
+        "status": "ok",
+        "accepted_count": accepted,
+        "rejected_count": rejected,
+    }
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -1777,6 +1925,16 @@ def generate_pdf_simple(
     offer_validity_days: int = Form(15),  # Teklif geçerlilik süresi (gün)
 ):
     """Basit parametrelerle PDF oluştur - Frontend için"""
+    # DEBUG: Gelen değerleri logla
+    logger.info(f"PDF Generation Request:")
+    logger.info(f"  customer_name: '{customer_name}'")
+    logger.info(f"  contact_person: '{contact_person}'")
+    logger.info(f"  offer_energy_tl: {offer_energy_tl}")
+    logger.info(f"  offer_vat_matrah_tl: {offer_vat_matrah_tl}")
+    logger.info(f"  offer_total: {offer_total}")
+    logger.info(f"  current_energy_tl: {current_energy_tl}")
+    logger.info(f"  vat_rate: {vat_rate}")
+    
     try:
         # Mevcut toplam hesapla (eğer gönderilmediyse)
         if current_total_with_vat_tl == 0 and invoice_total > 0:
@@ -2959,33 +3117,258 @@ async def get_audit_stats(
 async def list_market_prices(
     db: Session = Depends(get_db),
     _: str = Depends(require_admin_key),
-    limit: int = Query(default=24, description="Son kaç dönem")
+    page: int = Query(default=1, ge=1, description="Sayfa numarası (1-based)"),
+    page_size: int = Query(default=20, ge=1, le=100, description="Sayfa başına kayıt sayısı"),
+    sort_by: str = Query(default="period", description="Sıralama alanı: period, ptf_tl_per_mwh, status, updated_at"),
+    sort_order: str = Query(default="desc", description="Sıralama yönü: asc veya desc"),
+    price_type: Optional[str] = Query(default=None, description="Fiyat tipi filtresi (PTF, SMF, vb.)"),
+    status: Optional[str] = Query(default=None, description="Status filtresi: provisional veya final"),
+    from_period: Optional[str] = Query(default=None, description="Başlangıç dönemi (YYYY-MM)"),
+    to_period: Optional[str] = Query(default=None, description="Bitiş dönemi (YYYY-MM)"),
 ):
     """
-    Tüm piyasa referans fiyatlarını listele.
+    Piyasa referans fiyatlarını listele (pagination + filtering).
+    
+    Requires: X-Admin-Key header
+    
+    Query Parameters:
+        page: Sayfa numarası (default: 1)
+        page_size: Sayfa başına kayıt (default: 20, max: 100)
+        sort_by: Sıralama alanı (default: period)
+        sort_order: Sıralama yönü (default: desc)
+        price_type: Fiyat tipi filtresi
+        status: Status filtresi (provisional/final)
+        from_period: Başlangıç dönemi (YYYY-MM)
+        to_period: Bitiş dönemi (YYYY-MM)
+    
+    Returns:
+        Paginated PTF kayıt listesi with total count
+    
+    Requirements: 4.1, 4.2, 4.3, 4.4, 4.5
+    """
+    from .market_price_admin_service import get_market_price_admin_service
+    
+    # Validate sort_by against allowed fields
+    allowed_sort_fields = {"period", "ptf_tl_per_mwh", "status", "updated_at"}
+    if sort_by not in allowed_sort_fields:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "status": "error",
+                "error_code": "INVALID_SORT_FIELD",
+                "message": f"Geçersiz sıralama alanı: {sort_by}. İzin verilen: {', '.join(sorted(allowed_sort_fields))}",
+            }
+        )
+    
+    # Validate sort_order
+    if sort_order not in ("asc", "desc"):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "status": "error",
+                "error_code": "INVALID_SORT_ORDER",
+                "message": f"Geçersiz sıralama yönü: {sort_order}. İzin verilen: asc, desc",
+            }
+        )
+    
+    service = get_market_price_admin_service()
+    
+    # Convert page/page_size to offset/limit
+    offset = (page - 1) * page_size
+    
+    result = service.list_prices(
+        db=db,
+        price_type=price_type,
+        status=status,
+        period_from=from_period,
+        period_to=to_period,
+        limit=page_size,
+        offset=offset,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    
+    return {
+        "status": "ok",
+        "total": result.total,
+        "page": page,
+        "page_size": page_size,
+        "items": [
+            {
+                "period": p.period,
+                "ptf_value": p.ptf_tl_per_mwh,
+                "status": p.status,
+                "captured_at": p.captured_at.isoformat() if p.captured_at else None,
+                "is_locked": bool(p.is_locked),
+                "updated_by": p.updated_by,
+                "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+            }
+            for p in result.items
+        ],
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ADMIN: AUDIT HISTORY (Değişiklik Geçmişi)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/admin/market-prices/history")
+async def get_price_history(
+    period: str = Query(..., description="Dönem (YYYY-MM format)"),
+    price_type: str = Query(default="PTF", description="Fiyat tipi (PTF, SMF, YEKDEM)"),
+    db: Session = Depends(get_db),
+    _: str = Depends(require_admin_key),
+):
+    """
+    Belirli bir dönem+fiyat tipi için değişiklik geçmişini döndür.
     
     Requires: X-Admin-Key header
     
     Returns:
-        PTF/YEKDEM dönem listesi
-    """
-    from .market_prices import get_all_market_prices
+        200: { status, period, price_type, history: [...] }
+        404: Kayıt bulunamadı (period+price_type mevcut değil)
     
-    prices = get_all_market_prices(db, limit=limit)
+    Feature: audit-history, Requirements: 3.1, 3.2, 3.3, 3.4, 3.5
+    """
+    import re
+    if not re.match(r"^\d{4}-(0[1-9]|1[0-2])$", period):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "status": "error",
+                "error_code": "INVALID_PERIOD",
+                "message": f"Geçersiz dönem formatı: {period}. Beklenen: YYYY-MM",
+                "field": "period",
+            }
+        )
+    
+    from .market_price_admin_service import get_market_price_admin_service
+    from .ptf_metrics import get_ptf_metrics
+    service = get_market_price_admin_service()
+    ptf_metrics = get_ptf_metrics()
+    
+    ptf_metrics.inc_history_query()
+    with ptf_metrics.time_history_query():
+        history = service.get_history(db=db, period=period, price_type=price_type)
+    
+    if history is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "status": "error",
+                "error_code": "RECORD_NOT_FOUND",
+                "message": f"{period} / {price_type} için kayıt bulunamadı.",
+            }
+        )
     
     return {
         "status": "ok",
-        "count": len(prices),
-        "prices": [
+        "period": period,
+        "price_type": price_type,
+        "history": [
             {
-                "period": p.period,
-                "ptf_tl_per_mwh": p.ptf_tl_per_mwh,
-                "yekdem_tl_per_mwh": p.yekdem_tl_per_mwh,
-                "source": p.source,
-                "is_locked": p.is_locked
+                "id": h.id,
+                "action": h.action,
+                "old_value": h.old_value,
+                "new_value": h.new_value,
+                "old_status": h.old_status,
+                "new_status": h.new_status,
+                "change_reason": h.change_reason,
+                "updated_by": h.updated_by,
+                "source": h.source,
+                "created_at": h.created_at.isoformat() if h.created_at else None,
             }
-            for p in prices
-        ]
+            for h in history
+        ],
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DEPRECATED GET ALIASES (must be registered BEFORE /{period} to avoid path conflict)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get(
+    "/admin/market-prices/legacy",
+    deprecated=True,
+    summary="[DEPRECATED] List market prices (no pagination)",
+    description=(
+        "DEPRECATED: This endpoint will be removed in 2 releases. "
+        "Use GET /admin/market-prices with pagination support instead."
+    ),
+)
+async def deprecated_list_market_prices_legacy(
+    db: Session = Depends(get_db),
+    _: str = Depends(require_admin_key),
+):
+    """
+    [DEPRECATED] List market prices without pagination.
+
+    This alias returns all records (max 100) and forwards to the new paginated endpoint.
+    Deprecation and Sunset headers are included in the response.
+
+    Requirements: 1.6 (Backward Compatibility)
+    """
+    _deprecated_alias_usage["get_legacy"] += 1
+    logger.warning(
+        "[DEPRECATION] Legacy GET /admin/market-prices/legacy used. "
+        f"Total usage: {_deprecated_alias_usage['get_legacy']}. "
+        "Migrate to new paginated endpoint."
+    )
+
+    from .market_price_admin_service import get_market_price_admin_service
+    from fastapi.responses import JSONResponse
+
+    service = get_market_price_admin_service()
+    result = service.list_prices(
+        db=db,
+        price_type=None,
+        status=None,
+        period_from=None,
+        period_to=None,
+        limit=100,
+        offset=0,
+        sort_by="period",
+        sort_order="desc",
+    )
+
+    return JSONResponse(
+        content={
+            "status": "ok",
+            "total": result.total,
+            "items": [
+                {
+                    "period": p.period,
+                    "ptf_value": float(p.ptf_tl_per_mwh) if p.ptf_tl_per_mwh is not None else None,
+                    "status": p.status,
+                    "captured_at": p.captured_at.isoformat() if p.captured_at else None,
+                    "is_locked": bool(p.is_locked),
+                    "updated_by": p.updated_by,
+                    "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+                }
+                for p in result.items
+            ],
+        },
+        headers=_deprecation_headers(),
+    )
+
+
+@app.get(
+    "/admin/market-prices/deprecation-stats",
+    summary="Deprecated endpoint usage statistics",
+    description="Returns usage counts for deprecated alias endpoints.",
+)
+async def get_deprecation_stats(
+    _: str = Depends(require_admin_key),
+):
+    """
+    Deprecated endpoint usage statistics.
+
+    Returns:
+        {status: "ok", alias_usage_total: {post_form: int, get_legacy: int}}
+    """
+    return {
+        "status": "ok",
+        "alias_usage_total": get_alias_usage_total(),
     }
 
 
@@ -3019,57 +3402,185 @@ async def get_market_price(
 
 @app.post("/admin/market-prices")
 async def upsert_market_price(
-    period: str = Form(..., description="Dönem (YYYY-MM)"),
-    ptf_tl_per_mwh: float = Form(..., description="PTF (TL/MWh)"),
-    yekdem_tl_per_mwh: float = Form(default=0, description="YEKDEM (TL/MWh)"),
-    source_note: Optional[str] = Form(default=None, description="Kaynak notu"),
+    request: Request,
     db: Session = Depends(get_db),
-    admin_key: str = Depends(require_admin_key)
+    admin_key: str = Depends(require_admin_key),
 ):
     """
-    Piyasa fiyatlarını ekle veya güncelle.
+    Piyasa fiyatı ekle veya güncelle (JSON body).
     
     Requires: X-Admin-Key header
-    Kilitli dönemler güncellenemez (409 Conflict).
     
-    Args:
-        period: Dönem (YYYY-MM format)
-        ptf_tl_per_mwh: PTF fiyatı (TL/MWh)
-        yekdem_tl_per_mwh: YEKDEM fiyatı (TL/MWh)
+    JSON Body:
+        period: Dönem (YYYY-MM format) - zorunlu
+        value: PTF değeri (TL/MWh) - zorunlu
+        price_type: Fiyat tipi (default: PTF)
+        status: Status (default: provisional)
         source_note: Kaynak notu (opsiyonel)
-    """
-    from .market_prices import upsert_market_prices, get_market_prices
+        change_reason: Değişiklik nedeni (opsiyonel, güncelleme için zorunlu)
+        force_update: Final kayıt güncelleme izni (default: false)
     
-    # Kilitli dönem kontrolü
-    existing = get_market_prices(db, period)
-    if existing and existing.is_locked:
-        logger.warning(f"[ADMIN] Attempted to update locked period: {period}")
+    Returns:
+        {status: "ok", action: "created"|"updated", period: "YYYY-MM", warnings: []}
+    
+    Error Response:
+        {status: "error", error_code: "...", message: "...", field: "...", row_index: null, details: {}}
+    
+    Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7
+    """
+    from .market_price_admin_service import get_market_price_admin_service
+    from .market_price_validator import MarketPriceValidator
+    
+    # Parse JSON body
+    try:
+        body = await request.json()
+    except Exception:
         raise HTTPException(
-            status_code=409,
+            status_code=400,
             detail={
-                "error": "period_locked",
-                "message": f"Dönem {period} kilitli, güncellenemez. Önce kilidi kaldırın."
+                "status": "error",
+                "error_code": "INVALID_JSON",
+                "message": "Geçersiz JSON body.",
+                "field": None,
+                "row_index": None,
+                "details": {},
             }
         )
     
-    success, message = upsert_market_prices(
-        db=db,
-        period=period,
-        ptf_tl_per_mwh=ptf_tl_per_mwh,
-        yekdem_tl_per_mwh=yekdem_tl_per_mwh,
-        source_note=source_note,
-        updated_by="admin"  # TODO: Gerçek kullanıcı bilgisi
+    if not isinstance(body, dict):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "status": "error",
+                "error_code": "INVALID_JSON",
+                "message": "JSON body bir obje olmalı.",
+                "field": None,
+                "row_index": None,
+                "details": {},
+            }
+        )
+    
+    # Extract fields with defaults
+    period = body.get("period")
+    value = body.get("value")
+    price_type = body.get("price_type", "PTF")
+    status_val = body.get("status", "provisional")
+    source_note = body.get("source_note")
+    change_reason = body.get("change_reason")
+    force_update = body.get("force_update", False)
+    
+    # Required field checks
+    if period is None:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "status": "error",
+                "error_code": "INVALID_PERIOD_FORMAT",
+                "message": "Period alanı zorunludur.",
+                "field": "period",
+                "row_index": None,
+                "details": {},
+            }
+        )
+    
+    if value is None:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "status": "error",
+                "error_code": "VALUE_REQUIRED",
+                "message": "PTF değeri zorunludur.",
+                "field": "value",
+                "row_index": None,
+                "details": {},
+            }
+        )
+    
+    # Validate using MarketPriceValidator
+    validator = MarketPriceValidator()
+    validation_result, normalized = validator.validate_entry(
+        period=str(period),
+        value=value,
+        status=str(status_val),
+        price_type=str(price_type),
     )
     
-    if not success:
-        raise HTTPException(status_code=400, detail=message)
+    if not validation_result.is_valid:
+        # Return first validation error in standard error format
+        first_error = validation_result.errors[0]
+        
+        # Map validation error codes to HTTP status codes
+        business_rule_codes = {"PERIOD_LOCKED", "FINAL_RECORD_PROTECTED", "STATUS_DOWNGRADE_FORBIDDEN"}
+        http_status = 409 if first_error.error_code.value in business_rule_codes else 400
+        
+        raise HTTPException(
+            status_code=http_status,
+            detail={
+                "status": "error",
+                "error_code": first_error.error_code.value,
+                "message": first_error.message,
+                "field": first_error.field,
+                "row_index": None,
+                "details": {},
+            }
+        )
+    
+    # Set source_note and change_reason on normalized input
+    normalized.source_note = source_note
+    normalized.change_reason = change_reason
+    
+    # Determine updated_by from admin key context
+    updated_by = "admin"  # Default; in production, extract from auth token
+    
+    # Upsert via service
+    service = get_market_price_admin_service()
+    result = service.upsert_price(
+        db=db,
+        normalized=normalized,
+        updated_by=updated_by,
+        source="epias_manual",
+        change_reason=change_reason,
+        force_update=force_update,
+    )
+    
+    if not result.success:
+        # Map service error codes to HTTP status codes
+        error_code = result.error.error_code.value
+        conflict_codes = {"PERIOD_LOCKED", "FINAL_RECORD_PROTECTED", "STATUS_DOWNGRADE_FORBIDDEN"}
+        http_status = 409 if error_code in conflict_codes else 400
+        
+        raise HTTPException(
+            status_code=http_status,
+            detail={
+                "status": "error",
+                "error_code": error_code,
+                "message": result.error.message,
+                "field": result.error.field,
+                "row_index": None,
+                "details": {},
+            }
+        )
+    
+    # Record upsert metric
+    from .ptf_metrics import get_ptf_metrics
+    get_ptf_metrics().inc_upsert(normalized.status)
+    
+    # Determine action
+    if result.created:
+        action = "created"
+    elif result.changed:
+        action = "updated"
+    else:
+        action = "updated"  # no-op still counts as "updated" in response
+    
+    # Combine validation warnings with service warnings
+    all_warnings = validation_result.warnings + result.warnings
     
     return {
         "status": "ok",
-        "message": message,
-        "period": period,
-        "ptf_tl_per_mwh": ptf_tl_per_mwh,
-        "yekdem_tl_per_mwh": yekdem_tl_per_mwh
+        "action": action,
+        "period": normalized.period,
+        "warnings": all_warnings,
     }
 
 
@@ -3120,6 +3631,486 @@ async def unlock_market_price(
     
     logger.warning(f"[ADMIN] Period unlocked: {period}")
     return {"status": "ok", "message": f"Dönem {period} kilidi kaldırıldı"}
+
+
+@app.post("/admin/market-prices/import/preview")
+async def import_preview(
+    db: Session = Depends(get_db),
+    _: str = Depends(require_admin_key),
+    file: UploadFile = File(...),
+    price_type: str = Form(default="PTF"),
+    force_update: bool = Form(default=False),
+):
+    """
+    Import preview: CSV/JSON dosyasını parse et ve önizleme döndür.
+
+    Requires: X-Admin-Key header
+
+    Multipart Form:
+        file: CSV veya JSON dosyası
+        price_type: Fiyat tipi (default: PTF)
+        force_update: Final kayıt güncelleme izni (default: false)
+
+    Returns:
+        {status: "ok", preview: {total_rows, valid_rows, invalid_rows,
+         new_records, updates, unchanged, final_conflicts, errors: [...]}}
+
+    Requirements: 6.1, 6.2, 6.3, 6.4
+    """
+    from .bulk_importer import get_bulk_importer, ParseError
+
+    content_bytes = await file.read()
+
+    # Empty file check
+    if not content_bytes or not content_bytes.strip():
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "status": "error",
+                "error_code": "EMPTY_FILE",
+                "message": "Yüklenen dosya boş.",
+                "field": "file",
+                "row_index": None,
+                "details": {},
+            },
+        )
+
+    content = content_bytes.decode("utf-8", errors="replace")
+
+    # Detect file type from filename extension
+    filename = (file.filename or "").lower()
+    if filename.endswith(".json"):
+        file_type = "json"
+    elif filename.endswith(".csv"):
+        file_type = "csv"
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "status": "error",
+                "error_code": "PARSE_ERROR",
+                "message": "Desteklenmeyen dosya formatı. CSV veya JSON dosyası yükleyin.",
+                "field": "file",
+                "row_index": None,
+                "details": {},
+            },
+        )
+
+    importer = get_bulk_importer()
+
+    # Parse file
+    try:
+        if file_type == "csv":
+            rows = importer.parse_csv(content)
+        else:
+            rows = importer.parse_json(content)
+    except ParseError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "status": "error",
+                "error_code": "PARSE_ERROR",
+                "message": str(exc),
+                "field": "file",
+                "row_index": None,
+                "details": {"row_errors": exc.row_errors} if exc.row_errors else {},
+            },
+        )
+
+    # Generate preview
+    preview = importer.preview(
+        db=db,
+        rows=rows,
+        price_type=price_type,
+        force_update=force_update,
+    )
+
+    return {
+        "status": "ok",
+        "preview": {
+            "total_rows": preview.total_rows,
+            "valid_rows": preview.valid_rows,
+            "invalid_rows": preview.invalid_rows,
+            "new_records": preview.new_records,
+            "updates": preview.updates,
+            "unchanged": preview.unchanged,
+            "final_conflicts": preview.final_conflicts,
+            "errors": preview.errors,
+        },
+    }
+
+
+@app.post("/admin/market-prices/import/apply")
+async def import_apply(
+    db: Session = Depends(get_db),
+    _: str = Depends(require_admin_key),
+    file: UploadFile = File(...),
+    price_type: str = Form(default="PTF"),
+    force_update: bool = Form(default=False),
+    strict_mode: bool = Form(default=False),
+):
+    """
+    Import apply: CSV/JSON dosyasını parse et, doğrula ve kaydet.
+
+    Requires: X-Admin-Key header
+
+    Multipart Form:
+        file: CSV veya JSON dosyası
+        price_type: Fiyat tipi (default: PTF)
+        force_update: Final kayıt güncelleme izni (default: false)
+        strict_mode: Herhangi bir satır hatalıysa tüm batch'i reddet (default: false)
+
+    Returns:
+        {status: "ok", result: {success, imported_count, skipped_count,
+         error_count, details: [...]}}
+
+    Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8
+    """
+    from .bulk_importer import get_bulk_importer, ParseError
+
+    content_bytes = await file.read()
+
+    # Empty file check
+    if not content_bytes or not content_bytes.strip():
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "status": "error",
+                "error_code": "EMPTY_FILE",
+                "message": "Yüklenen dosya boş.",
+                "field": "file",
+                "row_index": None,
+                "details": {},
+            },
+        )
+
+    content = content_bytes.decode("utf-8", errors="replace")
+
+    # Detect file type from filename extension
+    filename = (file.filename or "").lower()
+    if filename.endswith(".json"):
+        file_type = "json"
+    elif filename.endswith(".csv"):
+        file_type = "csv"
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "status": "error",
+                "error_code": "PARSE_ERROR",
+                "message": "Desteklenmeyen dosya formatı. CSV veya JSON dosyası yükleyin.",
+                "field": "file",
+                "row_index": None,
+                "details": {},
+            },
+        )
+
+    importer = get_bulk_importer()
+
+    # Parse file
+    try:
+        if file_type == "csv":
+            rows = importer.parse_csv(content)
+        else:
+            rows = importer.parse_json(content)
+    except ParseError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "status": "error",
+                "error_code": "PARSE_ERROR",
+                "message": str(exc),
+                "field": "file",
+                "row_index": None,
+                "details": {"row_errors": exc.row_errors} if exc.row_errors else {},
+            },
+        )
+
+    # Apply import (with metrics)
+    from .ptf_metrics import get_ptf_metrics
+    ptf_metrics = get_ptf_metrics()
+
+    with ptf_metrics.time_import_apply():
+        result = importer.apply(
+            db=db,
+            rows=rows,
+            updated_by="admin",
+            price_type=price_type,
+            force_update=force_update,
+            strict_mode=strict_mode,
+        )
+
+    # Record row-level metrics
+    ptf_metrics.inc_import_rows("accepted", result.accepted_count)
+    ptf_metrics.inc_import_rows("rejected", result.rejected_count)
+
+    return {
+        "status": "ok",
+        "result": {
+            "success": result.success,
+            "imported_count": result.imported_count,
+            "skipped_count": result.skipped_count,
+            "error_count": result.error_count,
+            "details": result.details,
+        },
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HESAPLAMA İÇİN MARKET PRICE LOOKUP
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/market-prices/{price_type}/{period}")
+async def get_market_price_for_calculation(
+    price_type: str,
+    period: str,
+    db: Session = Depends(get_db),
+    _: str = Depends(require_api_key),
+):
+    """
+    Hesaplama için piyasa fiyatı getir (calculation lookup).
+
+    Path Parameters:
+        price_type: Fiyat tipi (PTF, SMF, YEKDEM vb.)
+        period: Dönem (YYYY-MM format)
+
+    Returns:
+        {period, value, price_type, status, is_provisional_used}
+
+    Error Responses:
+        400: Invalid period format, future period, invalid price type
+        404: Period not found
+
+    Requirements: 7.1, 7.2, 7.3, 7.5, 7.6, 7.7
+    """
+    from .market_price_admin_service import get_market_price_admin_service
+    from .market_price_validator import MarketPriceValidator
+
+    validator = MarketPriceValidator()
+
+    # Validate price_type
+    pt_result = validator.validate_price_type(price_type)
+    if not pt_result.is_valid:
+        first_error = pt_result.errors[0]
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "status": "error",
+                "error_code": first_error.error_code.value,
+                "message": first_error.message,
+                "field": first_error.field,
+                "row_index": None,
+                "details": {},
+            },
+        )
+
+    # Validate period format
+    period_result = validator.validate_period(period)
+    if not period_result.is_valid:
+        first_error = period_result.errors[0]
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "status": "error",
+                "error_code": first_error.error_code.value,
+                "message": first_error.message,
+                "field": first_error.field,
+                "row_index": None,
+                "details": {},
+            },
+        )
+
+    # Lookup via service
+    service = get_market_price_admin_service()
+    result, error = service.get_for_calculation(
+        db=db,
+        period=period,
+        price_type=price_type,
+    )
+
+    # Record lookup metric
+    from .ptf_metrics import get_ptf_metrics
+    ptf_metrics = get_ptf_metrics()
+    if error is not None:
+        ptf_metrics.inc_lookup(hit=False)
+        # Map error codes to HTTP status codes
+        error_code = error.error_code.value
+        if error_code == "PERIOD_NOT_FOUND":
+            http_status = 404
+        else:
+            http_status = 400
+
+        raise HTTPException(
+            status_code=http_status,
+            detail={
+                "status": "error",
+                "error_code": error_code,
+                "message": error.message,
+                "field": error.field,
+                "row_index": None,
+                "details": {},
+            },
+        )
+
+    ptf_metrics.inc_lookup(hit=True, status=result.status)
+
+    return {
+        "period": result.period,
+        "value": float(result.value),
+        "price_type": result.price_type,
+        "status": result.status,
+        "is_provisional_used": result.is_provisional_used,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DEPRECATED ALIASES (Backward Compatibility)
+# Plan: Bu endpoint'ler 2 release sonra kaldırılacaktır.
+# Yeni endpoint'leri kullanın:
+#   POST /admin/market-prices (JSON body)
+#   GET /admin/market-prices (pagination destekli)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Simple in-memory counter for deprecated endpoint usage tracking
+_deprecated_alias_usage: dict[str, int] = {
+    "post_form": 0,
+    "get_legacy": 0,
+}
+
+
+def get_alias_usage_total() -> dict[str, int]:
+    """Return current deprecated alias usage counts."""
+    return dict(_deprecated_alias_usage)
+
+
+def _deprecation_headers() -> dict[str, str]:
+    """Standard deprecation headers for deprecated endpoints."""
+    return {
+        "Deprecation": "true",
+        "Sunset": "2025-12-31",
+        "X-Deprecation-Notice": "This endpoint is deprecated and will be removed in 2 releases. Use the new JSON-based endpoints instead.",
+    }
+
+
+@app.post(
+    "/admin/market-prices/form",
+    deprecated=True,
+    summary="[DEPRECATED] Form-based piyasa fiyatı ekle/güncelle",
+    description=(
+        "⚠️ DEPRECATED: Bu endpoint 2 release sonra kaldırılacaktır. "
+        "Yeni JSON-based POST /admin/market-prices endpoint'ini kullanın.\n\n"
+        "Form-based (multipart) giriş → JSON-based endpoint'e yönlendirir."
+    ),
+)
+async def deprecated_upsert_market_price_form(
+    request: Request,
+    db: Session = Depends(get_db),
+    admin_key: str = Depends(require_admin_key),
+    period: str = Form(..., description="Dönem (YYYY-MM format)"),
+    value: float = Form(..., description="PTF değeri (TL/MWh)"),
+    price_type: str = Form(default="PTF", description="Fiyat tipi"),
+    status: str = Form(default="provisional", description="Status: provisional veya final"),
+    source_note: Optional[str] = Form(default=None, description="Kaynak notu"),
+    change_reason: Optional[str] = Form(default=None, description="Değişiklik nedeni"),
+    force_update: bool = Form(default=False, description="Final kayıt güncelleme izni"),
+):
+    """
+    [DEPRECATED] Form-based piyasa fiyatı ekle/güncelle.
+
+    ⚠️ Bu endpoint 2 release sonra kaldırılacaktır.
+    Yeni JSON-based POST /admin/market-prices endpoint'ini kullanın.
+
+    Bu alias, form-data'yı JSON body'ye dönüştürüp yeni endpoint'e yönlendirir.
+    Deprecation ve Sunset header'ları response'a eklenir.
+
+    Requirements: 1.6 (Backward Compatibility)
+    """
+    _deprecated_alias_usage["post_form"] += 1
+    logger.warning(
+        "[DEPRECATION] Form-based POST /admin/market-prices/form used. "
+        f"Total usage: {_deprecated_alias_usage['post_form']}. "
+        "Migrate to new JSON-based endpoint."
+    )
+
+    # Build JSON body from form fields and forward to the new JSON-based endpoint
+    from .market_price_admin_service import get_market_price_admin_service
+    from .market_price_validator import MarketPriceValidator
+
+    # Validate using MarketPriceValidator
+    validator = MarketPriceValidator()
+    validation_result, normalized = validator.validate_entry(
+        period=str(period),
+        value=value,
+        status=str(status),
+        price_type=str(price_type),
+    )
+
+    if not validation_result.is_valid:
+        first_error = validation_result.errors[0]
+        business_rule_codes = {"PERIOD_LOCKED", "FINAL_RECORD_PROTECTED", "STATUS_DOWNGRADE_FORBIDDEN"}
+        http_status = 409 if first_error.error_code.value in business_rule_codes else 400
+        raise HTTPException(
+            status_code=http_status,
+            detail={
+                "status": "error",
+                "error_code": first_error.error_code.value,
+                "message": first_error.message,
+                "field": first_error.field,
+                "row_index": None,
+                "details": {},
+            },
+        )
+
+    normalized.source_note = source_note
+    normalized.change_reason = change_reason
+
+    updated_by = "admin"
+    service = get_market_price_admin_service()
+    result = service.upsert_price(
+        db=db,
+        normalized=normalized,
+        updated_by=updated_by,
+        source="epias_manual",
+        change_reason=change_reason,
+        force_update=force_update,
+    )
+
+    if not result.success:
+        error_code = result.error.error_code.value
+        conflict_codes = {"PERIOD_LOCKED", "FINAL_RECORD_PROTECTED", "STATUS_DOWNGRADE_FORBIDDEN"}
+        http_status = 409 if error_code in conflict_codes else 400
+        raise HTTPException(
+            status_code=http_status,
+            detail={
+                "status": "error",
+                "error_code": error_code,
+                "message": result.error.message,
+                "field": result.error.field,
+                "row_index": None,
+                "details": {},
+            },
+        )
+
+    if result.created:
+        action = "created"
+    elif result.changed:
+        action = "updated"
+    else:
+        action = "updated"
+
+    all_warnings = validation_result.warnings + result.warnings
+
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(
+        content={
+            "status": "ok",
+            "action": action,
+            "period": normalized.period,
+            "warnings": all_warnings,
+        },
+        headers=_deprecation_headers(),
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

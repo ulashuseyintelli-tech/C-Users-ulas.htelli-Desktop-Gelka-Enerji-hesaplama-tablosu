@@ -161,7 +161,8 @@ export async function generateOfferPdf(
   customerName?: string,
   contactPerson?: string,
   offerDate?: string,
-  offerValidityDays?: number
+  offerValidityDays?: number,
+  tariffGroup?: string
 ): Promise<Blob> {
   const formData = new FormData();
   
@@ -177,6 +178,11 @@ export async function generateOfferPdf(
   formData.append('invoice_total', (calculation.current_total_with_vat_tl || 0).toString());
   formData.append('vendor', extraction.vendor || 'unknown');
   formData.append('invoice_period', extraction.invoice_period || '');
+  
+  // Tarife grubu
+  if (tariffGroup) {
+    formData.append('tariff_group', tariffGroup);
+  }
   
   // Calculation data - Mevcut fatura
   formData.append('current_energy_tl', calculation.current_energy_tl.toString());
@@ -246,7 +252,7 @@ export function clearAdminApiKey() {
 }
 
 // Admin axios instance
-const adminApi = axios.create({
+export const adminApi = axios.create({
   baseURL: API_BASE,
   headers: {
     'Content-Type': 'application/json',
@@ -265,6 +271,7 @@ adminApi.interceptors.request.use((config) => {
 // Market Prices (PTF/YEKDEM)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/** @deprecated Yeni market-prices modülündeki types.ts kullanın: MarketPriceRecord */
 export interface MarketPrice {
   period: string;
   ptf_tl_per_mwh: number;
@@ -273,22 +280,26 @@ export interface MarketPrice {
   is_locked: boolean;
 }
 
+/** @deprecated Yeni market-prices modülündeki types.ts kullanın: MarketPricesListResponse */
 export interface MarketPricesResponse {
   status: string;
   count: number;
   prices: MarketPrice[];
 }
 
+/** @deprecated Yeni API client: market-prices/marketPricesApi.ts → listMarketPrices() */
 export async function getMarketPrices(limit: number = 24): Promise<MarketPricesResponse> {
   const response = await adminApi.get(`/admin/market-prices?limit=${limit}`);
   return response.data;
 }
 
+/** @deprecated Yeni API client: market-prices/marketPricesApi.ts → listMarketPrices() */
 export async function getMarketPrice(period: string): Promise<MarketPrice> {
   const response = await adminApi.get(`/admin/market-prices/${period}`);
   return response.data;
 }
 
+/** @deprecated Yeni API client: market-prices/marketPricesApi.ts → upsertMarketPrice() */
 export async function upsertMarketPrice(
   period: string,
   ptf_tl_per_mwh: number,
@@ -309,11 +320,13 @@ export async function upsertMarketPrice(
   return response.data;
 }
 
+/** @deprecated Lock/unlock artık yeni modülde yönetilmiyor. Backward compat için korunuyor. */
 export async function lockMarketPrice(period: string): Promise<{ status: string; message: string }> {
   const response = await adminApi.post(`/admin/market-prices/${period}/lock`);
   return response.data;
 }
 
+/** @deprecated Lock/unlock artık yeni modülde yönetilmiyor. Backward compat için korunuyor. */
 export async function unlockMarketPrice(period: string): Promise<{ status: string; message: string }> {
   const response = await adminApi.post(`/admin/market-prices/${period}/unlock`);
   return response.data;

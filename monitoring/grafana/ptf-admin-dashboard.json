@@ -1,0 +1,401 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "type": "datasource",
+      "pluginId": "prometheus"
+    }
+  ],
+  "title": "PTF Admin Overview",
+  "uid": "ptf-admin-overview",
+  "tags": ["ptf-admin", "prometheus"],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "version": 1,
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "options": [],
+        "refresh": 1,
+        "regex": ""
+      },
+      {
+        "name": "job",
+        "type": "query",
+        "datasource": { "uid": "$datasource", "type": "prometheus" },
+        "query": "label_values(ptf_admin_api_request_total, job)",
+        "current": {},
+        "hide": 0,
+        "includeAll": true,
+        "multi": false,
+        "options": [],
+        "refresh": 2,
+        "regex": ""
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 100,
+      "title": "API Traffic & Health",
+      "type": "row",
+      "collapsed": true,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "panels": [
+        {
+          "id": 1,
+          "title": "API | Request Rate",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+          "datasource": { "uid": "$datasource", "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "sum(rate(ptf_admin_api_request_total{endpoint!=\"/metrics\", job=~\"$job\"}[5m])) by (endpoint, method, status_class)",
+              "legendFormat": "{{endpoint}} {{method}} {{status_class}}",
+              "refId": "A",
+              "datasource": { "uid": "$datasource", "type": "prometheus" }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "auto" }
+            },
+            "overrides": [
+              { "matcher": { "id": "byRegexp", "options": "2xx" }, "properties": [{ "id": "color", "value": { "fixedColor": "#73BF69", "mode": "fixed" } }] },
+              { "matcher": { "id": "byRegexp", "options": "4xx" }, "properties": [{ "id": "color", "value": { "fixedColor": "#FADE2A", "mode": "fixed" } }] },
+              { "matcher": { "id": "byRegexp", "options": "5xx" }, "properties": [{ "id": "color", "value": { "fixedColor": "#F2495C", "mode": "fixed" } }] },
+              { "matcher": { "id": "byRegexp", "options": "0xx" }, "properties": [{ "id": "color", "value": { "fixedColor": "#B877D9", "mode": "fixed" } }] }
+            ]
+          }
+        },
+        {
+          "id": 2,
+          "title": "API | Error Rate (4xx / 5xx / 0xx)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+          "datasource": { "uid": "$datasource", "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "sum(rate(ptf_admin_api_request_total{status_class=~\"4xx|5xx|0xx\", endpoint!=\"/metrics\", job=~\"$job\"}[5m])) by (status_class)",
+              "legendFormat": "{{status_class}}",
+              "refId": "A",
+              "datasource": { "uid": "$datasource", "type": "prometheus" }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 20, "pointSize": 5, "showPoints": "auto" }
+            },
+            "overrides": [
+              { "matcher": { "id": "byRegexp", "options": "4xx" }, "properties": [{ "id": "color", "value": { "fixedColor": "#FADE2A", "mode": "fixed" } }] },
+              { "matcher": { "id": "byRegexp", "options": "5xx" }, "properties": [{ "id": "color", "value": { "fixedColor": "#F2495C", "mode": "fixed" } }] },
+              { "matcher": { "id": "byRegexp", "options": "0xx" }, "properties": [{ "id": "color", "value": { "fixedColor": "#B877D9", "mode": "fixed" } }] }
+            ]
+          }
+        },
+        {
+          "id": 3,
+          "title": "API | P95 Latency",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+          "datasource": { "uid": "$datasource", "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(ptf_admin_api_request_duration_seconds_bucket{endpoint!=\"/metrics\", job=~\"$job\"}[5m])) by (le, endpoint))",
+              "legendFormat": "{{endpoint}}",
+              "refId": "A",
+              "datasource": { "uid": "$datasource", "type": "prometheus" }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "auto" }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 4,
+          "title": "API | /metrics Self-Exclude Check",
+          "description": "Should always be 0 or No Data. If non-zero, middleware self-exclude is broken.",
+          "type": "stat",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+          "datasource": { "uid": "$datasource", "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "sum(rate(ptf_admin_api_request_total{endpoint=\"/metrics\", job=~\"$job\"}[5m]))",
+              "legendFormat": "/metrics requests",
+              "refId": "A",
+              "datasource": { "uid": "$datasource", "type": "prometheus" }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "red", "value": 0.001 }
+                ]
+              },
+              "noValue": "OK (No Data)"
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+            "textMode": "auto",
+            "colorMode": "background",
+            "graphMode": "none"
+          }
+        }
+      ]
+    },
+    {
+      "id": 200,
+      "title": "Import / Upsert Business Health",
+      "type": "row",
+      "collapsed": true,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 },
+      "panels": [
+        {
+          "id": 5,
+          "title": "IMPORT | Upsert Rate by Status",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 19 },
+          "datasource": { "uid": "$datasource", "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "sum(rate(ptf_admin_upsert_total{job=~\"$job\"}[5m])) by (status)",
+              "legendFormat": "{{status}}",
+              "refId": "A",
+              "datasource": { "uid": "$datasource", "type": "prometheus" }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 15, "pointSize": 5, "showPoints": "auto" }
+            },
+            "overrides": [
+              { "matcher": { "id": "byRegexp", "options": "final" }, "properties": [{ "id": "color", "value": { "fixedColor": "#73BF69", "mode": "fixed" } }] },
+              { "matcher": { "id": "byRegexp", "options": "provisional" }, "properties": [{ "id": "color", "value": { "fixedColor": "#5794F2", "mode": "fixed" } }] }
+            ]
+          }
+        },
+        {
+          "id": 6,
+          "title": "IMPORT | Rows Accepted / Rejected",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 19 },
+          "datasource": { "uid": "$datasource", "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "sum(rate(ptf_admin_import_rows_total{job=~\"$job\"}[5m])) by (outcome)",
+              "legendFormat": "{{outcome}}",
+              "refId": "A",
+              "datasource": { "uid": "$datasource", "type": "prometheus" }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 15, "pointSize": 5, "showPoints": "auto" }
+            },
+            "overrides": [
+              { "matcher": { "id": "byRegexp", "options": "accepted" }, "properties": [{ "id": "color", "value": { "fixedColor": "#73BF69", "mode": "fixed" } }] },
+              { "matcher": { "id": "byRegexp", "options": "rejected" }, "properties": [{ "id": "color", "value": { "fixedColor": "#F2495C", "mode": "fixed" } }] }
+            ]
+          }
+        },
+        {
+          "id": 7,
+          "title": "IMPORT | Apply Duration P95",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 19 },
+          "datasource": { "uid": "$datasource", "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(ptf_admin_import_apply_duration_seconds_bucket{job=~\"$job\"}[5m])) by (le))",
+              "legendFormat": "p95",
+              "refId": "A",
+              "datasource": { "uid": "$datasource", "type": "prometheus" }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "auto" }
+            },
+            "overrides": []
+          }
+        }
+      ]
+    },
+    {
+      "id": 300,
+      "title": "Lookup / History",
+      "type": "row",
+      "collapsed": true,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 28 },
+      "panels": [
+        {
+          "id": 8,
+          "title": "LOOKUP | Hit / Miss Rate",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 29 },
+          "datasource": { "uid": "$datasource", "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "sum(rate(ptf_admin_lookup_total{job=~\"$job\"}[5m])) by (hit, status)",
+              "legendFormat": "hit={{hit}} status={{status}}",
+              "refId": "A",
+              "datasource": { "uid": "$datasource", "type": "prometheus" }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 15, "pointSize": 5, "showPoints": "auto" }
+            },
+            "overrides": [
+              { "matcher": { "id": "byRegexp", "options": "hit=true" }, "properties": [{ "id": "color", "value": { "fixedColor": "#73BF69", "mode": "fixed" } }] },
+              { "matcher": { "id": "byRegexp", "options": "hit=false" }, "properties": [{ "id": "color", "value": { "fixedColor": "#FADE2A", "mode": "fixed" } }] }
+            ]
+          }
+        },
+        {
+          "id": 9,
+          "title": "LOOKUP | History Query Rate",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 29 },
+          "datasource": { "uid": "$datasource", "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "sum(rate(ptf_admin_history_query_total{job=~\"$job\"}[5m]))",
+              "legendFormat": "queries/s",
+              "refId": "A",
+              "datasource": { "uid": "$datasource", "type": "prometheus" }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "auto" }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 10,
+          "title": "LOOKUP | History Query P95",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 29 },
+          "datasource": { "uid": "$datasource", "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(ptf_admin_history_query_duration_seconds_bucket{job=~\"$job\"}[5m])) by (le))",
+              "legendFormat": "p95",
+              "refId": "A",
+              "datasource": { "uid": "$datasource", "type": "prometheus" }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "auto" }
+            },
+            "overrides": []
+          }
+        }
+      ]
+    },
+    {
+      "id": 400,
+      "title": "Frontend Telemetry",
+      "type": "row",
+      "collapsed": true,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 38 },
+      "panels": [
+        {
+          "id": 11,
+          "title": "FE | Top Events (1h)",
+          "type": "bargauge",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 39 },
+          "datasource": { "uid": "$datasource", "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "topk(20, sum(increase(ptf_admin_frontend_events_total{job=~\"$job\"}[1h])) by (event_name))",
+              "legendFormat": "{{event_name}}",
+              "refId": "A",
+              "datasource": { "uid": "$datasource", "type": "prometheus" }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 100 },
+                  { "color": "red", "value": 500 }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+            "orientation": "horizontal",
+            "displayMode": "gradient",
+            "showUnfilled": true
+          }
+        },
+        {
+          "id": 12,
+          "title": "FE | Telemetry Endpoint Health",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 39 },
+          "datasource": { "uid": "$datasource", "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "sum(rate(ptf_admin_api_request_total{endpoint=\"/admin/telemetry/events\", job=~\"$job\"}[5m])) by (status_class)",
+              "legendFormat": "{{status_class}}",
+              "refId": "A",
+              "datasource": { "uid": "$datasource", "type": "prometheus" }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 15, "pointSize": 5, "showPoints": "auto" }
+            },
+            "overrides": [
+              { "matcher": { "id": "byRegexp", "options": "2xx" }, "properties": [{ "id": "color", "value": { "fixedColor": "#73BF69", "mode": "fixed" } }] },
+              { "matcher": { "id": "byRegexp", "options": "4xx" }, "properties": [{ "id": "color", "value": { "fixedColor": "#FADE2A", "mode": "fixed" } }] },
+              { "matcher": { "id": "byRegexp", "options": "5xx" }, "properties": [{ "id": "color", "value": { "fixedColor": "#F2495C", "mode": "fixed" } }] },
+              { "matcher": { "id": "byRegexp", "options": "0xx" }, "properties": [{ "id": "color", "value": { "fixedColor": "#B877D9", "mode": "fixed" } }] }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

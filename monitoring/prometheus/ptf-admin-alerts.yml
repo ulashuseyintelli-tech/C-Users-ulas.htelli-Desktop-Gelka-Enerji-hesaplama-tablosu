@@ -1,0 +1,141 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ptf-admin-alerts
+  labels:
+    app: ptf-admin
+    prometheus: kube-prometheus
+spec:
+  groups:
+    - name: ptf-admin-alerts
+      rules:
+        # ── S1: Scrape / Liveness ──────────────────────────────────
+        - alert: PTFAdminMetricsAbsent
+          expr: absent(ptf_admin_api_request_total)
+          for: 5m
+          labels:
+            severity: critical
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "PTF Admin metrikleri kayboldu"
+            description: "ptf_admin_api_request_total metriği 5 dakikadır Prometheus'ta görünmüyor. Pod crash, OOM kill veya deployment hatası olabilir."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#ptfadminmetricsabsent"
+
+        - alert: PTFAdminTargetDown
+          expr: up{job="ptf-admin"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "PTF Admin scrape target down"
+            description: "PTF Admin target 2 dakikadır down. Network policy, service endpoint değişikliği veya Prometheus config hatası olabilir."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#ptfadmintargetdown"
+
+        # ── S2: Error Spikes ───────────────────────────────────────
+        - alert: PTFAdmin5xxSpike
+          expr: >-
+            sum(rate(ptf_admin_api_request_total{status_class="5xx"}[5m]))
+            /
+            sum(rate(ptf_admin_api_request_total[5m]))
+            > 0.05
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "PTF Admin 5xx oranı %5 üzerinde"
+            description: "Son 5 dakikada 5xx oranı {{ $value | humanizePercentage }}. Unhandled exception, DB connection pool veya upstream timeout olabilir."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#ptfadmin5xxspike"
+
+        - alert: PTFAdminExceptionPath
+          expr: sum(rate(ptf_admin_api_request_total{status_class="0xx"}[5m])) > 0
+          for: 5m
+          labels:
+            severity: critical
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "PTF Admin exception path aktif (0xx)"
+            description: "Middleware exception path tetiklendi — response üretilmeden exception fırlatıldı. Acil müdahale gerekir."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#ptfadminexceptionpath"
+
+        # ── S3: Latency Regression ─────────────────────────────────
+        - alert: PTFAdminHighLatency
+          expr: >-
+            histogram_quantile(0.95,
+              sum(rate(ptf_admin_api_request_duration_seconds_bucket[5m])) by (le, endpoint)
+            ) > 2
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "PTF Admin P95 latency > 2s"
+            description: "Endpoint {{ $labels.endpoint }} P95 latency {{ $value }}s. DB slow query, connection pool exhaustion veya resource contention olabilir."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#ptfadminhighlatency"
+
+        - alert: PTFAdminTelemetryLatency
+          expr: >-
+            histogram_quantile(0.95,
+              sum(rate(ptf_admin_api_request_duration_seconds_bucket{endpoint="/admin/telemetry/events"}[5m])) by (le)
+            ) > 0.5
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "Telemetry endpoint P95 latency > 500ms"
+            description: "Telemetry ingestion P95 {{ $value }}s. Event ingestion bottleneck veya rate limiter misconfiguration olabilir."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#ptfadmintelemetrylatency"
+
+        - alert: PTFAdminImportLatency
+          expr: >-
+            histogram_quantile(0.95,
+              sum(rate(ptf_admin_import_apply_duration_seconds_bucket[5m])) by (le)
+            ) > 10
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "Import apply P95 latency > 10s"
+            description: "Import batch P95 {{ $value }}s. Large batch size, DB lock contention veya disk I/O olabilir."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#ptfadminimportlatency"
+
+        # ── S4: Abuse ──────────────────────────────────────────────
+        - alert: PTFAdminTelemetryAbuse
+          expr: >-
+            sum(rate(ptf_admin_api_request_total{endpoint="/admin/telemetry/events",status_class="4xx"}[5m])) * 60 > 10
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "Telemetry endpoint 4xx > 10 req/min"
+            description: "Telemetry endpoint'e yüksek 4xx trafiği ({{ $value }} req/min). Bot/scraper, misconfigured frontend veya rate limit trigger olabilir."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#ptfadmintelemetryabuse"
+
+        # ── S5: Import Quality ─────────────────────────────────────
+        - alert: PTFAdminImportRejectRatio
+          expr: >-
+            sum(rate(ptf_admin_import_rows_total{outcome="rejected"}[15m]))
+            /
+            sum(rate(ptf_admin_import_rows_total[15m]))
+            > 0.2
+          for: 15m
+          labels:
+            severity: warning
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "Import reject oranı > %20"
+            description: "Son 15 dakikada import reject oranı {{ $value | humanizePercentage }}. Veri format değişikliği, upstream data quality veya validation rule change olabilir."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#ptfadminimportrejectratio"
