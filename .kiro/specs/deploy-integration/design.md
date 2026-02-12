@@ -150,6 +150,8 @@ Kustomize binary'si CI'da mevcut olmalı. Test, `subprocess` ile `kustomize buil
 ## Bilinen Kısıtlamalar
 
 1. **Kustomize bağımlılığı:** CI'da `kustomize` binary'si gerekir. Yoksa deploy testleri skip edilir.
-2. **Runbook URL placeholder:** `<repo>` placeholder'ı kullanıcı tarafından düzenlenmelidir. Otomatik değildir.
-3. **Grafana sidecar varsayımı:** Dashboard provisioning, Grafana sidecar modeline bağlıdır. API-based provisioning farklı yapı gerektirir.
-4. **Tek namespace:** Tüm monitoring kaynakları aynı namespace'e deploy edilir. Cross-namespace senaryosu kapsam dışı.
+2. **`--load-restrictor=LoadRestrictionsNone` gerekli:** Base kustomization, `monitoring/grafana/` ve `monitoring/prometheus/` dizinlerindeki dosyalara `../../` ile referans verir. Kustomize v5 güvenlik kısıtlaması nedeniyle `--load-restrictor=LoadRestrictionsNone` flag'ı zorunludur.
+3. **`commonLabels` → `labels` migrasyonu:** Kustomize v5.7+ `commonLabels`'ı deprecated olarak işaretler. `labels` + `pairs` syntax'ı kullanılmıştır.
+4. **Runbook URL placeholder:** `<repo>` placeholder'ı kullanıcı tarafından düzenlenmelidir. Otomatik değildir.
+5. **Grafana sidecar varsayımı:** Dashboard provisioning, Grafana sidecar modeline bağlıdır. API-based provisioning farklı yapı gerektirir.
+6. **Tek namespace:** Tüm monitoring kaynakları aynı namespace'e deploy edilir. Cross-namespace senaryosu kapsam dışı.

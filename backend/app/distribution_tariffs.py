@@ -48,6 +48,11 @@ class TariffLookupResult:
 
 DISTRIBUTION_TARIFFS = [
     # ═══════════════════════════════════════════════════════════════════════════
+    # İSK - İletim Sistemi Kullanıcısı (dağıtım bedeli yok)
+    # ═══════════════════════════════════════════════════════════════════════════
+    DistributionTariff("isk_sanayi", "iletim", "iletim", 0.00000),   # İSK Sanayi (İletim)
+    
+    # ═══════════════════════════════════════════════════════════════════════════
     # OG (Orta Gerilim) - Çift Terim (ÇT)
     # ═══════════════════════════════════════════════════════════════════════════
     DistributionTariff("sanayi", "OG", "çift_terim", 0.81060),       # DSK Sanayi ÇT OG

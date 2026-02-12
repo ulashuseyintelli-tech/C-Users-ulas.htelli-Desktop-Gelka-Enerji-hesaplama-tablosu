@@ -101,8 +101,8 @@ Mevcut `PTFMetrics` sınıfını `prometheus_client` tiplerine migrate et, `/met
 - [x] 6. Checkpoint — Backend tamamlandı
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 7. Frontend telemetry modülü oluştur
-  - [ ] 7.1 `frontend/src/market-prices/telemetry.ts` — `trackEvent()` fonksiyonu, event buffer, flush mekanizması, `FLUSH_INTERVAL_MS`, `MAX_BATCH_SIZE` ve `MAX_BUFFER_SIZE` sabitleri
+- [-] 7. Frontend telemetry modülü oluştur
+  - [-] 7.1 `frontend/src/market-prices/telemetry.ts` — `trackEvent()` fonksiyonu, event buffer, flush mekanizması, `FLUSH_INTERVAL_MS`, `MAX_BATCH_SIZE` ve `MAX_BUFFER_SIZE` sabitleri
     - Fire-and-forget pattern: POST hatası → batch discard + console.warn, retry yok
     - Batching: flush interval veya max batch size'a ulaşınca POST gönder
     - **Buffer overflow koruması**: `MAX_BUFFER_SIZE` (200) aşılırsa en eski event'ler drop edilir + console.warn

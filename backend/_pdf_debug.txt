@@ -1,0 +1,1 @@
+{"customer_name": "Test Firma AS", "contact_person": "Ali Veli", "tariff_group": "Sanayi"}

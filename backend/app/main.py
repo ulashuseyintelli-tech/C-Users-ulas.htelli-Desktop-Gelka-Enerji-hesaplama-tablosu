@@ -1925,7 +1925,6 @@ def generate_pdf_simple(
     offer_validity_days: int = Form(15),  # Teklif geçerlilik süresi (gün)
 ):
     """Basit parametrelerle PDF oluştur - Frontend için"""
-    # DEBUG: Gelen değerleri logla
     logger.info(f"PDF Generation Request:")
     logger.info(f"  customer_name: '{customer_name}'")
     logger.info(f"  contact_person: '{contact_person}'")

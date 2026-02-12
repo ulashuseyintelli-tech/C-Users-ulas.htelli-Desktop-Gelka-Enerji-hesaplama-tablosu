@@ -147,6 +147,8 @@ def generate_offer_html(
     # Hitap metni
     if customer_name:
         greeting = f"Sayın {customer_name} Yetkilisi,"
+    elif contact_person:
+        greeting = f"Sayın {contact_person},"
     else:
         greeting = "Sayın Yetkili,"
     
@@ -487,6 +489,7 @@ def _generate_pdf_reportlab(
     customer_name: Optional[str] = None,
     customer_company: Optional[str] = None,
     offer_id: Optional[int] = None,
+    contact_person: Optional[str] = None,
 ) -> bytes:
     """Generate PDF using ReportLab (pure Python, works everywhere)."""
     from reportlab.pdfbase import pdfmetrics
@@ -639,7 +642,15 @@ def _generate_pdf_reportlab(
     elements.append(Paragraph("Enerji Tasarruf Teklifi", title_style))
     elements.append(Spacer(1, 0.1*cm))
     
-    elements.append(Paragraph("<b>Sayın Yetkili,</b>", letter_style))
+    # Hitap metni
+    if customer_name:
+        greeting = f"Sayın {customer_name} Yetkilisi,"
+    elif contact_person:
+        greeting = f"Sayın {contact_person},"
+    else:
+        greeting = "Sayın Yetkili,"
+    
+    elements.append(Paragraph(f"<b>{greeting}</b>", letter_style))
     elements.append(Spacer(1, 0.2*cm))
     
     elements.append(Paragraph(
@@ -648,6 +659,25 @@ def _generate_pdf_reportlab(
         letter_style
     ))
     elements.append(Spacer(1, 0.2*cm))
+    
+    # Müşteri bilgileri tablosu
+    if customer_name or contact_person:
+        cust_data = [
+            ["Firma Adı", customer_name or "-", "Yetkili Kişi", contact_person or "-"],
+        ]
+        cust_col = 4.25*cm
+        ct = Table(cust_data, colWidths=[cust_col, cust_col, cust_col, cust_col])
+        ct.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#F3F4F6')),
+            ('BACKGROUND', (2, 0), (2, -1), colors.HexColor('#F3F4F6')),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#E5E7EB')),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('FONTNAME', (0, 0), (-1, -1), font_name),
+            ('PADDING', (0, 0), (-1, -1), 8),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]))
+        elements.append(ct)
+        elements.append(Spacer(1, 0.2*cm))
     
     elements.append(Paragraph(
         f"Çalışma, aynı tüketim miktarı (<b>{consumption:,.0f} kWh</b>), aynı dağıtım bedelleri ve aynı vergi kalemleri esas alınarak yapılmış; "
@@ -796,6 +826,8 @@ def _generate_pdf_reportlab(
     ))
     elements.append(Spacer(1, 0.1*cm))
     
+    if contact_person:
+        elements.append(Paragraph(f"İlgili: {contact_person}", letter_style))
     elements.append(Paragraph("Bilgilerinize sunarız.", letter_style))
     elements.append(Paragraph("Saygılarımızla,", letter_style))
     elements.append(Paragraph("<b>Gelka Enerji</b>", letter_style))
@@ -876,7 +908,7 @@ def generate_offer_pdf_bytes(
     if REPORTLAB_AVAILABLE:
         try:
             logger.info("Attempting ReportLab PDF generation...")
-            pdf_bytes = _generate_pdf_reportlab(extraction, calculation, params, customer_name, customer_company, offer_id)
+            pdf_bytes = _generate_pdf_reportlab(extraction, calculation, params, customer_name, customer_company, offer_id, contact_person=contact_person)
             logger.info(f"Generated PDF with ReportLab: {len(pdf_bytes)} bytes for offer {offer_id}")
             return pdf_bytes
         except Exception as e:

@@ -50,7 +50,12 @@ th { background: #f5f5f5; text-align: left; font-weight: 600; }
 </div>
 </div>
 <div class="title">Enerji Tasarruf Teklifi</div>
-<p class="intro"><strong>{{ greeting }}</strong><br>{% if customer_name %}{{ customer_name }} için {% endif %}{{ tariff_group }} abone grubunuz için hazırlanan elektrik enerjisi tedarik teklifimizi bilgilerinize sunarız.</p>
+<p class="intro"><strong>{{ greeting }}</strong><br>Mevcut elektrik tüketim verileriniz ve tarafımıza iletilen fatura bilgileriniz esas alınarak yapılan analiz sonucunda, {{ tariff_group }} abone grubunuz için hazırlanan elektrik enerjisi tedarik teklifimizi bilgilerinize sunarız.</p>
+{% if customer_name or contact_person %}
+<table style="margin-bottom: 8px;">
+<tr><th style="width:15%">Firma Adı</th><td style="width:35%">{{ customer_name or '-' }}</td><th style="width:15%">Yetkili Kişi</th><td style="width:35%">{{ contact_person or '-' }}</td></tr>
+</table>
+{% endif %}
 <table class="cmp">
 <tr><th style="width:28%">Kalem</th><th style="width:24%">Mevcut</th><th style="width:24%">Teklif</th><th style="width:24%">Tasarruf</th></tr>
 <tr><td>Enerji Bedeli</td><td>{{ calc.current_energy_tl | currency }}</td><td>{{ calc.offer_energy_tl | currency }}</td><td>{{ (calc.current_energy_tl - calc.offer_energy_tl) | currency }}</td></tr>
@@ -64,7 +69,12 @@ th { background: #f5f5f5; text-align: left; font-weight: 600; }
 <table>
 <tr><th>Ağırlıklı PTF</th><td>{{ weighted_ptf | number(2) }} TL/MWh</td><th>YEKDEM</th><td>{{ yekdem | number(2) }} TL/MWh</td></tr>
 <tr><th>Anlaşma Çarpanı</th><td>{{ agreement_multiplier | number(2) }}</td><th>Teklif Birim Fiyat</th><td>{{ offer_unit_price | number(4) }} TL/kWh</td></tr>
-<tr><th>Tedarikçi</th><td>{{ vendor }}</td><th>Tüketim</th><td>{{ consumption_kwh | number }} kWh</td></tr>
+<tr><th>Mevcut Birim Fiyat</th><td>{{ current_unit_price | number(4) }} TL/kWh</td><th>Birim Fiyat Farkı</th><td>{{ (current_unit_price - offer_unit_price) | number(4) }} TL/kWh</td></tr>
+</table>
+<p style="font-size: 7.5pt; margin-bottom: 4px;"><strong>Fatura Bilgileri</strong></p>
+<table style="margin-bottom: 8px;">
+<tr><th>Tedarikçi</th><td>{{ vendor or 'Manuel Giriş' }}</td><th>Dönem</th><td>{{ invoice_period or '-' }}</td></tr>
+<tr><th>Tüketim</th><td>{{ consumption_kwh | number }} kWh</td><th>Tarife Grubu</th><td>{{ tariff_group }}</td></tr>
 </table>
 <div class="terms"><div class="terms-title">Ticari Şartlar</div>✓ Fatura vadesi +10 gün ✓ Teminat yok ✓ Güvence yok</div>
 <div class="sig">{% if contact_person %}İlgili: {{ contact_person }}<br>{% endif %}Bilgilerinize sunarız.<br>Saygılarımızla,<br><strong>Gelka Enerji</strong></div>

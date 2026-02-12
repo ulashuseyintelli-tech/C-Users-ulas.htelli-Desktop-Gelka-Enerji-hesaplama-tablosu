@@ -5,28 +5,31 @@ import AdminPanel from './AdminPanel';
 
 // EPDK Dağıtım Tarifeleri (Şubat 2026)
 const DISTRIBUTION_TARIFFS = [
-  // OG Çift Terim
-  { key: 'sanayi_og_cift', label: 'Sanayi OG Çift Terim', price: 0.81060, group: 'sanayi' },
-  { key: 'ticarethane_og_cift', label: 'Ticarethane OG Çift Terim', price: 1.26329, group: 'ticarethane' },
-  { key: 'mesken_og_cift', label: 'Mesken OG Çift Terim', price: 1.25129, group: 'mesken' },
-  { key: 'aydinlatma_og_cift', label: 'Aydınlatma OG Çift Terim', price: 1.21249, group: 'aydinlatma' },
-  { key: 'tarimsal_og_cift', label: 'Tarımsal OG Çift Terim', price: 1.04042, group: 'tarimsal' },
-  
-  // OG Tek Terim
-  { key: 'sanayi_og_tek', label: 'Sanayi OG Tek Terim', price: 0.89537, group: 'sanayi' },
-  { key: 'ticarethane_og_tek', label: 'Ticarethane OG Tek Terim', price: 1.57581, group: 'ticarethane' },
-  { key: 'mesken_og_tek', label: 'Mesken OG Tek Terim', price: 1.54502, group: 'mesken' },
-  { key: 'aydinlatma_og_tek', label: 'Aydınlatma OG Tek Terim', price: 1.51248, group: 'aydinlatma' },
-  { key: 'tarimsal_og_tek', label: 'Tarımsal OG Tek Terim', price: 1.29543, group: 'tarimsal' },
-  
-  // AG Tek Terim
-  { key: 'sanayi_ag_tek', label: 'Sanayi AG Tek Terim', price: 1.38532, group: 'sanayi' },
-  { key: 'ticarethane_ag_tek', label: 'Ticarethane AG Tek Terim', price: 1.87741, group: 'ticarethane' },
-  { key: 'mesken_ag_tek', label: 'Mesken AG Tek Terim', price: 1.83617, group: 'mesken' },
-  { key: 'mesken_sehit_gazi_ag_tek', label: 'Mesken Şehit Gazi AG Tek Terim', price: 1.03557, group: 'mesken' },
-  { key: 'tarimsal_ag_tek', label: 'Tarımsal AG Tek Terim', price: 1.54263, group: 'tarimsal' },
-  { key: 'aydinlatma_ag_tek', label: 'Aydınlatma AG Tek Terim', price: 1.79815, group: 'aydinlatma' },
-  
+  // EPDK Dağıtım Tarifeleri — Şubat 2026 (24 satır, tablodaki sırayla)
+  { key: 'isk_sanayi', label: 'İSK Sanayi', price: 0.00000, group: 'sanayi' },
+  { key: 'dsk_sanayi_ct_og', label: 'DSK Sanayi ÇT OG', price: 0.81060, group: 'sanayi' },
+  { key: 'dsk_sanayi_tt_og', label: 'DSK Sanayi TT OG', price: 0.89537, group: 'sanayi' },
+  { key: 'dsk_ticarethane_ct_og', label: 'DSK Ticarethane ÇT OG', price: 1.26329, group: 'ticarethane' },
+  { key: 'dsk_mesken_ct_og', label: 'DSK Mesken ÇT OG', price: 1.25129, group: 'mesken' },
+  { key: 'dsk_aydinlatma_ct_og', label: 'DSK Aydınlatma ÇT OG', price: 1.21249, group: 'aydinlatma' },
+  { key: 'dsk_tarimsal_ct_og', label: 'DSK Tarımsal ÇT OG', price: 1.04042, group: 'tarimsal' },
+  { key: 'dsk_sanayi_ct_og_2', label: 'DSK Sanayi ÇT OG', price: 0.81060, group: 'sanayi' },
+  { key: 'dsk_sanayi_tt_og_2', label: 'DSK Sanayi TT OG', price: 0.89537, group: 'sanayi' },
+  { key: 'dsk_ticarethane_tt_og', label: 'DSK Ticarethane TT OG', price: 1.57581, group: 'ticarethane' },
+  { key: 'dsk_mesken_tt_og', label: 'DSK Mesken TT OG', price: 1.54502, group: 'mesken' },
+  { key: 'dsk_aydinlatma_tt_og', label: 'DSK Aydınlatma TT OG', price: 1.51248, group: 'aydinlatma' },
+  { key: 'dsk_tarimsal_tt_og', label: 'DSK Tarımsal TT OG', price: 1.29543, group: 'tarimsal' },
+  { key: 'dsk_sanayi_ct_og_3', label: 'DSK Sanayi ÇT OG', price: 0.81060, group: 'sanayi' },
+  { key: 'dsk_sanayi_tt_og_3', label: 'DSK Sanayi TT OG', price: 0.89537, group: 'sanayi' },
+  { key: 'dsk_sanayi_tt_ag', label: 'DSK Sanayi TT AG', price: 1.38532, group: 'sanayi' },
+  { key: 'dsk_ticarethane_tt_ag', label: 'DSK Ticarethane TT AG', price: 1.87741, group: 'ticarethane' },
+  { key: 'dsk_ticarethane_tt_ag_2', label: 'DSK Ticarethane TT AG', price: 1.87741, group: 'ticarethane' },
+  { key: 'dsk_ticarethane_tt_ag_3', label: 'DSK Ticarethane TT AG', price: 1.87741, group: 'ticarethane' },
+  { key: 'dsk_mesken_tt_ag', label: 'DSK Mesken TT AG', price: 1.83617, group: 'mesken' },
+  { key: 'dsk_mesken_sehit_gazi', label: 'DSK Mesken Şehit Gazi', price: 1.03557, group: 'mesken' },
+  { key: 'dsk_mesken_tt_ag_2', label: 'DSK Mesken TT AG', price: 1.83617, group: 'mesken' },
+  { key: 'dsk_tarimsal_tt_ag', label: 'DSK Tarımsal TT AG', price: 1.54263, group: 'tarimsal' },
+  { key: 'dsk_aydinlatma_tt_ag', label: 'DSK Aydınlatma TT AG', price: 1.79815, group: 'aydinlatma' },
   // Manuel giriş
   { key: 'custom', label: 'Manuel Giriş', price: 0, group: 'custom' },
 ];
@@ -291,6 +294,19 @@ function App() {
       distribution_unit_price: distUnitPrice,  // UI'da göstermek için
     };
   }, [result?.extraction, result?.calculation, ptfPrice, yekdemPrice, multiplier, getDistributionUnitPrice, manualMode, manualValues, btvRate, vatRate]);
+
+  // Dağıtım bedeli otomatik hesaplama: dağıtım birim fiyatı × kWh
+  useEffect(() => {
+    if (!manualMode) return;
+    const distPrice = getDistributionUnitPrice();
+    const kwh = manualValues.consumption_kwh;
+    if (distPrice > 0 && kwh > 0) {
+      const autoVal = distPrice * kwh;
+      if (Math.abs(manualValues.current_distribution_tl - autoVal) > 0.01) {
+        setManualValues(prev => ({...prev, current_distribution_tl: autoVal}));
+      }
+    }
+  }, [manualMode, manualValues.consumption_kwh, getDistributionUnitPrice]);
 
   // Dönem değiştiğinde PTF/YEKDEM fiyatlarını otomatik çek
   useEffect(() => {
@@ -788,7 +804,7 @@ function App() {
                     <option value="">Faturadan (Otomatik)</option>
                     {DISTRIBUTION_TARIFFS.map((tariff) => (
                       <option key={tariff.key} value={tariff.key}>
-                        {tariff.label} {tariff.key !== 'custom' ? `(${tariff.price.toFixed(6)})` : ''}
+                        {tariff.label} {tariff.key !== 'custom' ? `— ${(tariff.price * 1000).toFixed(2)} kr/kWh` : ''}
                       </option>
                     ))}
                   </select>
@@ -806,9 +822,10 @@ function App() {
                   )}
                   
                   {liveCalculation && (
-                    <p className="text-xs text-gray-500 mt-1">
-                      Kullanılan: <span className="font-medium">{liveCalculation.distribution_unit_price.toFixed(6)} TL/kWh</span>
-                    </p>
+                    <div className="text-xs text-gray-500 mt-1 space-y-0.5">
+                      <p>Birim Fiyat: <span className="font-medium text-gray-700">{(liveCalculation.distribution_unit_price * 1000).toFixed(2)} kr/kWh</span></p>
+                      <p>Dağıtım Bedeli: <span className="font-medium text-gray-900">{formatNumber(liveCalculation.offer_distribution_tl)} TL</span></p>
+                    </div>
                   )}
                 </div>
                 
@@ -1066,7 +1083,7 @@ function App() {
                   {manualMode ? (
                     /* Manuel Giriş Formu */
                     <div className="space-y-3">
-                      <div className="grid grid-cols-4 gap-2">
+                      <div className="grid grid-cols-3 gap-2">
                         <div>
                           <label className="text-xs text-gray-500 block mb-1">Tedarikçi</label>
                           <input
@@ -1110,16 +1127,6 @@ function App() {
                             placeholder="168330"
                           />
                         </div>
-                        <div>
-                          <label className="text-xs text-gray-500 block mb-1">Tarife Grubu</label>
-                          <input
-                            type="text"
-                            className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500"
-                            value={manualValues.tariff_group}
-                            onChange={(e) => setManualValues({...manualValues, tariff_group: e.target.value})}
-                            placeholder="Sanayi OG"
-                          />
-                        </div>
                       </div>
                       
                       <div className="pt-2 border-t border-gray-100">
@@ -1143,14 +1150,17 @@ function App() {
                             <label className="text-xs text-gray-500 block mb-1">Dağıtım Bedeli</label>
                             <input
                               type="text"
-                              className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500"
-                              placeholder="33098,73"
-                              defaultValue=""
-                              onBlur={(e) => {
-                                const val = parseNumber(e.target.value);
-                                setManualValues({...manualValues, current_distribution_tl: val});
-                                e.target.value = val ? formatNumber(val) : '';
-                              }}
+                              className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 bg-gray-50"
+                              value={(() => {
+                                const distPrice = getDistributionUnitPrice();
+                                const kwh = manualValues.consumption_kwh;
+                                if (distPrice > 0 && kwh > 0) {
+                                  return formatNumber(distPrice * kwh);
+                                }
+                                return manualValues.current_distribution_tl ? formatNumber(manualValues.current_distribution_tl) : '';
+                              })()}
+                              readOnly
+                              title="Dağıtım birim fiyatı × kWh otomatik hesaplanır"
                             />
                           </div>
                           <div>
@@ -1249,7 +1259,7 @@ function App() {
                   {/* Dağıtım + Validasyon - Tek satır */}
                   <div className="mt-2 pt-2 border-t border-gray-100 flex items-center justify-between text-xs">
                     <div className="flex items-center gap-4">
-                      <span className="text-gray-500">Dağıtım: <span className="font-medium text-gray-900">{liveCalculation?.distribution_unit_price?.toFixed(6)} TL/kWh</span></span>
+                      <span className="text-gray-500">Dağıtım: <span className="font-medium text-gray-900">{((liveCalculation?.distribution_unit_price || 0) * 1000).toFixed(2)} kr/kWh</span></span>
                       {manualMode ? (
                         <span className="text-amber-600 font-medium">✏️ Manuel Giriş Aktif</span>
                       ) : (

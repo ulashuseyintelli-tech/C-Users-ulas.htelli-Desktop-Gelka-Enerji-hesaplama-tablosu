@@ -190,7 +190,7 @@ class TestProperty7StatusTransitionRules:
         assert result.success is False
         assert result.error.error_code == ServiceErrorCode.STATUS_DOWNGRADE_FORBIDDEN
     
-    @settings(max_examples=100)
+    @settings(max_examples=100, database=None)
     @given(valid_value_strategy())
     def test_final_to_final_same_value_noop(self, value):
         """

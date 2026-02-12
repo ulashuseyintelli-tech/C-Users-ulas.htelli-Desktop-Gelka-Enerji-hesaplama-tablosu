@@ -1043,7 +1043,7 @@ class TestProperty13ImportPreviewAccuracy:
     **Validates: Requirements 6.1, 6.2, 6.3**
     """
 
-    @settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow])
+    @settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow], database=None)
     @given(scenario=preview_scenario_strategy())
     def test_preview_counts_match_expected(self, scenario):
         """Property 13: For any set of valid rows with known DB state,
