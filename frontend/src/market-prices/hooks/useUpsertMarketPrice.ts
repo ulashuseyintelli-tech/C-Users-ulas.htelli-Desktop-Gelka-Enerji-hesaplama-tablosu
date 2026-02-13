@@ -17,6 +17,7 @@ import { useState, useCallback } from 'react';
 import axios from 'axios';
 import { upsertMarketPrice } from '../marketPricesApi';
 import { parseFieldErrors } from '../utils';
+import { trackEvent } from '../telemetry';
 import type {
   UpsertMarketPriceRequest,
   UpsertMarketPriceResponse,
@@ -33,6 +34,13 @@ export function useUpsertMarketPrice() {
       // Operational debug log — Requirement 11.3
       console.log('[PTF Upsert]', req);
 
+      // Telemetry: upsert submit — Requirement 5.1
+      trackEvent('ptf_admin.upsert_submit', {
+        period: req.period,
+        price_type: req.price_type,
+        status: req.status,
+      });
+
       setLoading(true);
       setError(null);
       setFieldErrors({});
@@ -42,6 +50,10 @@ export function useUpsertMarketPrice() {
         // Success — clear all error state
         setError(null);
         setFieldErrors({});
+
+        // Telemetry: upsert success — Requirement 5.2
+        trackEvent('ptf_admin.upsert_success', { action: response.action });
+
         return response;
       } catch (err: unknown) {
         // Extract ApiErrorResponse from axios error
@@ -68,6 +80,9 @@ export function useUpsertMarketPrice() {
         // Always set the global error state so the component can decide
         // whether to show a toast (for errors without field mapping)
         setError(apiError);
+
+        // Telemetry: upsert error — Requirement 5.3
+        trackEvent('ptf_admin.upsert_error', { error_code: apiError.error_code });
 
         throw err;
       } finally {

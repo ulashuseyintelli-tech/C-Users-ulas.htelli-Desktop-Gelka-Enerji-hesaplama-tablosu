@@ -86,14 +86,14 @@ Mevcut PTF Admin Prometheus metriklerini operasyonel hale getiren üç statik do
     - Her bölümde: severity, PromQL, olası nedenler (≥3), ilk 3 kontrol, müdahale adımları
     - _Requirements: 12.1, 12.2, 12.3, 12.4, 12.5_
 
-- [-] 7. Yapısal doğrulama testlerini yaz
+- [x] 7. Yapısal doğrulama testlerini yaz
   - [x] 7.1 Dashboard yapısal testlerini yaz (`monitoring/tests/test_dashboard_structure.py`)
     - Dashboard JSON parse ve required key kontrolü
     - Datasource variable kontrolü, time range ve refresh kontrolü
     - Belirli PromQL sorgularının varlığı (her panel için)
     - _Requirements: 1.2, 1.3, 1.4, 2.2, 2.3, 2.4, 3.2, 3.3, 3.4, 4.2, 4.3, 5.1, 5.2, 5.4_
 
-  - [ ]* 7.2 Dashboard property testlerini yaz
+  - [x] 7.2 Dashboard property testlerini yaz
     - **Property 1: Dashboard Row Panel Sayısı** — her row için minimum panel sayısı kontrolü
     - **Validates: Requirements 1.1, 2.1, 3.1, 4.1**
     - **Property 2: Self-Exclude Doğrulaması** — PromQL'lerde /metrics filtresi kontrolü
@@ -109,7 +109,7 @@ Mevcut PTF Admin Prometheus metriklerini operasyonel hale getiren üç statik do
     - Alert group adı kontrolü
     - _Requirements: 6.1, 6.2, 7.1, 7.2, 8.1, 8.2, 8.3, 9.1, 10.1, 11.1, 11.2_
 
-  - [ ]* 7.4 Alert rules property testlerini yaz
+  - [x] 7.4 Alert rules property testlerini yaz
     - **Property 5: Alert Rule Tamamlığı** — her rule'da required labels + annotations kontrolü
     - **Validates: Requirements 6.3, 7.3, 8.4, 9.2, 10.2, 11.3, 11.4**
     - **Property 6: PrometheusRule CRD Geçerliliği** — apiVersion + kind kontrolü
@@ -119,7 +119,7 @@ Mevcut PTF Admin Prometheus metriklerini operasyonel hale getiren üç statik do
     - Runbook'ta her alert için bölüm varlığı kontrolü
     - _Requirements: 12.1, 12.5_
 
-  - [ ]* 7.6 Runbook property testlerini yaz
+  - [x] 7.6 Runbook property testlerini yaz
     - **Property 7: Runbook-Alert Kapsam Eşleştirmesi** — YAML'daki her alert için runbook bölümü kontrolü
     - **Validates: Requirements 12.1, 12.5**
     - **Property 8: Runbook Bölüm Tamamlığı** — her bölümde ≥3 neden, ≥3 kontrol, ≥1 müdahale

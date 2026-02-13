@@ -15,6 +15,7 @@
 import { useState, useCallback } from 'react';
 import axios from 'axios';
 import { previewBulkImport } from '../marketPricesApi';
+import { trackEvent } from '../telemetry';
 import type { BulkImportPreviewResponse, ApiErrorResponse } from '../types';
 
 export function useBulkImportPreview() {
@@ -29,6 +30,12 @@ export function useBulkImportPreview() {
     ): Promise<BulkImportPreviewResponse> => {
       setLoading(true);
       setError(null);
+
+      // Telemetry: bulk import start — Requirement 5.4
+      trackEvent('ptf_admin.bulk_import_start', {
+        file_type: file.name.split('.').pop() ?? 'unknown',
+        row_count: 0, // actual count unknown at preview time
+      });
 
       try {
         const response = await previewBulkImport(file, priceType, forceUpdate);

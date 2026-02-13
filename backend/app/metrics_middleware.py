@@ -4,15 +4,16 @@ HTTP Request Metrics Middleware.
 Tracks per-request count and duration via PTFMetrics.
 Excludes /metrics endpoint to prevent infinite recursion.
 
-Endpoint label uses 3-level fallback for low cardinality:
+Endpoint label uses centralized endpoint_normalization module (3-level fallback):
   Level 1: route.path template (e.g. /admin/market-prices/{period})
-  Level 2: sanitized bucket — first 2 segments + /*
+  Level 2: canonicalized bucket — dynamic segments replaced
   Level 3: unmatched:{sanitized} for 404s
 
 Exception path: handler exception → status_class="0xx" (no response produced).
 Duration is still observed so that latency of crashing requests is visible.
 
 Feature: telemetry-unification, Task 3.2 + Task 7.1
+Updated: ops-guard, Task 3.1 — centralized normalization
 """
 
 import time
@@ -21,13 +22,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-
-def _sanitize_path(path: str) -> str:
-    """Reduce path to first 2 segments + wildcard for low cardinality."""
-    segments = [s for s in path.split("/") if s]
-    if len(segments) <= 2:
-        return path
-    return "/" + "/".join(segments[:2]) + "/*"
+from .endpoint_normalization import normalize_endpoint, sanitize_path, validate_label
 
 
 class MetricsMiddleware(BaseHTTPMiddleware):
@@ -58,19 +53,12 @@ class MetricsMiddleware(BaseHTTPMiddleware):
             metrics = get_ptf_metrics()
 
             if response is not None:
-                # Normal path — 3-level endpoint label normalization
-                route = request.scope.get("route")
-                if route:
-                    endpoint = route.path
-                elif response.status_code == 404:
-                    endpoint = f"unmatched:{_sanitize_path(request.url.path)}"
-                else:
-                    endpoint = _sanitize_path(request.url.path)
-
+                normalized = normalize_endpoint(request, response.status_code)
+                endpoint = normalized.template
                 status_code = response.status_code
             else:
                 # Exception path — no response produced
-                endpoint = _sanitize_path(request.url.path)
+                endpoint = validate_label(sanitize_path(request.url.path))
                 status_code = 0  # → normalizes to "0xx"
 
             metrics.inc_api_request(endpoint, request.method, status_code)

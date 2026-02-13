@@ -14,6 +14,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { fetchHistory } from '../marketPricesApi';
+import { trackEvent } from '../telemetry';
 import type { AuditHistoryEntry, ApiErrorResponse } from '../types';
 
 export function useAuditHistory(period: string | null, priceType: string = 'PTF') {
@@ -32,6 +33,9 @@ export function useAuditHistory(period: string | null, priceType: string = 'PTF'
       setError(null);
       return;
     }
+
+    // Telemetry: history open — Requirement 5.7
+    trackEvent('ptf_admin.history_open', { period, price_type: priceType });
 
     // Abort previous request
     if (abortControllerRef.current) {

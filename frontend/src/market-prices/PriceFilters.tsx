@@ -1,6 +1,7 @@
 import React, { useRef, useCallback, useEffect } from 'react';
 import type { FilterState } from './types';
 import { STATUS_LABELS } from './constants';
+import { trackEvent } from './telemetry';
 
 export interface PriceFiltersProps {
   filters: FilterState;
@@ -38,10 +39,12 @@ export const PriceFilters: React.FC<PriceFiltersProps> = ({
         clearTimeout(debounceRef.current);
       }
       debounceRef.current = setTimeout(() => {
+        // Telemetry: filter change — Requirement 5.8
+        trackEvent('ptf_admin.filter_change', { ...filters, ...update });
         onFilterChange(update);
       }, DEBOUNCE_MS);
     },
-    [onFilterChange],
+    [onFilterChange, filters],
   );
 
   const handleStatusChange = (e: React.ChangeEvent<HTMLSelectElement>) => {

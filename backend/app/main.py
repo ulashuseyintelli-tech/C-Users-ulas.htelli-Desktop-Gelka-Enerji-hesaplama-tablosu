@@ -271,6 +271,10 @@ async def startup_event():
     # Sprint 8.9.1: Pilot guard config logging
     from .pilot_guard import log_pilot_config
     log_pilot_config()
+
+    # Ops-Guard: Load guard config at startup (Feature: ops-guard, Task 2.2)
+    from .guard_config import load_guard_config
+    load_guard_config()
     
     # Sample market prices data (dev/test için)
     _add_sample_market_prices()
@@ -411,6 +415,10 @@ app.add_middleware(
 # ── Metrics Middleware ────────────────────────────────────────────────────────
 from .metrics_middleware import MetricsMiddleware
 app.add_middleware(MetricsMiddleware)
+
+# ── Ops-Guard Middleware (no-op skeleton — Feature: ops-guard, Task 2.2) ──────
+from .ops_guard_middleware import OpsGuardMiddleware
+app.add_middleware(OpsGuardMiddleware)
 
 
 # ── Prometheus Metrics Endpoint ───────────────────────────────────────────────

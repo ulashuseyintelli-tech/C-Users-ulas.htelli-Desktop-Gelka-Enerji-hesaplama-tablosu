@@ -15,6 +15,7 @@
 import { useState, useCallback } from 'react';
 import axios from 'axios';
 import { applyBulkImport } from '../marketPricesApi';
+import { trackEvent } from '../telemetry';
 import type { BulkImportApplyResponse, ApiErrorResponse } from '../types';
 
 export function useBulkImportApply() {
@@ -47,6 +48,14 @@ export function useBulkImportApply() {
           strictMode,
         );
         setError(null);
+
+        // Telemetry: bulk import complete — Requirement 5.5
+        trackEvent('ptf_admin.bulk_import_complete', {
+          imported_count: response.result.imported_count,
+          skipped_count: response.result.skipped_count,
+          error_count: response.result.error_count,
+        });
+
         return response;
       } catch (err: unknown) {
         let apiError: ApiErrorResponse;
@@ -62,6 +71,10 @@ export function useBulkImportApply() {
         }
 
         setError(apiError);
+
+        // Telemetry: bulk import error — Requirement 5.6
+        trackEvent('ptf_admin.bulk_import_error', { error_code: apiError.error_code });
+
         throw err;
       } finally {
         setLoading(false);

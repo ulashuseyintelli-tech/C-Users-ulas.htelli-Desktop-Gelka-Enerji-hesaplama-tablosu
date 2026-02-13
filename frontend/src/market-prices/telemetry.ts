@@ -116,3 +116,8 @@ export function _resetForTesting(): void {
 export function _getBuffer(): readonly TelemetryEvent[] {
   return [...eventBuffer];
 }
+
+/** Directly set buffer contents — for test isolation only */
+export function _setBufferForTesting(events: TelemetryEvent[]): void {
+  eventBuffer = [...events];
+}

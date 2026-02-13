@@ -23,7 +23,7 @@ import time
 from contextlib import contextmanager
 from typing import Dict, Generator, Optional
 
-from prometheus_client import CollectorRegistry, Counter, Histogram, generate_latest
+from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram, generate_latest
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +99,64 @@ class PTFMetrics:
             "ptf_admin_frontend_events_total",
             "Frontend telemetry events",
             labelnames=["event_name"],
+            registry=self._registry,
+        )
+
+        # ── Ops-Guard metrics (Feature: ops-guard, Task 1.2) ─────────────
+        self._guard_config_fallback_total = Counter(
+            "ptf_admin_guard_config_fallback_total",
+            "Guard config validation fallback count",
+            registry=self._registry,
+        )
+        self._guard_config_schema_mismatch_total = Counter(
+            "ptf_admin_guard_config_schema_mismatch_total",
+            "Guard config schema mismatch count",
+            registry=self._registry,
+        )
+        self._guard_config_loaded = Gauge(
+            "ptf_admin_guard_config_loaded",
+            "Active guard config (1=loaded)",
+            labelnames=["schema_version", "config_version"],
+            registry=self._registry,
+        )
+        self._slo_violation_total = Counter(
+            "ptf_admin_slo_violation_total",
+            "SLO violation events",
+            labelnames=["slo_name"],
+            registry=self._registry,
+        )
+        self._sentinel_impossible_state_total = Counter(
+            "ptf_admin_sentinel_impossible_state_total",
+            "Impossible state sentinel counter",
+            registry=self._registry,
+        )
+        self._killswitch_state = Gauge(
+            "ptf_admin_killswitch_state",
+            "Kill-switch state (1=active, 0=passive)",
+            labelnames=["switch_name"],
+            registry=self._registry,
+        )
+        self._killswitch_error_total = Counter(
+            "ptf_admin_killswitch_error_total",
+            "Kill-switch internal error count",
+            labelnames=["endpoint_class", "error_type"],
+            registry=self._registry,
+        )
+        self._killswitch_fallback_open_total = Counter(
+            "ptf_admin_killswitch_fallback_open_total",
+            "Kill-switch fail-open fallback count",
+            registry=self._registry,
+        )
+        self._rate_limit_total = Counter(
+            "ptf_admin_rate_limit_total",
+            "Rate limit decisions",
+            labelnames=["endpoint", "decision"],
+            registry=self._registry,
+        )
+        self._circuit_breaker_state = Gauge(
+            "ptf_admin_circuit_breaker_state",
+            "Circuit breaker state (0=closed, 1=half-open, 2=open)",
+            labelnames=["dependency"],
             registry=self._registry,
         )
 
@@ -201,6 +259,52 @@ class PTFMetrics:
     def inc_frontend_event(self, event_name: str) -> None:
         """Increment frontend_events_total counter."""
         self._frontend_events_total.labels(event_name=event_name).inc()
+
+    # ── Ops-Guard metrics (Feature: ops-guard, Task 1.2) ─────────────────
+
+    def inc_guard_config_fallback(self) -> None:
+        """Increment guard config fallback counter (HD-4)."""
+        self._guard_config_fallback_total.inc()
+
+    def inc_guard_config_schema_mismatch(self) -> None:
+        """Increment guard config schema mismatch counter."""
+        self._guard_config_schema_mismatch_total.inc()
+
+    def set_guard_config_loaded(self, schema_version: str, config_version: str) -> None:
+        """Set active guard config gauge."""
+        self._guard_config_loaded.labels(
+            schema_version=schema_version, config_version=config_version
+        ).set(1)
+
+    def inc_slo_violation(self, slo_name: str) -> None:
+        """Increment SLO violation counter. slo_name from fixed enum."""
+        self._slo_violation_total.labels(slo_name=slo_name).inc()
+
+    def inc_sentinel_impossible_state(self) -> None:
+        """Increment impossible state sentinel counter."""
+        self._sentinel_impossible_state_total.inc()
+
+    def set_killswitch_state(self, switch_name: str, active: bool) -> None:
+        """Set kill-switch gauge (1=active, 0=passive)."""
+        self._killswitch_state.labels(switch_name=switch_name).set(1 if active else 0)
+
+    def inc_killswitch_error(self, endpoint_class: str, error_type: str) -> None:
+        """Increment kill-switch error counter (HD-1)."""
+        self._killswitch_error_total.labels(
+            endpoint_class=endpoint_class, error_type=error_type
+        ).inc()
+
+    def inc_killswitch_fallback_open(self) -> None:
+        """Increment kill-switch fail-open fallback counter (HD-1)."""
+        self._killswitch_fallback_open_total.inc()
+
+    def inc_rate_limit(self, endpoint: str, decision: str) -> None:
+        """Increment rate limit decision counter. decision: 'allowed' | 'rejected'."""
+        self._rate_limit_total.labels(endpoint=endpoint, decision=decision).inc()
+
+    def set_circuit_breaker_state(self, dependency: str, state: int) -> None:
+        """Set circuit breaker state gauge. state: 0=closed, 1=half-open, 2=open."""
+        self._circuit_breaker_state.labels(dependency=dependency).set(state)
 
     # ── Snapshot (test/debug only) ────────────────────────────────────────
 

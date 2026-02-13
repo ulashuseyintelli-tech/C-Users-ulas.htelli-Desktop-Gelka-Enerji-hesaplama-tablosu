@@ -38,6 +38,40 @@ class TestRunbookAlertCoverage:
         orphans = [h for h in headings if h not in alert_names]
         assert not orphans, f"Orphan runbook sections (no matching alert): {orphans}"
 
+    class TestRunbookUrlAnchors:
+        """Verify alert runbook_url annotations point to valid runbook anchors.
+        Feature: deploy-integration
+        Validates: Requirements 3.2, 4.1"""
+
+        def _get_rules(self):
+            with open(ALERTS_PATH, encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+            return data["spec"]["groups"][0]["rules"]
+
+        def _get_runbook_headings(self, runbook_text):
+            return re.findall(r"^## (\S+)", runbook_text, re.MULTILINE)
+
+        def test_every_runbook_url_has_anchor(self, runbook_text):
+            """Each alert's runbook_url contains a # anchor."""
+            for rule in self._get_rules():
+                url = rule.get("annotations", {}).get("runbook_url", "")
+                assert "#" in url, (
+                    f"Alert '{rule['alert']}' runbook_url has no anchor: {url}"
+                )
+
+        def test_runbook_url_anchors_match_headings(self, runbook_text):
+            """Each alert's runbook_url anchor matches a real runbook heading."""
+            headings = self._get_runbook_headings(runbook_text)
+            headings_lower = {h.lower() for h in headings}
+            for rule in self._get_rules():
+                url = rule.get("annotations", {}).get("runbook_url", "")
+                if "#" not in url:
+                    continue
+                anchor = url.split("#")[-1]
+                assert anchor.lower() in headings_lower, (
+                    f"Alert '{rule['alert']}' anchor '{anchor}' not found in runbook headings"
+                )
+
 
 class TestRunbookSectionCompleteness:
     """Verify each runbook section has required subsections.
@@ -94,3 +128,72 @@ class TestRunbookSectionCompleteness:
         sections = self._parse_sections(runbook_text)
         for name, body in sections.items():
             assert "**PromQL:**" in body, f"{name}: missing PromQL expression"
+
+class TestRunbookUrlAnchors:
+    """Verify alert runbook_url annotations point to valid runbook anchors.
+    Feature: deploy-integration
+    Validates: Requirements 3.2, 4.1"""
+
+    def _get_rules(self):
+        with open(ALERTS_PATH, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        return data["spec"]["groups"][0]["rules"]
+
+    def _get_runbook_headings(self, runbook_text):
+        return re.findall(r"^## (\S+)", runbook_text, re.MULTILINE)
+
+    def test_every_runbook_url_has_anchor(self, runbook_text):
+        """Each alert's runbook_url contains a # anchor."""
+        for rule in self._get_rules():
+            url = rule.get("annotations", {}).get("runbook_url", "")
+            assert "#" in url, (
+                f"Alert '{rule['alert']}' runbook_url has no anchor: {url}"
+            )
+
+    def test_runbook_url_anchors_match_headings(self, runbook_text):
+        """Each alert's runbook_url anchor matches a real runbook heading."""
+        headings = self._get_runbook_headings(runbook_text)
+        headings_lower = {h.lower() for h in headings}
+        for rule in self._get_rules():
+            url = rule.get("annotations", {}).get("runbook_url", "")
+            if "#" not in url:
+                continue
+            anchor = url.split("#")[-1]
+            assert anchor.lower() in headings_lower, (
+                f"Alert '{rule['alert']}' anchor '{anchor}' not found in runbook headings"
+            )
+
+
+class TestRunbookUrlAnchors:
+    """Verify alert runbook_url annotations point to valid runbook anchors.
+    Feature: deploy-integration
+    Validates: Requirements 3.2, 4.1"""
+
+    def _get_rules(self):
+        with open(ALERTS_PATH, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        return data["spec"]["groups"][0]["rules"]
+
+    def _get_runbook_headings(self, runbook_text):
+        return re.findall(r"^## (\S+)", runbook_text, re.MULTILINE)
+
+    def test_every_runbook_url_has_anchor(self, runbook_text):
+        """Each alert's runbook_url contains a # anchor."""
+        for rule in self._get_rules():
+            url = rule.get("annotations", {}).get("runbook_url", "")
+            assert "#" in url, (
+                f"Alert '{rule['alert']}' runbook_url has no anchor: {url}"
+            )
+
+    def test_runbook_url_anchors_match_headings(self, runbook_text):
+        """Each alert's runbook_url anchor matches a real runbook heading."""
+        headings = self._get_runbook_headings(runbook_text)
+        headings_lower = {h.lower() for h in headings}
+        for rule in self._get_rules():
+            url = rule.get("annotations", {}).get("runbook_url", "")
+            if "#" not in url:
+                continue
+            anchor = url.split("#")[-1]
+            assert anchor.lower() in headings_lower, (
+                f"Alert '{rule['alert']}' anchor '{anchor}' not found in runbook headings"
+            )

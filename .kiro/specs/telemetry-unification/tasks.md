@@ -101,8 +101,8 @@ Mevcut `PTFMetrics` sınıfını `prometheus_client` tiplerine migrate et, `/met
 - [x] 6. Checkpoint — Backend tamamlandı
   - Ensure all tests pass, ask the user if questions arise.
 
-- [-] 7. Frontend telemetry modülü oluştur
-  - [-] 7.1 `frontend/src/market-prices/telemetry.ts` — `trackEvent()` fonksiyonu, event buffer, flush mekanizması, `FLUSH_INTERVAL_MS`, `MAX_BATCH_SIZE` ve `MAX_BUFFER_SIZE` sabitleri
+- [x] 7. Frontend telemetry modülü oluştur
+  - [x] 7.1 `frontend/src/market-prices/telemetry.ts` — `trackEvent()` fonksiyonu, event buffer, flush mekanizması, `FLUSH_INTERVAL_MS`, `MAX_BATCH_SIZE` ve `MAX_BUFFER_SIZE` sabitleri
     - Fire-and-forget pattern: POST hatası → batch discard + console.warn, retry yok
     - Batching: flush interval veya max batch size'a ulaşınca POST gönder
     - **Buffer overflow koruması**: `MAX_BUFFER_SIZE` (200) aşılırsa en eski event'ler drop edilir + console.warn
@@ -119,24 +119,24 @@ Mevcut `PTFMetrics` sınıfını `prometheus_client` tiplerine migrate et, `/met
     - N rapid trackEvent çağrısı sonrası tek POST gönderildiğini doğrula
     - **Validates: Requirements 4.5**
 
-- [ ] 8. Frontend hook'lara ve component'lere telemetri entegrasyonu
-  - [ ] 8.1 `frontend/src/market-prices/hooks/useUpsertMarketPrice.ts` — `ptf_admin.upsert_submit`, `ptf_admin.upsert_success`, `ptf_admin.upsert_error` event'leri ekle
+- [x] 8. Frontend hook'lara ve component'lere telemetri entegrasyonu
+  - [x] 8.1 `frontend/src/market-prices/hooks/useUpsertMarketPrice.ts` — `ptf_admin.upsert_submit`, `ptf_admin.upsert_success`, `ptf_admin.upsert_error` event'leri ekle
     - _Requirements: 5.1, 5.2, 5.3_
 
-  - [ ] 8.2 `frontend/src/market-prices/hooks/useBulkImportPreview.ts` ve `useBulkImportApply.ts` — `ptf_admin.bulk_import_start`, `ptf_admin.bulk_import_complete`, `ptf_admin.bulk_import_error` event'leri ekle
+  - [x] 8.2 `frontend/src/market-prices/hooks/useBulkImportPreview.ts` ve `useBulkImportApply.ts` — `ptf_admin.bulk_import_start`, `ptf_admin.bulk_import_complete`, `ptf_admin.bulk_import_error` event'leri ekle
     - _Requirements: 5.4, 5.5, 5.6_
 
-  - [ ] 8.3 `frontend/src/market-prices/hooks/useAuditHistory.ts` — `ptf_admin.history_open` event'i ekle
+  - [x] 8.3 `frontend/src/market-prices/hooks/useAuditHistory.ts` — `ptf_admin.history_open` event'i ekle
     - _Requirements: 5.7_
 
-  - [ ] 8.4 `frontend/src/market-prices/PriceFilters.tsx` — `ptf_admin.filter_change` event'i ekle
+  - [x] 8.4 `frontend/src/market-prices/PriceFilters.tsx` — `ptf_admin.filter_change` event'i ekle
     - _Requirements: 5.8_
 
   - [ ]* 8.5 Unit tests: Hook telemetri entegrasyonları
     - Mock `trackEvent` ve her hook'ta doğru event name/properties ile çağrıldığını doğrula
     - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8_
 
-- [ ] 9. Final checkpoint — Tüm testler geçiyor
+- [x] 9. Final checkpoint — Tüm testler geçiyor
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes
