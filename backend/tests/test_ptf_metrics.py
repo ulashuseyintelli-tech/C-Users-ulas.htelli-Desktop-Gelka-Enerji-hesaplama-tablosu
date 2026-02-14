@@ -17,6 +17,7 @@ from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 from app.ptf_metrics import PTFMetrics, get_ptf_metrics
+from prometheus_client import CollectorRegistry
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -427,3 +428,174 @@ class TestImportApplyEndpointMetrics:
         assert snap["import_apply_duration_seconds"]["total_seconds"] > 0
         assert snap["import_rows_total"]["accepted"] == 3
         assert snap["import_rows_total"]["rejected"] == 1
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Dependency Wrapper Metrics — Feature: dependency-wrappers, Task 2
+# ═══════════════════════════════════════════════════════════════════════════════
+
+from hypothesis import given, settings as h_settings, HealthCheck
+from hypothesis import strategies as st
+
+
+class TestDependencyCallTotal:
+    """ptf_admin_dependency_call_total{dependency, outcome} counter tests."""
+
+    def setup_method(self):
+        self.metrics = PTFMetrics(registry=CollectorRegistry())
+
+    def test_inc_success(self):
+        self.metrics.inc_dependency_call("db_primary", "success")
+        val = self.metrics._dependency_call_total.labels(
+            dependency="db_primary", outcome="success"
+        )._value.get()
+        assert val == 1.0
+
+    def test_inc_failure(self):
+        self.metrics.inc_dependency_call("external_api", "failure")
+        val = self.metrics._dependency_call_total.labels(
+            dependency="external_api", outcome="failure"
+        )._value.get()
+        assert val == 1.0
+
+    def test_inc_timeout(self):
+        self.metrics.inc_dependency_call("cache", "timeout")
+        val = self.metrics._dependency_call_total.labels(
+            dependency="cache", outcome="timeout"
+        )._value.get()
+        assert val == 1.0
+
+    def test_inc_circuit_open(self):
+        self.metrics.inc_dependency_call("db_replica", "circuit_open")
+        val = self.metrics._dependency_call_total.labels(
+            dependency="db_replica", outcome="circuit_open"
+        )._value.get()
+        assert val == 1.0
+
+    def test_invalid_outcome_ignored(self):
+        """Invalid outcome → no increment, no crash."""
+        self.metrics.inc_dependency_call("db_primary", "bogus")
+        # Should not have created a label combo for "bogus"
+        # Just verify no exception was raised
+
+    def test_multiple_increments(self):
+        self.metrics.inc_dependency_call("db_primary", "success")
+        self.metrics.inc_dependency_call("db_primary", "success")
+        self.metrics.inc_dependency_call("db_primary", "failure")
+        val_s = self.metrics._dependency_call_total.labels(
+            dependency="db_primary", outcome="success"
+        )._value.get()
+        val_f = self.metrics._dependency_call_total.labels(
+            dependency="db_primary", outcome="failure"
+        )._value.get()
+        assert val_s == 2.0
+        assert val_f == 1.0
+
+
+class TestDependencyCallDuration:
+    """ptf_admin_dependency_call_duration_seconds{dependency} histogram tests."""
+
+    def setup_method(self):
+        self.metrics = PTFMetrics(registry=CollectorRegistry())
+
+    def test_observe_duration(self):
+        self.metrics.observe_dependency_call_duration("db_primary", 0.123)
+        # Verify histogram was updated by checking collect()
+        samples = self.metrics._dependency_call_duration.labels(
+            dependency="db_primary"
+        )._sum.get()
+        assert samples > 0
+
+    def test_multiple_observations(self):
+        self.metrics.observe_dependency_call_duration("cache", 0.01)
+        self.metrics.observe_dependency_call_duration("cache", 0.02)
+        total = self.metrics._dependency_call_duration.labels(
+            dependency="cache"
+        )._sum.get()
+        assert abs(total - 0.03) < 0.001
+
+
+class TestDependencyRetryTotal:
+    """ptf_admin_dependency_retry_total{dependency} counter tests."""
+
+    def setup_method(self):
+        self.metrics = PTFMetrics(registry=CollectorRegistry())
+
+    def test_inc_retry(self):
+        self.metrics.inc_dependency_retry("external_api")
+        val = self.metrics._dependency_retry_total.labels(
+            dependency="external_api"
+        )._value.get()
+        assert val == 1.0
+
+    def test_multiple_retries(self):
+        self.metrics.inc_dependency_retry("db_primary")
+        self.metrics.inc_dependency_retry("db_primary")
+        self.metrics.inc_dependency_retry("db_primary")
+        val = self.metrics._dependency_retry_total.labels(
+            dependency="db_primary"
+        )._value.get()
+        assert val == 3.0
+
+
+class TestGuardFailopenTotal:
+    """ptf_admin_guard_failopen_total counter tests (DW-3)."""
+
+    def setup_method(self):
+        self.metrics = PTFMetrics(registry=CollectorRegistry())
+
+    def test_inc_failopen(self):
+        self.metrics.inc_guard_failopen()
+        val = self.metrics._guard_failopen_total._value.get()
+        assert val == 1.0
+
+    def test_multiple_failopen(self):
+        self.metrics.inc_guard_failopen()
+        self.metrics.inc_guard_failopen()
+        val = self.metrics._guard_failopen_total._value.get()
+        assert val == 2.0
+
+
+class TestDependencyMetricsPropertyBased:
+    """Property-based tests for dependency wrapper metrics — Feature: dependency-wrappers, Task 2."""
+
+    @h_settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @given(
+        dep=st.sampled_from(["db_primary", "db_replica", "cache", "external_api", "import_worker"]),
+        outcome=st.sampled_from(["success", "failure", "timeout", "circuit_open"]),
+        count=st.integers(min_value=1, max_value=10),
+    )
+    def test_dependency_call_counter_monotonic(self, dep, outcome, count):
+        """Feature: dependency-wrappers, Property 7: Wrapper Metrik Kaydı — counter monotonicity."""
+        metrics = PTFMetrics(registry=CollectorRegistry())
+        for _ in range(count):
+            metrics.inc_dependency_call(dep, outcome)
+        val = metrics._dependency_call_total.labels(
+            dependency=dep, outcome=outcome
+        )._value.get()
+        assert val == count
+
+    @h_settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @given(
+        dep=st.sampled_from(["db_primary", "db_replica", "cache", "external_api", "import_worker"]),
+        duration=st.floats(min_value=0.001, max_value=60.0),
+    )
+    def test_dependency_duration_positive(self, dep, duration):
+        """Feature: dependency-wrappers, Property 7: duration histogram always positive."""
+        metrics = PTFMetrics(registry=CollectorRegistry())
+        metrics.observe_dependency_call_duration(dep, duration)
+        total = metrics._dependency_call_duration.labels(dependency=dep)._sum.get()
+        assert total > 0
+
+    @h_settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @given(
+        dep=st.sampled_from(["db_primary", "db_replica", "cache", "external_api", "import_worker"]),
+        count=st.integers(min_value=1, max_value=10),
+    )
+    def test_dependency_retry_counter_monotonic(self, dep, count):
+        """Feature: dependency-wrappers, Property 7: retry counter monotonicity."""
+        metrics = PTFMetrics(registry=CollectorRegistry())
+        for _ in range(count):
+            metrics.inc_dependency_retry(dep)
+        val = metrics._dependency_retry_total.labels(dependency=dep)._value.get()
+        assert val == count

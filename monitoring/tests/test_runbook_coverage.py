@@ -1,7 +1,7 @@
 """
 Structural validation tests for runbook coverage.
 
-Feature: observability-pack
+Feature: observability-pack + ops-guard
 """
 
 import re
@@ -12,65 +12,48 @@ import yaml
 from .conftest import ALERTS_PATH
 
 
+def _get_all_alert_names():
+    """Get alert names from ALL groups in the PrometheusRule YAML."""
+    with open(ALERTS_PATH, encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    names = []
+    for group in data["spec"]["groups"]:
+        for rule in group["rules"]:
+            names.append(rule["alert"])
+    return names
+
+
+def _get_all_rules():
+    """Get all rules from ALL groups in the PrometheusRule YAML."""
+    with open(ALERTS_PATH, encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    rules = []
+    for group in data["spec"]["groups"]:
+        rules.extend(group["rules"])
+    return rules
+
+
+def _get_runbook_headings(runbook_text):
+    return re.findall(r"^## (\S+)", runbook_text, re.MULTILINE)
+
+
 class TestRunbookAlertCoverage:
     """Verify runbook has a section for every alert.
     Validates: Requirements 12.1, 12.5"""
 
-    def _get_alert_names(self):
-        with open(ALERTS_PATH, encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        return [r["alert"] for r in data["spec"]["groups"][0]["rules"]]
-
-    def _get_runbook_headings(self, runbook_text):
-        return re.findall(r"^## (\S+)", runbook_text, re.MULTILINE)
-
     def test_every_alert_has_runbook_section(self, runbook_text):
         """Each alert in YAML has a corresponding ## heading in runbook."""
-        alert_names = self._get_alert_names()
-        headings = self._get_runbook_headings(runbook_text)
+        alert_names = _get_all_alert_names()
+        headings = _get_runbook_headings(runbook_text)
         for name in alert_names:
             assert name in headings, f"Runbook missing section for alert: {name}"
 
     def test_no_orphan_runbook_sections(self, runbook_text):
         """No runbook sections without a matching alert (catches typos)."""
-        alert_names = set(self._get_alert_names())
-        headings = self._get_runbook_headings(runbook_text)
+        alert_names = set(_get_all_alert_names())
+        headings = _get_runbook_headings(runbook_text)
         orphans = [h for h in headings if h not in alert_names]
         assert not orphans, f"Orphan runbook sections (no matching alert): {orphans}"
-
-    class TestRunbookUrlAnchors:
-        """Verify alert runbook_url annotations point to valid runbook anchors.
-        Feature: deploy-integration
-        Validates: Requirements 3.2, 4.1"""
-
-        def _get_rules(self):
-            with open(ALERTS_PATH, encoding="utf-8") as f:
-                data = yaml.safe_load(f)
-            return data["spec"]["groups"][0]["rules"]
-
-        def _get_runbook_headings(self, runbook_text):
-            return re.findall(r"^## (\S+)", runbook_text, re.MULTILINE)
-
-        def test_every_runbook_url_has_anchor(self, runbook_text):
-            """Each alert's runbook_url contains a # anchor."""
-            for rule in self._get_rules():
-                url = rule.get("annotations", {}).get("runbook_url", "")
-                assert "#" in url, (
-                    f"Alert '{rule['alert']}' runbook_url has no anchor: {url}"
-                )
-
-        def test_runbook_url_anchors_match_headings(self, runbook_text):
-            """Each alert's runbook_url anchor matches a real runbook heading."""
-            headings = self._get_runbook_headings(runbook_text)
-            headings_lower = {h.lower() for h in headings}
-            for rule in self._get_rules():
-                url = rule.get("annotations", {}).get("runbook_url", "")
-                if "#" not in url:
-                    continue
-                anchor = url.split("#")[-1]
-                assert anchor.lower() in headings_lower, (
-                    f"Alert '{rule['alert']}' anchor '{anchor}' not found in runbook headings"
-                )
 
 
 class TestRunbookSectionCompleteness:
@@ -129,22 +112,16 @@ class TestRunbookSectionCompleteness:
         for name, body in sections.items():
             assert "**PromQL:**" in body, f"{name}: missing PromQL expression"
 
+
 class TestRunbookUrlAnchors:
     """Verify alert runbook_url annotations point to valid runbook anchors.
-    Feature: deploy-integration
+    Scans ALL groups in the PrometheusRule YAML.
+    Feature: deploy-integration + ops-guard
     Validates: Requirements 3.2, 4.1"""
-
-    def _get_rules(self):
-        with open(ALERTS_PATH, encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        return data["spec"]["groups"][0]["rules"]
-
-    def _get_runbook_headings(self, runbook_text):
-        return re.findall(r"^## (\S+)", runbook_text, re.MULTILINE)
 
     def test_every_runbook_url_has_anchor(self, runbook_text):
         """Each alert's runbook_url contains a # anchor."""
-        for rule in self._get_rules():
+        for rule in _get_all_rules():
             url = rule.get("annotations", {}).get("runbook_url", "")
             assert "#" in url, (
                 f"Alert '{rule['alert']}' runbook_url has no anchor: {url}"
@@ -152,44 +129,9 @@ class TestRunbookUrlAnchors:
 
     def test_runbook_url_anchors_match_headings(self, runbook_text):
         """Each alert's runbook_url anchor matches a real runbook heading."""
-        headings = self._get_runbook_headings(runbook_text)
+        headings = _get_runbook_headings(runbook_text)
         headings_lower = {h.lower() for h in headings}
-        for rule in self._get_rules():
-            url = rule.get("annotations", {}).get("runbook_url", "")
-            if "#" not in url:
-                continue
-            anchor = url.split("#")[-1]
-            assert anchor.lower() in headings_lower, (
-                f"Alert '{rule['alert']}' anchor '{anchor}' not found in runbook headings"
-            )
-
-
-class TestRunbookUrlAnchors:
-    """Verify alert runbook_url annotations point to valid runbook anchors.
-    Feature: deploy-integration
-    Validates: Requirements 3.2, 4.1"""
-
-    def _get_rules(self):
-        with open(ALERTS_PATH, encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        return data["spec"]["groups"][0]["rules"]
-
-    def _get_runbook_headings(self, runbook_text):
-        return re.findall(r"^## (\S+)", runbook_text, re.MULTILINE)
-
-    def test_every_runbook_url_has_anchor(self, runbook_text):
-        """Each alert's runbook_url contains a # anchor."""
-        for rule in self._get_rules():
-            url = rule.get("annotations", {}).get("runbook_url", "")
-            assert "#" in url, (
-                f"Alert '{rule['alert']}' runbook_url has no anchor: {url}"
-            )
-
-    def test_runbook_url_anchors_match_headings(self, runbook_text):
-        """Each alert's runbook_url anchor matches a real runbook heading."""
-        headings = self._get_runbook_headings(runbook_text)
-        headings_lower = {h.lower() for h in headings}
-        for rule in self._get_rules():
+        for rule in _get_all_rules():
             url = rule.get("annotations", {}).get("runbook_url", "")
             if "#" not in url:
                 continue

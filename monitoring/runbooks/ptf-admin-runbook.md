@@ -208,3 +208,164 @@ Bu runbook, PTF Admin Prometheus alert'leri tetiklendiğinde izlenecek troublesh
 1. Format değişikliği ise: parser'ı güncelle veya upstream ile iletişime geç
 2. Geçici kalite düşüşü ise: reject threshold'unu geçici olarak artır, monitoring'i sıklaştır
 3. Validation rule change ise: rollback veya rule'u gevşet (bilinçli karar ile)
+
+---
+
+## PTFAdminKillSwitchActivated
+
+**Severity:** critical
+**PromQL:** `max(ptf_admin_killswitch_state) == 1`
+
+### Olası Nedenler
+1. Bilinçli operatör müdahalesi — planlı bakım veya incident response sırasında kill-switch açılmış
+2. Otomatik tetikleme — monitoring veya orchestration aracı tarafından otomatik olarak aktive edilmiş
+3. Beklenmeyen toggle — config değişikliği veya deploy sırasında yanlışlıkla aktive olmuş
+4. Güvenlik olayı — abuse tespit edilmiş ve acil engelleme uygulanmış
+
+### İlk 3 Kontrol
+1. `GET /admin/ops/kill-switches` — hangi switch'lerin aktif olduğunu kontrol et
+2. Audit logları — `[KILLSWITCH]` log entry'lerini incele, kim/ne zaman açtığını belirle
+3. Son deploy/config değişikliği — `kubectl rollout history` ve config map değişikliklerini kontrol et
+
+### Müdahale Adımları
+1. Planlı ise: işlem tamamlandığında `PUT /admin/ops/kill-switches/{name}` ile deaktive et
+2. Yanlışlıkla açılmış ise: hemen deaktive et ve root cause'u belirle
+3. Güvenlik kaynaklı ise: güvenlik ekibiyle koordine et, deaktive etmeden önce onay al
+
+---
+
+## PTFAdminCircuitBreakerOpen
+
+**Severity:** critical
+**PromQL:** `max(ptf_admin_circuit_breaker_state) == 2`
+
+### Olası Nedenler
+1. Bağımlılık arızası — DB, cache veya external API tamamen erişilemez
+2. Network partition — bağımlı servis ile ağ bağlantısı kopmuş
+3. Bağımlılık overload — downstream servis aşırı yük altında, timeout'lar artmış
+4. DNS çözümleme hatası — bağımlılık endpoint'i çözümlenemiyor
+
+### İlk 3 Kontrol
+1. `ptf_admin_circuit_breaker_state` gauge — hangi dependency'nin open olduğunu belirle
+2. Bağımlılık health check — ilgili DB/cache/API'nin durumunu doğrudan kontrol et
+3. Network connectivity — `kubectl exec` ile pod'dan bağımlılığa erişimi test et
+
+### Müdahale Adımları
+1. Bağımlılık down ise: bağımlılığı restart et veya failover'a geç
+2. Network sorunu ise: NetworkPolicy ve DNS ayarlarını kontrol et
+3. Overload ise: bağımlılığı scale up et, circuit breaker half-open recovery'yi bekle
+
+---
+
+## PTFAdminRateLimitSpike
+
+**Severity:** warning
+**PromQL:** `sum(rate(ptf_admin_rate_limit_total{decision="deny"}[5m])) * 60 > 5`
+
+### Olası Nedenler
+1. Abuse/bot traffic — otomatik araçlar veya scriptler yüksek hızda istek gönderiyor
+2. Runaway client — hatalı yapılandırılmış client retry loop'ta
+3. Rate limit threshold çok düşük — meşru trafik artışı threshold'u aşıyor
+4. Burst traffic — kampanya veya toplu işlem sonrası ani trafik artışı
+
+### İlk 3 Kontrol
+1. `ptf_admin_rate_limit_total{decision="deny"}` by endpoint — hangi endpoint'lerin etkilendiğini belirle
+2. Access logları — yüksek deny alan IP/actor'ları tespit et
+3. Rate limit config — `GET /admin/ops/status` ile mevcut threshold'ları kontrol et
+
+### Müdahale Adımları
+1. Abuse ise: IP bazlı block uygula (WAF/ingress seviyesinde)
+2. Meşru trafik ise: `OPS_GUARD_RATE_LIMIT_*` env var'larını artır ve redeploy et
+3. Runaway client ise: client'ı tespit et ve düzeltmesini sağla
+
+---
+
+## PTFAdminGuardConfigInvalid
+
+**Severity:** warning
+**PromQL:** `increase(ptf_admin_guard_config_fallback_total[15m]) > 0`
+
+### Olası Nedenler
+1. Geçersiz env var — `OPS_GUARD_*` env var'larında typo veya geçersiz değer
+2. ConfigMap hatası — Kubernetes ConfigMap'te yanlış format
+3. Deploy sırasında config kaybı — yeni deploy'da env var eksik
+4. Schema uyumsuzluğu — config schema versiyonu ile kod versiyonu uyumsuz
+
+### İlk 3 Kontrol
+1. `kubectl describe pod -l app=ptf-admin` — env var'ları kontrol et
+2. Uygulama logları — `WARNING` seviyesinde guard config fallback mesajlarını ara
+3. ConfigMap — `kubectl get configmap ptf-admin-config -o yaml` ile config'i doğrula
+
+### Müdahale Adımları
+1. Env var hatası ise: ConfigMap veya Secret'ı düzelt ve redeploy et
+2. Schema uyumsuzluğu ise: config'i yeni schema'ya uygun güncelle
+3. Acil ise: fallback defaults güvenli çalışır, ancak custom threshold'lar kaybolmuştur — düzeltmeyi planlayın
+
+---
+
+## PTFAdminGuardInternalError
+
+**Severity:** critical
+**PromQL:** `sum(rate(ptf_admin_killswitch_error_total[5m])) > 0 or sum(rate(ptf_admin_killswitch_fallback_open_total[5m])) > 0`
+
+### Olası Nedenler
+1. Guard katmanı internal exception — kill-switch veya rate limiter'da beklenmeyen hata
+2. Memory corruption — guard state'inde tutarsızlık
+3. Concurrency bug — race condition guard state erişiminde
+4. Dependency injection hatası — guard bileşenleri doğru initialize edilmemiş
+
+### İlk 3 Kontrol
+1. Uygulama logları — `[KILLSWITCH]` ve `[GUARD]` error loglarını incele
+2. `ptf_admin_killswitch_error_total` by error_type — hata tipini belirle
+3. `ptf_admin_killswitch_fallback_open_total` — fail-open sayısını kontrol et
+
+### Müdahale Adımları
+1. Tekrarlayan hata ise: pod'u restart et (`kubectl delete pod <pod>`)
+2. Kod hatası ise: hotfix deploy et veya guard middleware'i geçici olarak devre dışı bırak
+3. Fail-open aktif ise: koruma devre dışı demektir — risk değerlendirmesi yap, gerekirse kill-switch ile manuel koruma uygula
+
+---
+
+## PTFAdminSLOBurnRateFast
+
+**Severity:** critical
+**PromQL:** `sum(rate(ptf_admin_api_request_total{status_class=~"5xx|0xx"}[1h])) / sum(rate(ptf_admin_api_request_total[1h])) > 0.01`
+
+### Olası Nedenler
+1. Major incident — birden fazla bileşen aynı anda arızalı
+2. Bad deploy — yeni versiyon kritik hata içeriyor
+3. Infrastructure failure — node, disk veya network seviyesinde arıza
+4. Cascading failure — bir bağımlılık arızası diğerlerini tetiklemiş
+
+### İlk 3 Kontrol
+1. Diğer alert'ler — PTFAdmin5xxSpike, PTFAdminCircuitBreakerOpen, PTFAdminExceptionPath aktif mi kontrol et
+2. Son deploy — `kubectl rollout history deployment/ptf-admin` ile korelasyon ara
+3. Infrastructure — node durumu, disk kullanımı, network latency kontrol et
+
+### Müdahale Adımları
+1. Bad deploy ise: hemen rollback (`kubectl rollout undo deployment/ptf-admin`)
+2. Infrastructure ise: etkilenen node'u drain et, pod'ları sağlıklı node'lara taşı
+3. Cascading failure ise: circuit breaker'ların açık olduğunu doğrula, bağımlılıkları sırayla kurtarın
+
+---
+
+## PTFAdminSLOBurnRateSlow
+
+**Severity:** warning
+**PromQL:** `sum(rate(ptf_admin_api_request_total{status_class=~"5xx|0xx"}[6h])) / sum(rate(ptf_admin_api_request_total[6h])) > 0.005`
+
+### Olası Nedenler
+1. Gradual degradation — yavaş yavaş artan hata oranı, tek bir root cause belirgin değil
+2. Resource leak — memory leak, connection leak zamanla birikiyor
+3. Data quality issue — belirli veri pattern'leri hatalara neden oluyor
+4. Intermittent dependency — bağımlılık aralıklı olarak timeout veriyor
+
+### İlk 3 Kontrol
+1. Error rate trend — son 24 saatte error rate grafiğini incele (artış trendi var mı)
+2. Resource metrikleri — memory, CPU, connection pool trend'lerini kontrol et
+3. Error logları — tekrarlayan hata pattern'lerini belirle
+
+### Müdahale Adımları
+1. Resource leak ise: pod'ları rolling restart et, leak'i fix eden patch planlayın
+2. Data quality ise: problematik veri pattern'lerini belirle ve validation ekle
+3. Intermittent dependency ise: circuit breaker threshold'larını gözden geçir, retry config'i optimize et

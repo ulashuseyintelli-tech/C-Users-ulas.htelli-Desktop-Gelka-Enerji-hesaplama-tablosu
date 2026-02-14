@@ -160,6 +160,31 @@ class PTFMetrics:
             registry=self._registry,
         )
 
+        # ── Dependency Wrapper metrics (Feature: dependency-wrappers, Task 2) ─
+        self._dependency_call_total = Counter(
+            "ptf_admin_dependency_call_total",
+            "Dependency call outcomes",
+            labelnames=["dependency", "outcome"],
+            registry=self._registry,
+        )
+        self._dependency_call_duration = Histogram(
+            "ptf_admin_dependency_call_duration_seconds",
+            "Dependency call duration",
+            labelnames=["dependency"],
+            registry=self._registry,
+        )
+        self._dependency_retry_total = Counter(
+            "ptf_admin_dependency_retry_total",
+            "Dependency retry count",
+            labelnames=["dependency"],
+            registry=self._registry,
+        )
+        self._guard_failopen_total = Counter(
+            "ptf_admin_guard_failopen_total",
+            "Guard fail-open fallback count (middleware + wrapper)",
+            registry=self._registry,
+        )
+
     # ── upsert_total ──────────────────────────────────────────────────────
 
     def inc_upsert(self, status: str) -> None:
@@ -305,6 +330,29 @@ class PTFMetrics:
     def set_circuit_breaker_state(self, dependency: str, state: int) -> None:
         """Set circuit breaker state gauge. state: 0=closed, 1=half-open, 2=open."""
         self._circuit_breaker_state.labels(dependency=dependency).set(state)
+
+    # ── Dependency Wrapper metrics (Feature: dependency-wrappers, Task 2) ─
+
+    _VALID_DEP_OUTCOMES = frozenset({"success", "failure", "timeout", "circuit_open"})
+
+    def inc_dependency_call(self, dependency: str, outcome: str) -> None:
+        """Increment dependency call counter. outcome: success|failure|timeout|circuit_open."""
+        if outcome not in self._VALID_DEP_OUTCOMES:
+            logger.warning(f"[METRICS] Invalid dependency outcome: {outcome}")
+            return
+        self._dependency_call_total.labels(dependency=dependency, outcome=outcome).inc()
+
+    def observe_dependency_call_duration(self, dependency: str, duration: float) -> None:
+        """Record dependency call duration."""
+        self._dependency_call_duration.labels(dependency=dependency).observe(duration)
+
+    def inc_dependency_retry(self, dependency: str) -> None:
+        """Increment dependency retry counter."""
+        self._dependency_retry_total.labels(dependency=dependency).inc()
+
+    def inc_guard_failopen(self) -> None:
+        """Increment guard fail-open counter (DW-3: middleware + wrapper)."""
+        self._guard_failopen_total.inc()
 
     # ── Snapshot (test/debug only) ────────────────────────────────────────
 

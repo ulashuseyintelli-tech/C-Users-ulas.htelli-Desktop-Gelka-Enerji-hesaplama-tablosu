@@ -15,7 +15,7 @@ Kullanım:
 
 import logging
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Tuple
 from dataclasses import dataclass
 from sqlalchemy.orm import Session
@@ -229,7 +229,7 @@ def upsert_market_prices(
         existing.yekdem_tl_per_mwh = yekdem_tl_per_mwh
         existing.source_note = source_note
         existing.updated_by = updated_by
-        existing.updated_at = datetime.utcnow()
+        existing.updated_at = datetime.now(timezone.utc)
         
         # Yeni alanları güncelle (sadece verilmişse)
         if status is not None:
@@ -247,7 +247,7 @@ def upsert_market_prices(
     else:
         # Yeni kayıt - status default "provisional" (Requirement 1.5)
         effective_status = status if status is not None else "provisional"
-        effective_captured_at = captured_at if captured_at is not None else datetime.utcnow()
+        effective_captured_at = captured_at if captured_at is not None else datetime.now(timezone.utc)
         effective_source = source if source is not None else "epias_manual"
         
         new_record = MarketReferencePrice(
@@ -579,7 +579,6 @@ def get_periods_needing_sync(db: Session, months_back: int = 12) -> list[str]:
     Returns:
         Dönem listesi
     """
-    from datetime import datetime
     
     current = datetime.now()
     periods_to_check = []

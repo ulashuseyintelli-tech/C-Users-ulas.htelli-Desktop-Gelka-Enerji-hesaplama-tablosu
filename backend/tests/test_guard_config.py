@@ -212,3 +212,399 @@ class TestOpsGuardMetrics:
         self.metrics.set_circuit_breaker_state("db_primary", 2)
         val = self.metrics._circuit_breaker_state.labels(dependency="db_primary")._value.get()
         assert val == 2.0
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Dependency Wrapper Config Tests — Feature: dependency-wrappers, Task 1.1
+# ═══════════════════════════════════════════════════════════════════════════════
+
+from hypothesis import given, settings as h_settings, HealthCheck, assume
+from hypothesis import strategies as st
+from pydantic import ValidationError as PydanticValidationError
+
+
+class TestWrapperConfigDefaults:
+    """DW config fields have correct defaults."""
+
+    def test_cb_precheck_enabled_default_true(self):
+        config = GuardConfig()
+        assert config.cb_precheck_enabled is True
+
+    def test_wrapper_retry_on_write_default_false(self):
+        """DW-1: write path retry OFF by default."""
+        config = GuardConfig()
+        assert config.wrapper_retry_on_write is False
+
+    def test_wrapper_fail_open_enabled_default_true(self):
+        """DW-3: wrapper fail-open ON by default."""
+        config = GuardConfig()
+        assert config.wrapper_fail_open_enabled is True
+
+    def test_timeout_default(self):
+        config = GuardConfig()
+        assert config.wrapper_timeout_seconds_default == 5.0
+
+    def test_retry_defaults(self):
+        config = GuardConfig()
+        assert config.wrapper_retry_max_attempts_default == 2
+        assert config.wrapper_retry_backoff_base_ms == 500
+        assert config.wrapper_retry_backoff_cap_ms == 5000
+        assert config.wrapper_retry_jitter_pct == 0.2
+
+    def test_per_dependency_overrides_empty_by_default(self):
+        config = GuardConfig()
+        assert config.wrapper_timeout_seconds_by_dependency == ""
+        assert config.wrapper_retry_max_attempts_by_dependency == ""
+
+
+class TestWrapperConfigEnvOverride:
+    """Environment variable override for wrapper fields."""
+
+    def test_env_override_cb_precheck_enabled(self):
+        with patch.dict(os.environ, {"OPS_GUARD_CB_PRECHECK_ENABLED": "false"}):
+            config = GuardConfig()
+            assert config.cb_precheck_enabled is False
+
+    def test_env_override_wrapper_retry_on_write(self):
+        with patch.dict(os.environ, {"OPS_GUARD_WRAPPER_RETRY_ON_WRITE": "true"}):
+            config = GuardConfig()
+            assert config.wrapper_retry_on_write is True
+
+    def test_env_override_timeout_default(self):
+        with patch.dict(os.environ, {"OPS_GUARD_WRAPPER_TIMEOUT_SECONDS_DEFAULT": "10.0"}):
+            config = GuardConfig()
+            assert config.wrapper_timeout_seconds_default == 10.0
+
+    def test_env_override_retry_max_attempts(self):
+        with patch.dict(os.environ, {"OPS_GUARD_WRAPPER_RETRY_MAX_ATTEMPTS_DEFAULT": "3"}):
+            config = GuardConfig()
+            assert config.wrapper_retry_max_attempts_default == 3
+
+    def test_env_override_backoff_base(self):
+        with patch.dict(os.environ, {"OPS_GUARD_WRAPPER_RETRY_BACKOFF_BASE_MS": "200"}):
+            config = GuardConfig()
+            assert config.wrapper_retry_backoff_base_ms == 200
+
+    def test_env_override_backoff_cap(self):
+        with patch.dict(os.environ, {"OPS_GUARD_WRAPPER_RETRY_BACKOFF_CAP_MS": "10000"}):
+            config = GuardConfig()
+            assert config.wrapper_retry_backoff_cap_ms == 10000
+
+    def test_env_override_jitter_pct(self):
+        with patch.dict(os.environ, {"OPS_GUARD_WRAPPER_RETRY_JITTER_PCT": "0.1"}):
+            config = GuardConfig()
+            assert config.wrapper_retry_jitter_pct == 0.1
+
+
+class TestWrapperConfigValidation:
+    """Invalid values → ValidationError (config load will fallback via HD-4)."""
+
+    def test_negative_timeout_raises(self):
+        with pytest.raises(PydanticValidationError):
+            GuardConfig(wrapper_timeout_seconds_default=-1.0)
+
+    def test_zero_timeout_raises(self):
+        with pytest.raises(PydanticValidationError):
+            GuardConfig(wrapper_timeout_seconds_default=0.0)
+
+    def test_negative_retry_attempts_raises(self):
+        with pytest.raises(PydanticValidationError):
+            GuardConfig(wrapper_retry_max_attempts_default=-1)
+
+    def test_zero_retry_attempts_valid(self):
+        """0 retries = no retry, which is valid."""
+        config = GuardConfig(wrapper_retry_max_attempts_default=0)
+        assert config.wrapper_retry_max_attempts_default == 0
+
+    def test_negative_backoff_base_raises(self):
+        with pytest.raises(PydanticValidationError):
+            GuardConfig(wrapper_retry_backoff_base_ms=-100)
+
+    def test_zero_backoff_base_raises(self):
+        with pytest.raises(PydanticValidationError):
+            GuardConfig(wrapper_retry_backoff_base_ms=0)
+
+    def test_negative_backoff_cap_raises(self):
+        with pytest.raises(PydanticValidationError):
+            GuardConfig(wrapper_retry_backoff_cap_ms=-1)
+
+    def test_negative_jitter_raises(self):
+        with pytest.raises(PydanticValidationError):
+            GuardConfig(wrapper_retry_jitter_pct=-0.1)
+
+    def test_jitter_over_one_raises(self):
+        with pytest.raises(PydanticValidationError):
+            GuardConfig(wrapper_retry_jitter_pct=1.5)
+
+    def test_invalid_timeout_env_triggers_fallback(self):
+        """Invalid env → load_guard_config falls back to defaults (HD-4)."""
+        import app.guard_config as gc_mod
+        gc_mod._guard_config = None
+
+        with patch.dict(os.environ, {"OPS_GUARD_WRAPPER_TIMEOUT_SECONDS_DEFAULT": "-5"}):
+            with patch("app.ptf_metrics.get_ptf_metrics"):
+                config = load_guard_config()
+
+        assert config.wrapper_timeout_seconds_default == 5.0  # fallback default
+        gc_mod._guard_config = None
+
+
+class TestWrapperConfigPerDependencyOverride:
+    """Per-dependency timeout/retry override via JSON env var."""
+
+    def test_timeout_override_valid_json(self):
+        config = GuardConfig(
+            wrapper_timeout_seconds_by_dependency='{"db_primary": 3.0, "external_api": 15.0}'
+        )
+        assert config.get_timeout_for_dependency("db_primary") == 3.0
+        assert config.get_timeout_for_dependency("external_api") == 15.0
+        # Not overridden → default
+        assert config.get_timeout_for_dependency("cache") == 5.0
+
+    def test_timeout_override_unknown_dependency_ignored(self):
+        """HD-5: only Dependency enum keys accepted."""
+        config = GuardConfig(
+            wrapper_timeout_seconds_by_dependency='{"unknown_dep": 99.0, "db_primary": 3.0}'
+        )
+        assert config.get_timeout_for_dependency("db_primary") == 3.0
+        assert config.get_timeout_for_dependency("unknown_dep") == 5.0  # falls to default
+
+    def test_timeout_override_invalid_json_returns_default(self):
+        config = GuardConfig(wrapper_timeout_seconds_by_dependency="not_json")
+        assert config.get_timeout_for_dependency("db_primary") == 5.0
+
+    def test_timeout_override_empty_string(self):
+        config = GuardConfig(wrapper_timeout_seconds_by_dependency="")
+        assert config.get_timeout_for_dependency("db_primary") == 5.0
+
+    def test_timeout_override_negative_value_returns_default(self):
+        config = GuardConfig(
+            wrapper_timeout_seconds_by_dependency='{"db_primary": -1.0}'
+        )
+        assert config.get_timeout_for_dependency("db_primary") == 5.0  # negative → default
+
+    def test_retry_override_valid_json(self):
+        config = GuardConfig(
+            wrapper_retry_max_attempts_by_dependency='{"external_api": 3, "cache": 1}'
+        )
+        assert config.get_retry_max_attempts_for_dependency("external_api") == 3
+        assert config.get_retry_max_attempts_for_dependency("cache") == 1
+        assert config.get_retry_max_attempts_for_dependency("db_primary") == 2  # default
+
+    def test_retry_override_unknown_dependency_ignored(self):
+        config = GuardConfig(
+            wrapper_retry_max_attempts_by_dependency='{"bogus": 99}'
+        )
+        assert config.get_retry_max_attempts_for_dependency("bogus") == 2  # default
+
+    def test_retry_override_invalid_json_returns_default(self):
+        config = GuardConfig(wrapper_retry_max_attempts_by_dependency="{bad")
+        assert config.get_retry_max_attempts_for_dependency("db_primary") == 2
+
+    def test_env_override_per_dependency_timeout(self):
+        with patch.dict(os.environ, {
+            "OPS_GUARD_WRAPPER_TIMEOUT_SECONDS_BY_DEPENDENCY": '{"external_api": 20.0}'
+        }):
+            config = GuardConfig()
+            assert config.get_timeout_for_dependency("external_api") == 20.0
+            assert config.get_timeout_for_dependency("db_primary") == 5.0
+
+
+class TestWrapperConfigFallbackInclusion:
+    """Fallback config includes wrapper fields."""
+
+    def test_fallback_has_wrapper_defaults(self):
+        import app.guard_config as gc_mod
+        gc_mod._guard_config = None
+
+        with patch.dict(os.environ, {"OPS_GUARD_WRAPPER_TIMEOUT_SECONDS_DEFAULT": "not_float"}):
+            with patch("app.ptf_metrics.get_ptf_metrics"):
+                config = load_guard_config()
+
+        # Wrapper fields should be present with defaults
+        assert config.cb_precheck_enabled is True
+        assert config.wrapper_retry_on_write is False
+        assert config.wrapper_fail_open_enabled is True
+        assert config.wrapper_timeout_seconds_default == 5.0
+        assert config.wrapper_retry_max_attempts_default == 2
+        assert config.wrapper_retry_backoff_base_ms == 500
+        assert config.wrapper_retry_backoff_cap_ms == 5000
+        assert config.wrapper_retry_jitter_pct == 0.2
+
+        gc_mod._guard_config = None
+
+
+class TestWrapperConfigPropertyBased:
+    """Property-based tests for wrapper config — Feature: dependency-wrappers, Property 8."""
+
+    @h_settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @given(
+        timeout=st.floats(min_value=0.001, max_value=300.0),
+        max_retries=st.integers(min_value=0, max_value=10),
+        backoff_base=st.integers(min_value=1, max_value=10000),
+        backoff_cap=st.integers(min_value=1, max_value=60000),
+        jitter=st.floats(min_value=0.0, max_value=1.0),
+    )
+    def test_wrapper_config_round_trip(
+        self, timeout, max_retries, backoff_base, backoff_cap, jitter
+    ):
+        """Feature: dependency-wrappers, Property 8: Guard Config Wrapper Ayarları Round-Trip"""
+        assume(backoff_base <= backoff_cap)
+        config = GuardConfig(
+            wrapper_timeout_seconds_default=timeout,
+            wrapper_retry_max_attempts_default=max_retries,
+            wrapper_retry_backoff_base_ms=backoff_base,
+            wrapper_retry_backoff_cap_ms=backoff_cap,
+            wrapper_retry_jitter_pct=jitter,
+        )
+        assert config.wrapper_timeout_seconds_default == timeout
+        assert config.wrapper_retry_max_attempts_default == max_retries
+        assert config.wrapper_retry_backoff_base_ms == backoff_base
+        assert config.wrapper_retry_backoff_cap_ms == backoff_cap
+        assert config.wrapper_retry_jitter_pct == jitter
+
+    @h_settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @given(
+        cb_precheck=st.booleans(),
+        retry_on_write=st.booleans(),
+        fail_open=st.booleans(),
+    )
+    def test_wrapper_flags_round_trip(self, cb_precheck, retry_on_write, fail_open):
+        """Feature: dependency-wrappers, Property 8: Boolean flags round-trip."""
+        config = GuardConfig(
+            cb_precheck_enabled=cb_precheck,
+            wrapper_retry_on_write=retry_on_write,
+            wrapper_fail_open_enabled=fail_open,
+        )
+        assert config.cb_precheck_enabled is cb_precheck
+        assert config.wrapper_retry_on_write is retry_on_write
+        assert config.wrapper_fail_open_enabled is fail_open
+
+    @h_settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @given(
+        dep=st.sampled_from(["db_primary", "db_replica", "cache", "external_api", "import_worker"]),
+        override_val=st.floats(min_value=0.1, max_value=60.0),
+    )
+    def test_per_dependency_timeout_override(self, dep, override_val):
+        """Feature: dependency-wrappers, Property 8: Per-dependency timeout override."""
+        import json
+        config = GuardConfig(
+            wrapper_timeout_seconds_by_dependency=json.dumps({dep: override_val})
+        )
+        assert config.get_timeout_for_dependency(dep) == override_val
+
+    @h_settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @given(
+        dep=st.sampled_from(["db_primary", "db_replica", "cache", "external_api", "import_worker"]),
+        override_val=st.integers(min_value=0, max_value=5),
+    )
+    def test_per_dependency_retry_override(self, dep, override_val):
+        """Feature: dependency-wrappers, Property 8: Per-dependency retry override."""
+        import json
+        config = GuardConfig(
+            wrapper_retry_max_attempts_by_dependency=json.dumps({dep: override_val})
+        )
+        assert config.get_retry_max_attempts_for_dependency(dep) == override_val
+
+
+class TestWrapperConfigOverrideMetricIncrement:
+    """Invalid JSON override → fallback + metric increment (GuardConfigInvalid alert hook)."""
+
+    def test_invalid_json_increments_fallback_metric(self):
+        metrics = PTFMetrics(registry=CollectorRegistry())
+        config = GuardConfig(wrapper_timeout_seconds_by_dependency="not_json")
+
+        with patch("app.ptf_metrics.get_ptf_metrics", return_value=metrics):
+            # Trigger parse
+            result = config.get_timeout_for_dependency("db_primary")
+
+        assert result == 5.0  # fallback
+        val = metrics._guard_config_fallback_total._value.get()
+        assert val >= 1.0
+
+    def test_unknown_dependency_key_increments_fallback_metric(self):
+        metrics = PTFMetrics(registry=CollectorRegistry())
+        config = GuardConfig(
+            wrapper_timeout_seconds_by_dependency='{"bogus_dep": 10.0, "db_primary": 3.0}'
+        )
+
+        with patch("app.ptf_metrics.get_ptf_metrics", return_value=metrics):
+            result = config.get_timeout_for_dependency("db_primary")
+
+        assert result == 3.0  # valid key still works
+        val = metrics._guard_config_fallback_total._value.get()
+        assert val >= 1.0  # incremented for bogus_dep
+
+    def test_non_dict_json_increments_fallback_metric(self):
+        metrics = PTFMetrics(registry=CollectorRegistry())
+        config = GuardConfig(wrapper_timeout_seconds_by_dependency='[1, 2, 3]')
+
+        with patch("app.ptf_metrics.get_ptf_metrics", return_value=metrics):
+            result = config.get_timeout_for_dependency("db_primary")
+
+        assert result == 5.0
+        val = metrics._guard_config_fallback_total._value.get()
+        assert val >= 1.0
+
+
+class TestWrapperConfigBackoffMonotonicity:
+    """Cross-field: backoff_base_ms <= backoff_cap_ms."""
+
+    def test_base_greater_than_cap_raises(self):
+        with pytest.raises(PydanticValidationError):
+            GuardConfig(
+                wrapper_retry_backoff_base_ms=10000,
+                wrapper_retry_backoff_cap_ms=500,
+            )
+
+    def test_base_equals_cap_valid(self):
+        config = GuardConfig(
+            wrapper_retry_backoff_base_ms=1000,
+            wrapper_retry_backoff_cap_ms=1000,
+        )
+        assert config.wrapper_retry_backoff_base_ms == 1000
+        assert config.wrapper_retry_backoff_cap_ms == 1000
+
+    def test_base_less_than_cap_valid(self):
+        config = GuardConfig(
+            wrapper_retry_backoff_base_ms=500,
+            wrapper_retry_backoff_cap_ms=5000,
+        )
+        assert config.wrapper_retry_backoff_base_ms == 500
+
+    @h_settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
+    @given(
+        base=st.integers(min_value=1, max_value=10000),
+        cap=st.integers(min_value=1, max_value=10000),
+    )
+    def test_backoff_monotonicity_property(self, base, cap):
+        """Feature: dependency-wrappers, Property: backoff_base <= backoff_cap invariant."""
+        if base <= cap:
+            config = GuardConfig(
+                wrapper_retry_backoff_base_ms=base,
+                wrapper_retry_backoff_cap_ms=cap,
+            )
+            assert config.wrapper_retry_backoff_base_ms <= config.wrapper_retry_backoff_cap_ms
+        else:
+            with pytest.raises(PydanticValidationError):
+                GuardConfig(
+                    wrapper_retry_backoff_base_ms=base,
+                    wrapper_retry_backoff_cap_ms=cap,
+                )
+
+    def test_invalid_monotonicity_env_triggers_fallback(self):
+        """base > cap via env → load_guard_config falls back to defaults."""
+        import app.guard_config as gc_mod
+        gc_mod._guard_config = None
+
+        with patch.dict(os.environ, {
+            "OPS_GUARD_WRAPPER_RETRY_BACKOFF_BASE_MS": "10000",
+            "OPS_GUARD_WRAPPER_RETRY_BACKOFF_CAP_MS": "500",
+        }):
+            with patch("app.ptf_metrics.get_ptf_metrics"):
+                config = load_guard_config()
+
+        # Should have fallen back to defaults
+        assert config.wrapper_retry_backoff_base_ms == 500
+        assert config.wrapper_retry_backoff_cap_ms == 5000
+        gc_mod._guard_config = None

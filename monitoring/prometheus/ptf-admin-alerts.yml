@@ -139,3 +139,111 @@ spec:
             summary: "Import reject oranı > %20"
             description: "Son 15 dakikada import reject oranı {{ $value | humanizePercentage }}. Veri format değişikliği, upstream data quality veya validation rule change olabilir."
             runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#ptfadminimportrejectratio"
+
+    # ════════════════════════════════════════════════════════════════
+    # Ops-Guard Alert Group — Feature: ops-guard, Task 8
+    # Mevcut ptf-admin-alerts grubu DEĞİŞTİRİLMEDİ.
+    # ════════════════════════════════════════════════════════════════
+    - name: ptf-admin-ops-guard
+      rules:
+        # ── OG1: Kill-Switch Activated ─────────────────────────────
+        - alert: PTFAdminKillSwitchActivated
+          expr: max(ptf_admin_killswitch_state) == 1
+          for: 0m
+          labels:
+            severity: critical
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "Kill-switch aktif — trafik bilinçli olarak engelleniyor"
+            description: "ptf_admin_killswitch_state gauge'u 1 döndü. Bilinçli müdahale veya beklenmeyen toggle olabilir. Hangi switch aktif olduğunu kontrol edin."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PTFAdminKillSwitchActivated"
+
+        # ── OG2: Circuit Breaker Open (sustained) ─────────────────
+        - alert: PTFAdminCircuitBreakerOpen
+          expr: max(ptf_admin_circuit_breaker_state) == 2
+          for: 5m
+          labels:
+            severity: critical
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "Circuit breaker 5+ dakikadır açık"
+            description: "ptf_admin_circuit_breaker_state == 2 (open) durumu 5 dakikayı aştı. Bağımlılık arızası devam ediyor, half-open recovery başarısız."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PTFAdminCircuitBreakerOpen"
+
+        # ── OG3: Rate Limit Deny Spike ────────────────────────────
+        - alert: PTFAdminRateLimitSpike
+          expr: >-
+            sum(rate(ptf_admin_rate_limit_total{decision="deny"}[5m])) * 60 > 5
+          for: 2m
+          labels:
+            severity: warning
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "Rate limit deny oranı > 5 req/min (2 dk sürekli)"
+            description: "Son 2 dakikada rate limit deny rate {{ $value }} req/min. Abuse, runaway script veya misconfigured client olabilir."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PTFAdminRateLimitSpike"
+
+        # ── OG4: Guard Config Invalid ─────────────────────────────
+        - alert: PTFAdminGuardConfigInvalid
+          expr: increase(ptf_admin_guard_config_fallback_total[15m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "Guard config validation başarısız — fallback defaults aktif"
+            description: "ptf_admin_guard_config_fallback_total son 15 dakikada arttı. Geçersiz env var veya config dosyası. Sistem fallback defaults ile çalışıyor."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PTFAdminGuardConfigInvalid"
+
+        # ── OG5: Guard Internal Error (fail-open detection) ───────
+        - alert: PTFAdminGuardInternalError
+          expr: >-
+            sum(rate(ptf_admin_killswitch_error_total[5m])) > 0
+            or sum(rate(ptf_admin_killswitch_fallback_open_total[5m])) > 0
+          for: 5m
+          labels:
+            severity: critical
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "Guard katmanı internal error — fail-open path aktif"
+            description: "Kill-switch veya guard katmanında internal error tespit edildi. Sistem fail-open modunda çalışıyor olabilir — koruma devre dışı."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PTFAdminGuardInternalError"
+
+        # ── OG6: SLO Burn Rate (fast window — 1h) ────────────────
+        - alert: PTFAdminSLOBurnRateFast
+          expr: >-
+            sum(rate(ptf_admin_api_request_total{status_class=~"5xx|0xx"}[1h]))
+            /
+            sum(rate(ptf_admin_api_request_total[1h]))
+            > 0.01
+          for: 5m
+          labels:
+            severity: critical
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "SLO burn rate yüksek (1h window) — error budget hızla tükeniyor"
+            description: "Son 1 saatte error rate {{ $value | humanizePercentage }}. Bu hızla error budget 24 saat içinde tükenecek. Acil müdahale gerekli."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PTFAdminSLOBurnRateFast"
+
+        # ── OG7: SLO Burn Rate (slow window — 6h) ────────────────
+        - alert: PTFAdminSLOBurnRateSlow
+          expr: >-
+            sum(rate(ptf_admin_api_request_total{status_class=~"5xx|0xx"}[6h]))
+            /
+            sum(rate(ptf_admin_api_request_total[6h]))
+            > 0.005
+          for: 30m
+          labels:
+            severity: warning
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "SLO burn rate yüksek (6h window) — error budget yavaşça tükeniyor"
+            description: "Son 6 saatte error rate {{ $value | humanizePercentage }}. Trend devam ederse error budget birkaç gün içinde tükenecek."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PTFAdminSLOBurnRateSlow"

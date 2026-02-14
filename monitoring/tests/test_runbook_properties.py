@@ -21,13 +21,20 @@ from .conftest import ALERTS_PATH, RUNBOOK_PATH
 def _load_alert_names():
     with open(ALERTS_PATH, encoding="utf-8") as f:
         data = yaml.safe_load(f)
-    return [r["alert"] for r in data["spec"]["groups"][0]["rules"]]
+    names = []
+    for group in data["spec"]["groups"]:
+        for rule in group["rules"]:
+            names.append(rule["alert"])
+    return names
 
 
 def _load_alert_rules():
     with open(ALERTS_PATH, encoding="utf-8") as f:
         data = yaml.safe_load(f)
-    return data["spec"]["groups"][0]["rules"]
+    rules = []
+    for group in data["spec"]["groups"]:
+        rules.extend(group["rules"])
+    return rules
 
 
 def _load_runbook():

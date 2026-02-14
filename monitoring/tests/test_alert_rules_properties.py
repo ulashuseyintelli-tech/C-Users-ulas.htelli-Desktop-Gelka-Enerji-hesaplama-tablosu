@@ -24,7 +24,9 @@ def _load_alerts():
 
 
 ALERT_DATA = _load_alerts()
-RULES = ALERT_DATA["spec"]["groups"][0]["rules"]
+RULES = []
+for _group in ALERT_DATA["spec"]["groups"]:
+    RULES.extend(_group["rules"])
 
 REQUIRED_LABELS = {"severity", "team", "service"}
 REQUIRED_ANNOTATIONS = {"summary", "description", "runbook_url"}

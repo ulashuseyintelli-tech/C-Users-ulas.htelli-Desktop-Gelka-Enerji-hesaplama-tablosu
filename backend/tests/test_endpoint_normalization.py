@@ -222,13 +222,21 @@ class TestNormalizeFromPath:
 # ══════════════════════════════════════════════════════════════════════════════
 
 # Bounded generators for determinism
-_path_segment = st.from_regex(r"[a-zA-Z0-9_-]{1,20}", fullmatch=True)
-_uuid_segment = st.from_regex(
-    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
-    fullmatch=True,
+_path_segment = st.text(
+    alphabet=string.ascii_lowercase + string.digits + "-_",
+    min_size=1, max_size=12,
 )
+_uuid_segment = st.tuples(
+    st.text(alphabet="0123456789abcdef", min_size=8, max_size=8),
+    st.text(alphabet="0123456789abcdef", min_size=4, max_size=4),
+    st.text(alphabet="0123456789abcdef", min_size=4, max_size=4),
+    st.text(alphabet="0123456789abcdef", min_size=4, max_size=4),
+    st.text(alphabet="0123456789abcdef", min_size=12, max_size=12),
+).map(lambda t: f"{t[0]}-{t[1]}-{t[2]}-{t[3]}-{t[4]}")
 _numeric_segment = st.integers(min_value=0, max_value=999999).map(str)
-_hex_token_segment = st.from_regex(r"[0-9a-f]{16,32}", fullmatch=True)
+_hex_token_segment = st.text(
+    alphabet="0123456789abcdef", min_size=16, max_size=32,
+)
 
 _dynamic_segment = st.one_of(_path_segment, _uuid_segment, _numeric_segment, _hex_token_segment)
 _path_strategy = st.lists(_dynamic_segment, min_size=0, max_size=10).map(

@@ -22,3 +22,40 @@ settings.register_profile(
 )
 
 settings.load_profile("default")
+
+
+# ── Ops-Guard singleton isolation ─────────────────────────────────────────────
+# Rate limiter and kill-switch singletons are module-level; without reset,
+# tests that share the same process accumulate state (e.g. rate limit buckets
+# fill up across test files). This autouse fixture resets them before each test.
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _reset_ops_guard_singletons():
+    """Reset ops-guard singletons before each test for isolation."""
+    try:
+        import app.ops_guard_middleware as ogm
+        if ogm._rate_limit_guard is not None:
+            ogm._rate_limit_guard.reset()
+    except Exception:
+        pass
+
+    try:
+        import app.main as main_mod
+        if main_mod._kill_switch_manager is not None:
+            # Re-init from config (resets switch states)
+            pass  # kill-switch state is test-managed, don't auto-reset
+    except Exception:
+        pass
+
+    yield
+
+    # Post-test cleanup
+    try:
+        import app.ops_guard_middleware as ogm
+        if ogm._rate_limit_guard is not None:
+            ogm._rate_limit_guard.reset()
+    except Exception:
+        pass

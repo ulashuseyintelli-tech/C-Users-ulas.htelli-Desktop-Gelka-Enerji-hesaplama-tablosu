@@ -130,5 +130,5 @@ class TestPrometheusRule:
 
     def test_alert_count(self, kustomize_docs):
         pr = self._get_pr(kustomize_docs)
-        rules = pr["spec"]["groups"][0]["rules"]
-        assert len(rules) == 9
+        total_rules = sum(len(g["rules"]) for g in pr["spec"]["groups"])
+        assert total_rules == 16

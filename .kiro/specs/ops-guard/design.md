@@ -220,6 +220,7 @@ class GuardConfig(BaseSettings):
     cb_open_duration_seconds: float = 30.0
     cb_half_open_max_requests: int = 3
     cb_window_seconds: float = 60.0
+    cb_min_samples: int = 10                         # minimum events before threshold applies
 ```
 
 **Geçersiz config davranışı (HD-4)**: `ValidationError` → varsayılan değerlerle devam + `WARNING` log + `ptf_admin_guard_config_fallback_total` counter. ASLA reject etme.

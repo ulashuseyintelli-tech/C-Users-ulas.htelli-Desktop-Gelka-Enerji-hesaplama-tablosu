@@ -4749,3 +4749,79 @@ async def get_feedback_stats(
         "status": "ok",
         "stats": stats.to_dict(),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# OPS-GUARD ADMIN API (Feature: ops-guard, Task 4.2)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+from pydantic import BaseModel as PydanticBaseModel
+
+
+class KillSwitchUpdateRequest(PydanticBaseModel):
+    enabled: bool
+    reason: str | None = None
+
+
+@app.get("/admin/ops/kill-switches")
+async def list_kill_switches(
+    _: str = Depends(require_admin_key),
+):
+    """List all kill-switch states. Requires admin key."""
+    from .kill_switch import KillSwitchManager
+    from .guard_config import get_guard_config
+    from .ptf_metrics import get_ptf_metrics
+
+    manager = _get_kill_switch_manager()
+    return {"status": "ok", "switches": manager.get_all_switches()}
+
+
+@app.put("/admin/ops/kill-switches/{switch_name}")
+async def update_kill_switch(
+    switch_name: str,
+    body: KillSwitchUpdateRequest,
+    request: Request,
+    admin_key: str = Depends(require_admin_key),
+):
+    """Update a kill-switch state. Requires admin key."""
+    manager = _get_kill_switch_manager()
+    actor = admin_key if admin_key != "admin-bypass" else "admin"
+    result = manager.set_switch(switch_name, body.enabled, actor)
+    return {"status": "ok", "switch": result}
+
+
+@app.get("/admin/ops/status")
+async def get_ops_status(
+    _: str = Depends(require_admin_key),
+):
+    """Guard status summary. Requires admin key."""
+    from .guard_config import get_guard_config
+
+    manager = _get_kill_switch_manager()
+    config = get_guard_config()
+
+    return {
+        "status": "ok",
+        "guard_config": {
+            "schema_version": config.schema_version,
+            "config_version": config.config_version,
+            "config_hash": config.config_hash,
+        },
+        "kill_switches": manager.get_all_switches(),
+    }
+
+
+# ── Kill-switch singleton ────────────────────────────────────────────────────
+
+_kill_switch_manager = None
+
+
+def _get_kill_switch_manager():
+    """Lazy singleton for KillSwitchManager."""
+    global _kill_switch_manager
+    if _kill_switch_manager is None:
+        from .kill_switch import KillSwitchManager
+        from .guard_config import get_guard_config
+        from .ptf_metrics import get_ptf_metrics
+        _kill_switch_manager = KillSwitchManager(get_guard_config(), get_ptf_metrics())
+    return _kill_switch_manager
