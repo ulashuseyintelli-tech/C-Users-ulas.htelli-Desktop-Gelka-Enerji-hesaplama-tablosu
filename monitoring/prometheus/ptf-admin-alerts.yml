@@ -247,3 +247,153 @@ spec:
             summary: "SLO burn rate yüksek (6h window) — error budget yavaşça tükeniyor"
             description: "Son 6 saatte error rate {{ $value | humanizePercentage }}. Trend devam ederse error budget birkaç gün içinde tükenecek."
             runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PTFAdminSLOBurnRateSlow"
+
+    # ════════════════════════════════════════════════════════════════
+    # Dependency Wrapper Alert Group — Feature: dependency-wrappers
+    # ════════════════════════════════════════════════════════════════
+    - name: ptf-admin-dependency-health
+      rules:
+        # ── DH1: Guard Fail-Open Triggered ────────────────────────
+        - alert: PTFAdminGuardFailOpen
+          expr: increase(ptf_admin_guard_failopen_total[5m]) > 0
+          for: 0m
+          labels:
+            severity: critical
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "Guard fail-open tetiklendi — koruma katmanı devre dışı"
+            description: "ptf_admin_guard_failopen_total son 5 dakikada arttı. Wrapper veya middleware internal error — sistem korumasız çalışıyor."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PTFAdminGuardFailOpen"
+
+        # ── DH2: Dependency Map Miss ──────────────────────────────
+        - alert: PTFAdminDependencyMapMiss
+          expr: increase(ptf_admin_dependency_map_miss_total[10m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "Endpoint dependency map'te bulunamadı — CB pre-check atlandı"
+            description: "ptf_admin_dependency_map_miss_total son 10 dakikada arttı. Yeni endpoint wiring kaçırılmış veya mapping drift olabilir."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PTFAdminDependencyMapMiss"
+
+        # ── DH3: Dependency Timeout Rate ──────────────────────────
+        - alert: PTFAdminDependencyTimeoutRate
+          expr: >-
+            sum by (dependency)(
+              rate(ptf_admin_dependency_call_total{outcome="timeout"}[5m])
+            )
+            /
+            sum by (dependency)(
+              rate(ptf_admin_dependency_call_total[5m])
+            )
+            > 0.02
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "Dependency timeout oranı > %2"
+            description: "{{ $labels.dependency }} timeout oranı {{ $value | humanizePercentage }}. Upstream latency artışı veya timeout threshold düşük olabilir."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PTFAdminDependencyTimeoutRate"
+
+        # ── DH4: Dependency Failure Rate (CB failure class) ───────
+        - alert: PTFAdminDependencyFailureRate
+          expr: >-
+            sum by (dependency)(
+              rate(ptf_admin_dependency_call_total{outcome="failure"}[5m])
+            )
+            /
+            sum by (dependency)(
+              rate(ptf_admin_dependency_call_total[5m])
+            )
+            > 0.01
+          for: 5m
+          labels:
+            severity: critical
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "Dependency failure oranı > %1 (CB failure sınıfı)"
+            description: "{{ $labels.dependency }} failure oranı {{ $value | humanizePercentage }}. Connection error, 5xx veya upstream arızası."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PTFAdminDependencyFailureRate"
+
+        # ── DH5: Client Error Rate (contract drift) ──────────────
+        - alert: PTFAdminDependencyClientErrorRate
+          expr: >-
+            sum by (dependency)(
+              rate(ptf_admin_dependency_call_total{outcome="client_error"}[5m])
+            )
+            /
+            sum by (dependency)(
+              rate(ptf_admin_dependency_call_total[5m])
+            )
+            > 0.05
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "Dependency client error oranı > %5 (4xx/ValueError)"
+            description: "{{ $labels.dependency }} client error oranı {{ $value | humanizePercentage }}. Contract drift, yanlış parametre veya upstream API değişikliği."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PTFAdminDependencyClientErrorRate"
+
+        # ── DH6: Retry Storm ──────────────────────────────────────
+        - alert: PTFAdminRetryStorm
+          expr: >-
+            sum by (dependency)(
+              rate(ptf_admin_dependency_retry_total[5m])
+            )
+            /
+            sum by (dependency)(
+              rate(ptf_admin_dependency_call_total[5m])
+            )
+            > 0.2
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "Retry oranı > %20 — retry storm riski"
+            description: "{{ $labels.dependency }} retry oranı {{ $value | humanizePercentage }}. Zincirleme retry fırtınası başlangıcı olabilir. Retry budget veya backoff ayarlarını gözden geçirin."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PTFAdminRetryStorm"
+
+        # ── DH7: Dependency P95 Latency ───────────────────────────
+        - alert: PTFAdminDependencyLatencyP95
+          expr: >-
+            histogram_quantile(
+              0.95,
+              sum by (le, dependency)(
+                rate(ptf_admin_dependency_call_duration_seconds_bucket[5m])
+              )
+            ) > 0.8
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "Dependency P95 latency > 800ms"
+            description: "{{ $labels.dependency }} P95 latency {{ $value }}s. Upstream yavaşlama, connection pool exhaustion veya network latency."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PTFAdminDependencyLatencyP95"
+
+        # ── DH8: Circuit Open Rate (dependency-level) ─────────────
+        - alert: PTFAdminDependencyCircuitOpenRate
+          expr: >-
+            sum by (dependency)(
+              rate(ptf_admin_dependency_call_total{outcome="circuit_open"}[5m])
+            ) > 0
+          for: 2m
+          labels:
+            severity: critical
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "Dependency circuit breaker açık — çağrılar reddediliyor"
+            description: "{{ $labels.dependency }} için circuit breaker açık, istekler reddediliyor. Upstream arızası devam ediyor."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PTFAdminDependencyCircuitOpenRate"

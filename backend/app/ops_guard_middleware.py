@@ -83,6 +83,11 @@ class OpsGuardMiddleware(BaseHTTPMiddleware):
         except Exception as exc:
             # Middleware-level internal error → fail-open (don't block on guard bug)
             logger.error(f"[OPS-GUARD] Middleware internal error, failing open: {exc}")
+            try:
+                from .ptf_metrics import get_ptf_metrics
+                get_ptf_metrics().inc_guard_failopen()
+            except Exception:
+                pass
             deny_reason = None
 
         if deny_reason is not None:
@@ -118,9 +123,9 @@ class OpsGuardMiddleware(BaseHTTPMiddleware):
             return rl_deny
 
         # ── 3. Circuit Breaker (HD-2: third, pre-check) ─────────────────
-        # CB is dependency-scoped; pre-check uses endpoint→dependency mapping
-        # For now: no pre-check wiring (dependencies are call-site wrapped)
-        # CB deny will come from handler-level wrappers in future tasks
+        cb_deny = self._check_circuit_breaker(endpoint_template)
+        if cb_deny is not None:
+            return cb_deny
 
         return None  # ALLOW
 
@@ -155,6 +160,50 @@ class OpsGuardMiddleware(BaseHTTPMiddleware):
         except Exception as exc:
             logger.error(f"[OPS-GUARD] Rate limit check error: {exc}")
             return GuardDenyReason.INTERNAL_ERROR  # fail-closed (HD-3)
+
+    def _check_circuit_breaker(
+        self, endpoint_template: str
+    ) -> Optional[GuardDenyReason]:
+        """CB pre-check: endpoint'in bağımlılıklarının CB durumunu kontrol et (DW-2)."""
+        try:
+            from .guard_config import get_guard_config
+            config = get_guard_config()
+
+            # DW-2: Flag kapalıysa pre-check atla
+            if not config.cb_precheck_enabled:
+                return None
+
+            from .guards.endpoint_dependency_map import get_dependencies
+            from .main import _get_cb_registry
+
+            dependencies = get_dependencies(endpoint_template)
+            if not dependencies:
+                # Mapping miss — log endpoint for troubleshooting, metric label'sız (HD-5)
+                logger.debug(f"[OPS-GUARD] CB pre-check skip: no mapping for {endpoint_template}")
+                try:
+                    from .ptf_metrics import get_ptf_metrics
+                    get_ptf_metrics().inc_dependency_map_miss()
+                except Exception:
+                    pass
+                return None  # Bilinmeyen endpoint → CB pre-check atla
+
+            registry = _get_cb_registry()
+            for dep in dependencies:
+                cb = registry.get(dep.value)
+                if not cb.allow_request():
+                    return GuardDenyReason.CIRCUIT_OPEN
+
+            return None  # Tüm CB'ler geçiyor
+
+        except Exception as exc:
+            # CB pre-check hatası → fail-open + metrik (DW-3)
+            logger.error(f"[OPS-GUARD] CB pre-check error, failing open: {exc}")
+            try:
+                from .ptf_metrics import get_ptf_metrics
+                get_ptf_metrics().inc_guard_failopen()
+            except Exception:
+                pass
+            return None
 
     # ── Response builder ──────────────────────────────────────────────────
 

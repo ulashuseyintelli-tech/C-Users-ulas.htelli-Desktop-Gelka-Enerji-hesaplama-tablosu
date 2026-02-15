@@ -184,6 +184,11 @@ class PTFMetrics:
             "Guard fail-open fallback count (middleware + wrapper)",
             registry=self._registry,
         )
+        self._dependency_map_miss_total = Counter(
+            "ptf_admin_dependency_map_miss_total",
+            "Endpoint not found in dependency map (CB pre-check skipped)",
+            registry=self._registry,
+        )
 
     # ── upsert_total ──────────────────────────────────────────────────────
 
@@ -333,10 +338,10 @@ class PTFMetrics:
 
     # ── Dependency Wrapper metrics (Feature: dependency-wrappers, Task 2) ─
 
-    _VALID_DEP_OUTCOMES = frozenset({"success", "failure", "timeout", "circuit_open"})
+    _VALID_DEP_OUTCOMES = frozenset({"success", "failure", "timeout", "circuit_open", "client_error"})
 
     def inc_dependency_call(self, dependency: str, outcome: str) -> None:
-        """Increment dependency call counter. outcome: success|failure|timeout|circuit_open."""
+        """Increment dependency call counter. outcome: success|failure|timeout|circuit_open|client_error."""
         if outcome not in self._VALID_DEP_OUTCOMES:
             logger.warning(f"[METRICS] Invalid dependency outcome: {outcome}")
             return
@@ -353,6 +358,10 @@ class PTFMetrics:
     def inc_guard_failopen(self) -> None:
         """Increment guard fail-open counter (DW-3: middleware + wrapper)."""
         self._guard_failopen_total.inc()
+
+    def inc_dependency_map_miss(self) -> None:
+        """Increment dependency map miss counter (endpoint not in mapping)."""
+        self._dependency_map_miss_total.inc()
 
     # ── Snapshot (test/debug only) ────────────────────────────────────────
 

@@ -396,6 +396,111 @@
           }
         }
       ]
+    },
+    {
+      "id": 500,
+      "title": "Dependency Health",
+      "type": "row",
+      "collapsed": true,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 48 },
+      "panels": [
+        {
+          "id": 13,
+          "title": "DEP | Call Rate by Outcome",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 49 },
+          "datasource": { "uid": "$datasource", "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "sum(rate(ptf_admin_dependency_call_total{job=~\"$job\"}[5m])) by (dependency, outcome)",
+              "legendFormat": "{{dependency}} {{outcome}}",
+              "refId": "A",
+              "datasource": { "uid": "$datasource", "type": "prometheus" }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "auto" }
+            },
+            "overrides": [
+              { "matcher": { "id": "byRegexp", "options": "success" }, "properties": [{ "id": "color", "value": { "fixedColor": "#73BF69", "mode": "fixed" } }] },
+              { "matcher": { "id": "byRegexp", "options": "failure" }, "properties": [{ "id": "color", "value": { "fixedColor": "#F2495C", "mode": "fixed" } }] },
+              { "matcher": { "id": "byRegexp", "options": "timeout" }, "properties": [{ "id": "color", "value": { "fixedColor": "#FF9830", "mode": "fixed" } }] },
+              { "matcher": { "id": "byRegexp", "options": "circuit_open" }, "properties": [{ "id": "color", "value": { "fixedColor": "#B877D9", "mode": "fixed" } }] },
+              { "matcher": { "id": "byRegexp", "options": "client_error" }, "properties": [{ "id": "color", "value": { "fixedColor": "#FADE2A", "mode": "fixed" } }] }
+            ]
+          }
+        },
+        {
+          "id": 14,
+          "title": "DEP | P95 Latency by Dependency",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 49 },
+          "datasource": { "uid": "$datasource", "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(ptf_admin_dependency_call_duration_seconds_bucket{job=~\"$job\"}[5m])) by (le, dependency))",
+              "legendFormat": "{{dependency}}",
+              "refId": "A",
+              "datasource": { "uid": "$datasource", "type": "prometheus" }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "pointSize": 5, "showPoints": "auto" }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 15,
+          "title": "DEP | Retry Rate by Dependency",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 57 },
+          "datasource": { "uid": "$datasource", "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "sum(rate(ptf_admin_dependency_retry_total{job=~\"$job\"}[5m])) by (dependency)",
+              "legendFormat": "{{dependency}}",
+              "refId": "A",
+              "datasource": { "uid": "$datasource", "type": "prometheus" }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 15, "pointSize": 5, "showPoints": "auto" }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 16,
+          "title": "DEP | Circuit Open State",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 57 },
+          "datasource": { "uid": "$datasource", "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "sum(rate(ptf_admin_dependency_call_total{outcome=\"circuit_open\", job=~\"$job\"}[5m])) by (dependency)",
+              "legendFormat": "{{dependency}} circuit_open",
+              "refId": "A",
+              "datasource": { "uid": "$datasource", "type": "prometheus" }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 20, "pointSize": 5, "showPoints": "auto" }
+            },
+            "overrides": [
+              { "matcher": { "id": "byRegexp", "options": "circuit_open" }, "properties": [{ "id": "color", "value": { "fixedColor": "#F2495C", "mode": "fixed" } }] }
+            ]
+          }
+        }
+      ]
     }
   ]
 }

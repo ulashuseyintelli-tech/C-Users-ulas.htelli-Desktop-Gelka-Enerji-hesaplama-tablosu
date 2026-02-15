@@ -73,15 +73,16 @@ class TestDashboardRows:
         "Import / Upsert Business Health": 3,
         "Lookup / History": 3,
         "Frontend Telemetry": 2,
+        "Dependency Health": 4,
     }
 
     def _get_rows(self, dashboard):
         return [p for p in dashboard["panels"] if p.get("type") == "row"]
 
     def test_row_count(self, dashboard):
-        """Dashboard has exactly 4 rows."""
+        """Dashboard has exactly 5 rows."""
         rows = self._get_rows(dashboard)
-        assert len(rows) == 4
+        assert len(rows) == 5
 
     def test_all_rows_collapsed(self, dashboard):
         """All rows are collapsible (collapsed=true).

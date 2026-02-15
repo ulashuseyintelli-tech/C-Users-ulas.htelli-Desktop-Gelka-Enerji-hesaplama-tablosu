@@ -58,13 +58,13 @@ Tüm exception→CB failure sınıflandırması `failure_taxonomy.py`'de. Wrappe
   - [x] 2.1 PTFMetrics'e yeni metrikler ekle
     - `backend/app/ptf_metrics.py` dosyasına ekle:
       - `ptf_admin_dependency_call_total{dependency, outcome}` Counter
-        - outcome enum: `success` | `failure` | `timeout` | `circuit_open`
+        - outcome enum: `success` | `failure` | `timeout` | `circuit_open` | `client_error`
         - dependency: mevcut HD-5 enum (`db_primary`, `db_replica`, `cache`, `external_api`, `import_worker`)
       - `ptf_admin_dependency_call_duration_seconds{dependency}` Histogram
       - `ptf_admin_dependency_retry_total{dependency}` Counter
       - `ptf_admin_guard_failopen_total` Counter (label'sız — middleware + wrapper ortak)
     - Helper metodlar: `inc_dependency_call(dep, outcome)`, `observe_dependency_call_duration(dep, dur)`, `inc_dependency_retry(dep)`, `inc_guard_failopen()`
-    - Kardinalite bütçesi: dependency(5) × outcome(4) = 20 max
+    - Kardinalite bütçesi: dependency(5) × outcome(5) = 25 max
     - _Requirements: 3.6, 3.7, 5.5, 6.1_
 
   - [x] 2.2 Metrik kayıt unit testleri yaz
@@ -97,8 +97,8 @@ Tüm exception→CB failure sınıflandırması `failure_taxonomy.py`'de. Wrappe
 
 ### Blok 2 — Mapping ve CB Pre-check
 
-- [ ] 5. Endpoint Dependency Map implementasyonu
-  - [ ] 5.1 Endpoint dependency map modülü oluştur
+- [x] 5. Endpoint Dependency Map implementasyonu
+  - [x] 5.1 Endpoint dependency map modülü oluştur
     - `backend/app/guards/endpoint_dependency_map.py` dosyası oluştur
     - `ENDPOINT_DEPENDENCY_MAP: dict[str, list[Dependency]]` statik dict
     - `get_dependencies(endpoint_template: str) -> list[Dependency]`
@@ -107,15 +107,15 @@ Tüm exception→CB failure sınıflandırması `failure_taxonomy.py`'de. Wrappe
     - Mapping sadece deterministik endpoint'ler için (koşullu dependency yok)
     - _Requirements: 1.1, 1.2, 1.3, 1.4_
 
-  - [ ] 5.2 Endpoint dependency map property testi yaz
+  - [x] 5.2 Endpoint dependency map property testi yaz
     - `backend/tests/test_endpoint_dependency_map.py` oluştur
     - **Property 1: Endpoint Dependency Map Geçerliliği**
     - Map'teki her değer geçerli Dependency enum üyesi
     - Map'te olmayan endpoint → boş liste
     - _Validates: Requirements 1.1, 1.2, 1.3_
 
-- [ ] 6. Middleware CB pre-check entegrasyonu (DW-2: flag ile kontrollü)
-  - [ ] 6.1 OpsGuardMiddleware'e CB pre-check ekle
+- [x] 6. Middleware CB pre-check entegrasyonu (DW-2: flag ile kontrollü)
+  - [x] 6.1 OpsGuardMiddleware'e CB pre-check ekle
     - `backend/app/ops_guard_middleware.py` → `_evaluate_guards()` içindeki yorum satırını aktifleştir
     - `_check_circuit_breaker(self, endpoint_template: str) -> Optional[GuardDenyReason]` metodu ekle
     - `cb_precheck_enabled` flag kontrolü: False ise → None dön (pre-check atla)
@@ -125,12 +125,12 @@ Tüm exception→CB failure sınıflandırması `failure_taxonomy.py`'de. Wrappe
     - HD-2 sırasına uygun: KS → RL → CB
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5_
 
-  - [ ] 6.2 Middleware fail-open metriği ekle
+  - [x] 6.2 Middleware fail-open metriği ekle
     - `dispatch()` catch-all bloğuna `ptf_admin_guard_failopen_total` artışı ekle
     - Mevcut log mesajı korunur, metrik eklenir
     - _Requirements: 6.1, 6.2_
 
-  - [ ] 6.3 CB pre-check + fail-open testleri yaz
+  - [x] 6.3 CB pre-check + fail-open testleri yaz
     - `backend/tests/test_ops_guard_middleware.py` dosyasını genişlet veya `backend/tests/test_cb_precheck.py` oluştur
     - **Property 2: CB Pre-Check Karar Doğruluğu** — herhangi bir dep OPEN → deny, tümü CLOSED/HALF_OPEN → allow
     - **Property 3: Guard Zinciri Sırası Korunması** — KS deny → CB çağrılmaz, RL deny → CB çağrılmaz
@@ -138,7 +138,7 @@ Tüm exception→CB failure sınıflandırması `failure_taxonomy.py`'de. Wrappe
     - CB pre-check iç hatası → fail-open + metrik artışı
     - _Validates: Requirements 2.1, 2.2, 2.3, 2.5, 6.1, 6.2_
 
-- [ ] 7. Checkpoint — Blok 2 doğrulaması
+- [x] 7. Checkpoint — Blok 2 doğrulaması
   - Mevcut ~655 test kırılmadı
   - CB pre-check aktif (flag=True default)
   - Pre-check determinism: yanlış deny yok (bilinmeyen endpoint → boş liste → geç)
@@ -146,8 +146,8 @@ Tüm exception→CB failure sınıflandırması `failure_taxonomy.py`'de. Wrappe
 
 ### Blok 3 — Wrapper Implementasyonları
 
-- [ ] 8. Dependency Wrapper base sınıf ve concrete wrapper'lar
-  - [ ] 8.1 Dependency wrapper modülü oluştur
+- [x] 8. Dependency Wrapper base sınıf ve concrete wrapper'lar
+  - [x] 8.1 Dependency wrapper modülü oluştur
     - `backend/app/guards/dependency_wrapper.py` dosyası oluştur
     - `CircuitOpenError(Exception)` — CB OPEN durumunda fırlatılır
     - `DependencyWrapper` base sınıf:
@@ -168,7 +168,7 @@ Tüm exception→CB failure sınıflandırması `failure_taxonomy.py`'de. Wrappe
     - `create_wrapper(dependency, cb_registry, config, metrics) -> DependencyWrapper` factory
     - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 5.1, 5.2, 5.3, 5.4_
 
-  - [ ] 8.2 Wrapper CB entegrasyonu property testi yaz
+  - [x] 8.2 Wrapper CB entegrasyonu property testi yaz
     - `backend/tests/test_dependency_wrapper.py` oluştur
     - **Property 4: Wrapper CB Entegrasyonu**
     - CB CLOSED → call yapılır, success → record_success
@@ -177,7 +177,7 @@ Tüm exception→CB failure sınıflandırması `failure_taxonomy.py`'de. Wrappe
     - Non-CB failure (4xx, ValueError) → record_failure çağrılmaz, retry yapılmaz
     - _Validates: Requirements 3.2, 3.3, 3.4_
 
-  - [ ] 8.3 Retry politikası property testi yaz
+  - [x] 8.3 Retry politikası property testi yaz
     - **Property 6: Retry Politikası Doğruluğu**
     - `is_write=False` + CB failure → max_retries kadar retry
     - `is_write=True` + `wrapper_retry_on_write=False` → retry yok (DW-1)
@@ -186,33 +186,58 @@ Tüm exception→CB failure sınıflandırması `failure_taxonomy.py`'de. Wrappe
     - Exponential backoff: delay = base * 2^attempt
     - _Validates: Requirements 5.1, 5.2, 5.4, 5.5_
 
-  - [ ] 8.4 Wrapper metrik kaydı property testi yaz
+  - [x] 8.4 Wrapper metrik kaydı property testi yaz
     - **Property 7: Wrapper Metrik Kaydı**
     - Her outcome için doğru `dependency_call_total{dep, outcome}` artışı
     - Duration histogram güncelleniyor
     - Wrapper iç hatası → `guard_failopen_total` artışı (DW-3)
     - _Validates: Requirements 3.6, 3.7_
 
-- [ ] 9. Checkpoint — Blok 3 doğrulaması
+- [x] 9. Checkpoint — Blok 3 doğrulaması
   - Wrapper'lar bağımsız çalışıyor (henüz handler'a bağlı değil)
   - Tüm property testleri geçiyor
   - Mevcut ~655 test kırılmadı
 
 ### Blok 4 — Wiring
 
-- [ ] 10. CircuitBreakerRegistry singleton ve wrapper factory wiring
-  - [ ] 10.1 main.py'de CB registry singleton oluştur
+- [x] 10. CircuitBreakerRegistry singleton ve wrapper factory wiring
+  - [x] 10.1 main.py'de CB registry singleton oluştur
     - `backend/app/main.py` → `_get_cb_registry()` lazy singleton
     - Wrapper factory'yi endpoint handler'lardan erişilebilir yap
     - _Requirements: 8.4, 8.5_
 
-  - [ ] 10.2 Handler'ların dependency çağrılarını wrapper'a geçir
+  - [x] 10.2 Handler'ların dependency çağrılarını wrapper'a geçir
     - Kritik yol endpoint'leri: import/apply, import/preview, market-prices CRUD, lookup
     - Her handler'da: `wrapper = create_wrapper(dep, registry, config, metrics)`
     - `await wrapper.call(actual_dependency_fn, ..., is_write=True/False)`
     - _Requirements: 3.1, 8.4_
 
-- [ ] 11. Final Checkpoint — Tüm testler
+  - [x] 10.3 Bypass koruması — doğrudan client kullanımına guard
+    - Tüm dependency call site'ları wrapper'a taşınmış (grep ile kanıt)
+    - `create_wrapper()` tek kaynak: doğrudan client kullanımına lint/guard (en azından test)
+    - _Requirements: 3.1_
+
+  - [x] 10.4 Handler error mapping tablosu sabitle
+    - `CircuitOpenError` → 503 CIRCUIT_OPEN
+    - timeout → 504 veya 503 (semantik seçimi sabitle, her yerde tutarlı)
+    - external 5xx → 502/503 kararını sabitle
+    - Double-metric riski: hem wrapper hem handler metrik basmamalı (wrapper tek kaynak)
+    - _Requirements: 3.5, 6.1_
+
+  - [x] 10.5 Write path retry koruması doğrula
+    - "No retry on write" property testi: handler-level entegrasyon testiyle doğrulanmış
+    - Factory paramı yanlış geçilme riski → test ile kanıt
+    - _Requirements: 5.1, 5.2_
+
+- [x] 11. Wiring Entegrasyon Testleri
+  - [x] 11.1 CB OPEN simülasyonu → endpoint 503 entegrasyon testi
+    - _Requirements: 3.5_
+  - [x] 11.2 Read timeout → retry sayısı + metrik artışı entegrasyon testi
+    - _Requirements: 5.4, 5.5_
+  - [x] 11.3 Write timeout → retry yok entegrasyon testi
+    - _Requirements: 5.1_
+
+- [x] 12. Final Checkpoint — Tüm testler
   - Mevcut ~655 test + yeni testlerin tamamı geçiyor
   - Tüm kritik yol dependency çağrıları wrapper'dan geçiyor
   - Failure taxonomy tek kaynak + testle kanıt
@@ -232,6 +257,21 @@ Tüm exception→CB failure sınıflandırması `failure_taxonomy.py`'de. Wrappe
 6. ✅ Wrapper internal error → fail-open + metrik
 7. ✅ Full suite yeşil (~655 mevcut + yeni testler)
 
+### Blok 4 Wiring DoD (Ek)
+
+8. ✅ Tüm dependency call site'ları wrapper'a taşınmış (grep ile kanıt)
+9. ✅ `create_wrapper()` tek kaynak: doğrudan client kullanımına lint/guard (en azından test)
+10. ✅ Handler error mapping tablosu sabitlenmiş:
+    - CircuitOpenError → 503 CIRCUIT_OPEN
+    - timeout → 504 DEPENDENCY_TIMEOUT
+    - ConnectionError/OSError → 502 DEPENDENCY_UNAVAILABLE
+    - Diğer CB failure → 502 DEPENDENCY_ERROR
+11. ✅ "No retry on write" property testi: handler-level entegrasyon testiyle doğrulanmış
+12. ✅ Coverage entegrasyon testleri:
+    - 1 integration test: CB OPEN simüle → endpoint 503
+    - 1 integration test: read timeout → retry sayısı + metrik artışı
+    - 1 integration test: write timeout → retry yok
+
 ## Notlar
 
 - Her görev spesifik gereksinimleri referans eder
@@ -240,3 +280,61 @@ Tüm exception→CB failure sınıflandırması `failure_taxonomy.py`'de. Wrappe
 - PBT Perf Rule: `st.from_regex(...)` kullanılmaz; küçük boyut limitleri ile kompozisyonel stratejiler tercih edilir
 - `ptf_admin_` metrik namespace korunur — yeni namespace YASAK
 - Guard zinciri sırası (HD-2): KillSwitch → RateLimiter → CircuitBreaker → Handler
+
+### Blok 5 — Alert/SLO Set + Bypass Automation + Runbook Updates
+
+- [x] 13. Dependency Health Alert Group (8 alert)
+  - [x] 13.1 `ptf-admin-dependency-health` grubu oluştur (`monitoring/prometheus/ptf-admin-alerts.yml`)
+    - DH1: PTFAdminGuardFailOpen (critical, 0m)
+    - DH2: PTFAdminDependencyMapMiss (warning, 5m)
+    - DH3: PTFAdminDependencyTimeoutRate (warning, 5m, >2%)
+    - DH4: PTFAdminDependencyFailureRate (critical, 5m, >1%)
+    - DH5: PTFAdminDependencyClientErrorRate (warning, 5m, >5%)
+    - DH6: PTFAdminRetryStorm (warning, 5m, >20%)
+    - DH7: PTFAdminDependencyLatencyP95 (warning, 5m, >0.8s)
+    - DH8: PTFAdminDependencyCircuitOpenRate (critical, 2m)
+
+- [x] 14. Runbook güncellemeleri
+  - [x] 14.1 8 yeni alert için runbook bölümleri (## heading, Severity, PromQL, Olası Nedenler ≥3, İlk 3 Kontrol ≥3, Müdahale Adımları ≥1)
+  - [x] 14.2 "Ek: HTTP Hata Kodu Semantiği" bölümü (502/503/504 ayrımı)
+
+- [x] 15. Alert test güncellemeleri
+  - [x] 15.1 `test_alert_rules.py` → `test_three_groups_total` (2→3)
+  - [x] 15.2 `TestDependencyHealthAlertGroup` — grup varlığı + 8 alert sayısı
+  - [x] 15.3 `TestDependencyHealthAlertCompleteness` — severity/for/labels/annotations parametrize
+  - [x] 15.4 `TestDependencyHealthAlertExpressions` — PromQL pattern doğrulama
+  - [x] 15.5 `test_deploy_structure.py` → alert count 16→24
+
+- [x] 16. Bypass koruma otomasyonu (router introspection)
+  - [x] 16.1 `TestBypassProtection` → statik listeden router introspection'a geçiş
+    - `CRITICAL_PATH_PREFIXES` ile otomatik endpoint keşfi
+    - `EXEMPT_PATHS` ile bilinen muafiyetler (legacy, deprecation-stats, form)
+    - `_get_critical_endpoints_from_router()` — FastAPI route registry
+    - `test_router_discovers_critical_endpoints` — en az 1 endpoint keşfedilmeli
+    - `test_all_critical_endpoints_use_wrapper` — wrapper kullanımı
+    - `test_all_critical_endpoints_use_error_mapping` — error mapping kullanımı
+    - `test_no_direct_db_calls_in_critical_endpoints` — doğrudan DB çağrısı yok
+    - `test_error_mapping_table_consistency` — HTTP status code doğruluğu
+
+- [x] 17. Grafana dashboard dependency health panelleri
+  - [x] 17.1 Row 500 (collapsed): "Dependency Health"
+    - Panel 13: DEP | Call Rate by Outcome (timeseries, outcome renk kodlu)
+    - Panel 14: DEP | P95 Latency by Dependency (timeseries)
+    - Panel 15: DEP | Retry Rate by Dependency (timeseries)
+    - Panel 16: DEP | Circuit Open State (timeseries)
+  - [x] 17.2 Dashboard test güncellemeleri (row count 4→5, ROW_MIN_PANELS güncelleme)
+
+- [x] 18. Final Checkpoint — Blok 5
+  - Backend: 1473 passed (+1 router introspection testi)
+  - Monitoring: 222 passed (+51 yeni dependency-health alert testleri)
+  - Full suite yeşil
+
+### Blok 5 DoD
+
+13. ✅ 8 dependency health alert tanımlı (ptf-admin-dependency-health grubu)
+14. ✅ Her alert için runbook bölümü (coverage test geçiyor)
+15. ✅ Bypass koruma router introspection ile otomatik (liste disiplini riski yok)
+16. ✅ Grafana dashboard'da Dependency Health row (4 panel)
+17. ✅ Tüm alert/runbook/dashboard testleri yeşil
+18. ✅ EXEMPT_PATHS dokümante — her muafiyetin yanında "Neden?" yorumu
+19. ✅ Runbook'a "Ek: Bypass Test Failure Troubleshooting" bölümü eklendi

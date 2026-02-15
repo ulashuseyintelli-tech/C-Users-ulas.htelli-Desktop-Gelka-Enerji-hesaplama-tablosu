@@ -47,6 +47,7 @@ ROW_MIN_PANELS = {
     "Import / Upsert Business Health": 3,
     "Lookup / History": 3,
     "Frontend Telemetry": 2,
+    "Dependency Health": 4,
 }
 
 REQUIRED_TOP_KEYS = {"title", "uid", "panels", "templating", "time", "refresh"}

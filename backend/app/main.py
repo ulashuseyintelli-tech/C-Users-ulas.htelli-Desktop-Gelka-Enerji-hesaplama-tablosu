@@ -790,7 +790,20 @@ async def analyze_invoice(
             )
     
     try:
-        extraction = extract_invoice_data(content, mime_type, fast_mode=fast_mode, text_hint=pdf_text_hint)
+        # External API çağrısını wrapper ile sar (EXTERNAL_API, read path)
+        import asyncio as _asyncio
+        from .guards.dependency_wrapper import CircuitOpenError
+        wrapper = _get_wrapper("external_api")
+        try:
+            extraction = await wrapper.call(
+                _asyncio.to_thread,
+                extract_invoice_data,
+                content, mime_type, fast_mode=fast_mode, text_hint=pdf_text_hint,
+                is_write=False,
+            )
+        except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
+            raise _map_wrapper_error_to_http(exc)
+
         validation = validate_extraction(extraction)
         
         # Sanity check: Eğer validation başarısız ve kritik hatalar varsa, fast_mode=False ile tekrar dene
@@ -802,7 +815,15 @@ async def analyze_invoice(
             if image_hash in _extraction_cache:
                 del _extraction_cache[image_hash]
             
-            extraction = extract_invoice_data(content, mime_type, fast_mode=False, text_hint=pdf_text_hint)
+            try:
+                extraction = await wrapper.call(
+                    _asyncio.to_thread,
+                    extract_invoice_data,
+                    content, mime_type, fast_mode=False, text_hint=pdf_text_hint,
+                    is_write=False,
+                )
+            except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
+                raise _map_wrapper_error_to_http(exc)
             validation = validate_extraction(extraction)
             fast_mode = False  # Meta'da doğru göster
         
@@ -852,8 +873,19 @@ async def calculate_offer_endpoint(
     if params is None:
         params = OfferParams()
     
+    # DB çağrısını wrapper ile sar (read path)
+    import asyncio as _asyncio
+    from .guards.dependency_wrapper import CircuitOpenError
+    wrapper = _get_wrapper("db_primary")
     try:
-        return calculate_offer(extraction, params, db=db)
+        return await wrapper.call(
+            _asyncio.to_thread,
+            calculate_offer,
+            extraction, params, db=db,
+            is_write=False,
+        )
+    except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
+        raise _map_wrapper_error_to_http(exc)
     except CalculationError as e:
         raise HTTPException(
             status_code=400,
@@ -3183,17 +3215,27 @@ async def list_market_prices(
     # Convert page/page_size to offset/limit
     offset = (page - 1) * page_size
     
-    result = service.list_prices(
-        db=db,
-        price_type=price_type,
-        status=status,
-        period_from=from_period,
-        period_to=to_period,
-        limit=page_size,
-        offset=offset,
-        sort_by=sort_by,
-        sort_order=sort_order,
-    )
+    # Wrapper ile DB çağrısını sar (read path → retry aktif)
+    import asyncio as _asyncio
+    from .guards.dependency_wrapper import CircuitOpenError
+    wrapper = _get_wrapper("db_primary")
+    try:
+        result = await wrapper.call(
+            _asyncio.to_thread,
+            service.list_prices,
+            db=db,
+            price_type=price_type,
+            status=status,
+            period_from=from_period,
+            period_to=to_period,
+            limit=page_size,
+            offset=offset,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            is_write=False,
+        )
+    except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
+        raise _map_wrapper_error_to_http(exc)
     
     return {
         "status": "ok",
@@ -3255,8 +3297,21 @@ async def get_price_history(
     ptf_metrics = get_ptf_metrics()
     
     ptf_metrics.inc_history_query()
-    with ptf_metrics.time_history_query():
-        history = service.get_history(db=db, period=period, price_type=price_type)
+
+    # Read path → wrapper ile sar
+    import asyncio as _asyncio
+    from .guards.dependency_wrapper import CircuitOpenError
+    wrapper = _get_wrapper("db_primary")
+    try:
+        with ptf_metrics.time_history_query():
+            history = await wrapper.call(
+                _asyncio.to_thread,
+                service.get_history,
+                db=db, period=period, price_type=price_type,
+                is_write=False,
+            )
+    except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
+        raise _map_wrapper_error_to_http(exc)
     
     if history is None:
         raise HTTPException(
@@ -3395,7 +3450,19 @@ async def get_market_price(
     """
     from .market_prices import get_market_prices_or_default
     
-    prices = get_market_prices_or_default(db, period)
+    # Wrapper ile DB çağrısını sar (read path)
+    import asyncio as _asyncio
+    from .guards.dependency_wrapper import CircuitOpenError
+    wrapper = _get_wrapper("db_primary")
+    try:
+        prices = await wrapper.call(
+            _asyncio.to_thread,
+            get_market_prices_or_default,
+            db, period,
+            is_write=False,
+        )
+    except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
+        raise _map_wrapper_error_to_http(exc)
     
     return {
         "status": "ok",
@@ -3539,16 +3606,25 @@ async def upsert_market_price(
     # Determine updated_by from admin key context
     updated_by = "admin"  # Default; in production, extract from auth token
     
-    # Upsert via service
+    # Upsert via service (write path → wrapper ile sar, retry kapalı)
     service = get_market_price_admin_service()
-    result = service.upsert_price(
-        db=db,
-        normalized=normalized,
-        updated_by=updated_by,
-        source="epias_manual",
-        change_reason=change_reason,
-        force_update=force_update,
-    )
+    import asyncio as _asyncio
+    from .guards.dependency_wrapper import CircuitOpenError
+    wrapper = _get_wrapper("db_primary")
+    try:
+        result = await wrapper.call(
+            _asyncio.to_thread,
+            service.upsert_price,
+            db=db,
+            normalized=normalized,
+            updated_by=updated_by,
+            source="epias_manual",
+            change_reason=change_reason,
+            force_update=force_update,
+            is_write=True,
+        )
+    except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
+        raise _map_wrapper_error_to_http(exc)
     
     if not result.success:
         # Map service error codes to HTTP status codes
@@ -3604,7 +3680,19 @@ async def lock_market_price(
     """
     from .market_prices import lock_market_prices
     
-    success, message = lock_market_prices(db, period)
+    # Write path → wrapper ile sar, retry kapalı
+    import asyncio as _asyncio
+    from .guards.dependency_wrapper import CircuitOpenError
+    wrapper = _get_wrapper("db_primary")
+    try:
+        success, message = await wrapper.call(
+            _asyncio.to_thread,
+            lock_market_prices,
+            db, period,
+            is_write=True,
+        )
+    except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
+        raise _map_wrapper_error_to_http(exc)
     
     if not success:
         raise HTTPException(status_code=400, detail=message)
@@ -3626,15 +3714,28 @@ async def unlock_market_price(
     """
     from .database import MarketReferencePrice
     
-    record = db.query(MarketReferencePrice).filter(
-        MarketReferencePrice.period == period
-    ).first()
-    
+    # Write path → wrapper ile sar, retry kapalı
+    import asyncio as _asyncio
+    from .guards.dependency_wrapper import CircuitOpenError
+    wrapper = _get_wrapper("db_primary")
+
+    def _unlock():
+        record = db.query(MarketReferencePrice).filter(
+            MarketReferencePrice.period == period
+        ).first()
+        if not record:
+            return None
+        record.is_locked = 0
+        db.commit()
+        return record
+
+    try:
+        record = await wrapper.call(_asyncio.to_thread, _unlock, is_write=True)
+    except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
+        raise _map_wrapper_error_to_http(exc)
+
     if not record:
         raise HTTPException(status_code=404, detail=f"Dönem {period} bulunamadı")
-    
-    record.is_locked = 0
-    db.commit()
     
     logger.warning(f"[ADMIN] Period unlocked: {period}")
     return {"status": "ok", "message": f"Dönem {period} kilidi kaldırıldı"}
@@ -3724,13 +3825,22 @@ async def import_preview(
             },
         )
 
-    # Generate preview
-    preview = importer.preview(
-        db=db,
-        rows=rows,
-        price_type=price_type,
-        force_update=force_update,
-    )
+    # Generate preview (read path → wrapper ile sar)
+    import asyncio as _asyncio
+    from .guards.dependency_wrapper import CircuitOpenError
+    wrapper = _get_wrapper("db_primary")
+    try:
+        preview = await wrapper.call(
+            _asyncio.to_thread,
+            importer.preview,
+            db=db,
+            rows=rows,
+            price_type=price_type,
+            force_update=force_update,
+            is_write=False,
+        )
+    except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
+        raise _map_wrapper_error_to_http(exc)
 
     return {
         "status": "ok",
@@ -3833,19 +3943,33 @@ async def import_apply(
             },
         )
 
-    # Apply import (with metrics)
+    # Apply import (with metrics + wrapper, write path → retry kapalı)
     from .ptf_metrics import get_ptf_metrics
     ptf_metrics = get_ptf_metrics()
 
-    with ptf_metrics.time_import_apply():
-        result = importer.apply(
-            db=db,
-            rows=rows,
-            updated_by="admin",
-            price_type=price_type,
-            force_update=force_update,
-            strict_mode=strict_mode,
+    import asyncio as _asyncio
+    from .guards.dependency_wrapper import CircuitOpenError
+    wrapper = _get_wrapper("db_primary")
+
+    def _apply_with_timing():
+        with ptf_metrics.time_import_apply():
+            return importer.apply(
+                db=db,
+                rows=rows,
+                updated_by="admin",
+                price_type=price_type,
+                force_update=force_update,
+                strict_mode=strict_mode,
+            )
+
+    try:
+        result = await wrapper.call(
+            _asyncio.to_thread,
+            _apply_with_timing,
+            is_write=True,
         )
+    except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
+        raise _map_wrapper_error_to_http(exc)
 
     # Record row-level metrics
     ptf_metrics.inc_import_rows("accepted", result.accepted_count)
@@ -3927,13 +4051,22 @@ async def get_market_price_for_calculation(
             },
         )
 
-    # Lookup via service
+    # Lookup via service (read path → wrapper ile sar, DB_REPLICA)
     service = get_market_price_admin_service()
-    result, error = service.get_for_calculation(
-        db=db,
-        period=period,
-        price_type=price_type,
-    )
+    import asyncio as _asyncio
+    from .guards.dependency_wrapper import CircuitOpenError
+    wrapper = _get_wrapper("db_replica")
+    try:
+        result, error = await wrapper.call(
+            _asyncio.to_thread,
+            service.get_for_calculation,
+            db=db,
+            period=period,
+            price_type=price_type,
+            is_write=False,
+        )
+    except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
+        raise _map_wrapper_error_to_http(exc)
 
     # Record lookup metric
     from .ptf_metrics import get_ptf_metrics
@@ -4825,3 +4958,98 @@ def _get_kill_switch_manager():
         from .ptf_metrics import get_ptf_metrics
         _kill_switch_manager = KillSwitchManager(get_guard_config(), get_ptf_metrics())
     return _kill_switch_manager
+
+
+# ── CB Registry singleton (Feature: dependency-wrappers, Task 6) ──────────────
+
+_cb_registry = None
+
+
+def _get_cb_registry():
+    """Lazy singleton for CircuitBreakerRegistry."""
+    global _cb_registry
+    if _cb_registry is None:
+        from .guards.circuit_breaker import CircuitBreakerRegistry
+        from .guard_config import get_guard_config
+        from .ptf_metrics import get_ptf_metrics
+        _cb_registry = CircuitBreakerRegistry(get_guard_config(), get_ptf_metrics())
+    return _cb_registry
+
+
+# ── Dependency Wrapper Factory (Feature: dependency-wrappers, Task 10) ────────
+
+def _get_wrapper(dependency_name: str):
+    """
+    Dependency adına göre wrapper oluştur.
+
+    Tüm dependency çağrıları bu factory üzerinden geçmeli.
+    Doğrudan client kullanımı yasak (bypass koruması).
+
+    Args:
+        dependency_name: Dependency enum value (db_primary, external_api, vb.)
+
+    Returns:
+        DependencyWrapper instance
+    """
+    from .guards.circuit_breaker import Dependency
+    from .guards.dependency_wrapper import create_wrapper
+    from .guard_config import get_guard_config
+    from .ptf_metrics import get_ptf_metrics
+
+    dep = Dependency(dependency_name)
+    return create_wrapper(dep, _get_cb_registry(), get_guard_config(), get_ptf_metrics())
+
+
+def _map_wrapper_error_to_http(exc: Exception) -> HTTPException:
+    """
+    Wrapper exception → HTTP response mapping.
+
+    Error Mapping Tablosu (sabit):
+        CircuitOpenError  → 503 CIRCUIT_OPEN
+        TimeoutError      → 504 DEPENDENCY_TIMEOUT
+        ConnectionError   → 502 DEPENDENCY_UNAVAILABLE
+        OSError           → 502 DEPENDENCY_UNAVAILABLE
+        Diğer CB failure  → 502 DEPENDENCY_ERROR
+    """
+    import asyncio as _asyncio
+    from .guards.dependency_wrapper import CircuitOpenError
+
+    if isinstance(exc, CircuitOpenError):
+        return HTTPException(
+            status_code=503,
+            detail={
+                "status": "error",
+                "error_code": "CIRCUIT_OPEN",
+                "message": f"Servis geçici olarak kullanılamıyor ({exc.dependency}).",
+            },
+        )
+
+    if isinstance(exc, (_asyncio.TimeoutError, TimeoutError)):
+        return HTTPException(
+            status_code=504,
+            detail={
+                "status": "error",
+                "error_code": "DEPENDENCY_TIMEOUT",
+                "message": "Bağımlılık zaman aşımına uğradı.",
+            },
+        )
+
+    if isinstance(exc, (ConnectionError, ConnectionRefusedError, OSError)):
+        return HTTPException(
+            status_code=502,
+            detail={
+                "status": "error",
+                "error_code": "DEPENDENCY_UNAVAILABLE",
+                "message": "Bağımlılık erişilemez durumda.",
+            },
+        )
+
+    # Diğer CB failure (5xx response vb.)
+    return HTTPException(
+        status_code=502,
+        detail={
+            "status": "error",
+            "error_code": "DEPENDENCY_ERROR",
+            "message": f"Bağımlılık hatası: {type(exc).__name__}",
+        },
+    )

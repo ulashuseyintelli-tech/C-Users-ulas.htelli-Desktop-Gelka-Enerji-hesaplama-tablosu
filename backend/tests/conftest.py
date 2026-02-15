@@ -24,6 +24,17 @@ settings.register_profile(
 settings.load_profile("default")
 
 
+# ── PR-10: Test tier markers ──────────────────────────────────────────────────
+# Usage: pytest -m smoke, pytest -m core, pytest -m concurrency
+# These are registered to avoid PytestUnknownMarkWarning.
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "smoke: Tier-0 pure-math + config tests (<10s)")
+    config.addinivalue_line("markers", "core: Tier-1 core logic + stores (<15s)")
+    config.addinivalue_line("markers", "concurrency: Tier-2 thread races (<30s)")
+    config.addinivalue_line("markers", "soak: Tier-3 large PBT / nightly (<120s)")
+
+
 # ── Ops-Guard singleton isolation ─────────────────────────────────────────────
 # Rate limiter and kill-switch singletons are module-level; without reset,
 # tests that share the same process accumulate state (e.g. rate limit buckets

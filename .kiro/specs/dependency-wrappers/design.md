@@ -476,7 +476,7 @@ ptf_admin_guard_failopen_total                                 # Counter
 Kardinalite bütçesi (HD-5):
 | Metrik | Label'lar | Max Kardinalite |
 |---|---|---|
-| `ptf_admin_dependency_call_total` | `dependency` (5) × `outcome` (4) | 20 |
+| `ptf_admin_dependency_call_total` | `dependency` (5) × `outcome` (5) | 25 |
 | `ptf_admin_dependency_call_duration_seconds` | `dependency` (5) | 5 |
 | `ptf_admin_dependency_retry_total` | `dependency` (5) | 5 |
 | `ptf_admin_guard_failopen_total` | (yok) | 1 |
@@ -566,7 +566,7 @@ OPS_GUARD_CB_PRECHECK_ENABLED      → cb_precheck_enabled: bool = True      (DW
 
 ### Property 7: Wrapper Metrik Kaydı
 
-*For any* dependency wrapper çağrısı, çağrı sonucuna göre `ptf_admin_dependency_call_total{dependency, outcome}` sayacı doğru outcome değeriyle artmalı (`success`, `failure`, `timeout`, `circuit_open`) ve `ptf_admin_dependency_call_duration_seconds{dependency}` histogram'ı güncellenmeli.
+*For any* dependency wrapper çağrısı, çağrı sonucuna göre `ptf_admin_dependency_call_total{dependency, outcome}` sayacı doğru outcome değeriyle artmalı (`success`, `failure`, `timeout`, `circuit_open`, `client_error`) ve `ptf_admin_dependency_call_duration_seconds{dependency}` histogram'ı güncellenmeli. CB failure → `outcome="failure"`, non-CB failure (4xx, ValueError) → `outcome="client_error"` ayrımı korunmalıdır.
 
 **Validates: Requirements 3.6, 3.7**
 
@@ -597,7 +597,8 @@ OPS_GUARD_CB_PRECHECK_ENABLED      → cb_precheck_enabled: bool = True      (DW
 
 ### Dependency Wrapper Non-CB Failure
 - **Davranış**: Exception direkt fırlatılır, retry yapılmaz, CB'ye bildirilmez
-- **Metrik**: `ptf_admin_dependency_call_total{dependency, outcome="failure"}` artırılır
+- **Metrik**: `ptf_admin_dependency_call_total{dependency, outcome="client_error"}` artırılır
+- **Not**: `outcome="failure"` yerine `outcome="client_error"` kullanılır — CB failure ile non-CB failure observability'de ayrışır
 
 ### Middleware Catch-All Fail-Open
 - **Davranış**: Mevcut fail-open davranışı korunur + metrik eklenir

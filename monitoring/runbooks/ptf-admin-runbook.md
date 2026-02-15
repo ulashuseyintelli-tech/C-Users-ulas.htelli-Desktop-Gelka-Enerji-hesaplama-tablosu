@@ -369,3 +369,296 @@ Bu runbook, PTF Admin Prometheus alert'leri tetiklendiğinde izlenecek troublesh
 1. Resource leak ise: pod'ları rolling restart et, leak'i fix eden patch planlayın
 2. Data quality ise: problematik veri pattern'lerini belirle ve validation ekle
 3. Intermittent dependency ise: circuit breaker threshold'larını gözden geçir, retry config'i optimize et
+
+---
+
+## PTFAdminGuardFailOpen
+
+**Severity:** critical
+**PromQL:** `increase(ptf_admin_guard_failopen_total[5m]) > 0`
+
+### Olası Nedenler
+1. Wrapper internal error — dependency wrapper kodu exception fırlattı
+2. Middleware internal error — ops-guard middleware'de beklenmeyen hata
+3. CB registry initialization failure — CircuitBreakerRegistry oluşturulamadı
+4. Metrics subsystem error — PTFMetrics yazım hatası
+
+### İlk 3 Kontrol
+1. `kubectl logs -l app=ptf-admin --tail=100 | grep "fail-open\|failopen\|internal error"` — fail-open log'larını bul
+2. Grafana → Guard Fail-Open panel — artış zamanlamasını deploy ile karşılaştır
+3. `ptf_admin_guard_failopen_total` counter değerini kontrol et — tek seferlik mi sürekli mi
+
+### Müdahale Adımları
+1. Deploy kaynaklı ise: rollback yap, wrapper kodunu incele
+2. Sürekli artıyorsa: guard katmanında bug var, acil fix gerekli
+3. Tek seferlik ise: log'dan root cause belirle, monitoring'e devam et
+
+---
+
+## PTFAdminDependencyMapMiss
+
+**Severity:** warning
+**PromQL:** `increase(ptf_admin_dependency_map_miss_total[10m]) > 0`
+
+### Olası Nedenler
+1. Yeni endpoint eklendi ama dependency map güncellenmedi (wiring kaçırma)
+2. Endpoint path normalization hatası — template ile gerçek path uyuşmuyor
+3. Koşullu dependency endpoint'i map'e eklendi (DW-2 ihlali)
+
+### İlk 3 Kontrol
+1. Son deploy'da yeni endpoint eklenmiş mi kontrol et
+2. `endpoint_dependency_map.py` dosyasını incele — eksik mapping var mı
+3. Middleware log'larında hangi endpoint'in miss verdiğini bul
+
+### Müdahale Adımları
+1. Eksik mapping varsa: `endpoint_dependency_map.py`'ye ekle ve deploy et
+2. Path normalization sorunu ise: middleware'deki template extraction'ı düzelt
+3. Koşullu dependency ise: map'e ekleme, DW-2 kuralı gereği pre-check atlanmalı
+
+---
+
+## PTFAdminDependencyTimeoutRate
+
+**Severity:** warning
+**PromQL:** `sum by (dependency)(rate(ptf_admin_dependency_call_total{outcome="timeout"}[5m])) / sum by (dependency)(rate(ptf_admin_dependency_call_total[5m])) > 0.02`
+
+### Olası Nedenler
+1. Upstream latency artışı — bağımlılık yavaşladı
+2. Timeout threshold çok düşük — normal operasyonda bile timeout oluyor
+3. Network latency — pod ile bağımlılık arasında ağ gecikmesi
+4. Connection pool exhaustion — bağımlılık bağlantı havuzu doldu
+
+### İlk 3 Kontrol
+1. Grafana → Dependency P95 Latency panel — hangi dependency yavaş
+2. `wrapper_timeout_seconds_by_dependency` config'ini kontrol et
+3. Upstream bağımlılığın kendi health check'ini kontrol et
+
+### Müdahale Adımları
+1. Upstream yavaşsa: upstream ekibini bilgilendir, timeout threshold'u geçici artır
+2. Threshold düşükse: `OPS_GUARD_WRAPPER_TIMEOUT_SECONDS_BY_DEPENDENCY` ile artır
+3. Connection pool ise: pool size artır veya idle timeout ayarla
+
+---
+
+## PTFAdminDependencyFailureRate
+
+**Severity:** critical
+**PromQL:** `sum by (dependency)(rate(ptf_admin_dependency_call_total{outcome="failure"}[5m])) / sum by (dependency)(rate(ptf_admin_dependency_call_total[5m])) > 0.01`
+
+### Olası Nedenler
+1. Upstream arızası — bağımlılık 5xx dönüyor veya connection refused
+2. DNS resolution hatası — bağımlılık adresi çözümlenemiyor
+3. TLS/SSL sertifika sorunu — sertifika süresi dolmuş
+4. Bağımlılık deploy'u — upstream yeni versiyon deploy etti, uyumsuzluk
+
+### İlk 3 Kontrol
+1. Grafana → Dependency Failure Rate panel — hangi dependency etkilenmiş
+2. `ptf_admin_circuit_breaker_state` gauge — CB açılmış mı
+3. Upstream bağımlılığın status page'ini kontrol et
+
+### Müdahale Adımları
+1. Upstream down ise: CB otomatik koruma sağlıyor, upstream recovery bekle
+2. DNS/TLS ise: infra ekibini bilgilendir
+3. CB çok agresif açılıyorsa: `cb_min_samples` veya `cb_error_threshold_pct` ayarla
+
+---
+
+## PTFAdminDependencyClientErrorRate
+
+**Severity:** warning
+**PromQL:** `sum by (dependency)(rate(ptf_admin_dependency_call_total{outcome="client_error"}[5m])) / sum by (dependency)(rate(ptf_admin_dependency_call_total[5m])) > 0.05`
+
+### Olası Nedenler
+1. Contract drift — upstream API değişti, bizim çağrılarımız artık 4xx alıyor
+2. Yanlış parametre — handler'dan gelen veri formatı değişti
+3. Rate limiting (429) — upstream bizi rate limit'liyor
+4. Auth token süresi dolmuş — 401/403 hataları
+
+### İlk 3 Kontrol
+1. Error log'larında 4xx status code'larını filtrele — hangi dependency, hangi status
+2. Upstream API changelog'unu kontrol et — breaking change var mı
+3. Auth token/API key geçerliliğini kontrol et
+
+### Müdahale Adımları
+1. Contract drift ise: client kodunu upstream'e uyumlu güncelle
+2. Rate limiting ise: çağrı sıklığını azalt veya upstream ile limit artışı görüş
+3. Auth sorunu ise: token/key yenile
+
+---
+
+## PTFAdminRetryStorm
+
+**Severity:** warning
+**PromQL:** `sum by (dependency)(rate(ptf_admin_dependency_retry_total[5m])) / sum by (dependency)(rate(ptf_admin_dependency_call_total[5m])) > 0.2`
+
+### Olası Nedenler
+1. Upstream sürekli hata dönüyor — her çağrı retry'a giriyor
+2. Retry budget çok yüksek — max_retries fazla, backoff yetersiz
+3. Zincirleme retry — birden fazla katman retry yapıyor (amplification)
+4. Timeout + retry kombinasyonu — her timeout retry tetikliyor
+
+### İlk 3 Kontrol
+1. Grafana → Retry Storm panel — hangi dependency'de retry patlaması var
+2. `ptf_admin_dependency_call_total{outcome="failure"}` ve `{outcome="timeout"}` oranlarını karşılaştır
+3. `wrapper_retry_max_attempts_by_dependency` config'ini kontrol et
+
+### Müdahale Adımları
+1. Upstream down ise: CB açılmasını bekle (retry otomatik duracak)
+2. Retry budget yüksekse: `OPS_GUARD_WRAPPER_RETRY_MAX_ATTEMPTS_DEFAULT` azalt
+3. Backoff yetersizse: `OPS_GUARD_WRAPPER_RETRY_BACKOFF_BASE_MS` artır
+
+---
+
+## PTFAdminDependencyLatencyP95
+
+**Severity:** warning
+**PromQL:** `histogram_quantile(0.95, sum by (le, dependency)(rate(ptf_admin_dependency_call_duration_seconds_bucket[5m]))) > 0.8`
+
+### Olası Nedenler
+1. Upstream yavaşlama — bağımlılık response time artmış
+2. Connection pool exhaustion — bağlantı havuzu dolmuş, kuyrukta bekleme
+3. Network latency — pod ile bağımlılık arasında gecikme
+4. Query complexity — DB'de yavaş sorgu (index eksik, full table scan)
+
+### İlk 3 Kontrol
+1. Grafana → Dependency P95 Latency panel — hangi dependency yavaş
+2. Upstream bağımlılığın kendi latency metriklerini kontrol et
+3. DB ise: slow query log'larını incele
+
+### Müdahale Adımları
+1. DB yavaşsa: index ekle veya query optimize et
+2. External API yavaşsa: timeout threshold'u geçici artır, upstream'i bilgilendir
+3. Connection pool ise: pool size artır
+
+---
+
+## PTFAdminDependencyCircuitOpenRate
+
+**Severity:** critical
+**PromQL:** `sum by (dependency)(rate(ptf_admin_dependency_call_total{outcome="circuit_open"}[5m])) > 0`
+
+### Olası Nedenler
+1. Upstream arızası devam ediyor — CB açık, istekler reddediliyor
+2. CB threshold çok agresif — düşük trafik + birkaç hata CB'yi açtı
+3. Half-open recovery başarısız — probe istekleri de başarısız oluyor
+4. Timeout storm → CB açılması — timeout'lar CB failure sayılıyor
+
+### İlk 3 Kontrol
+1. `ptf_admin_circuit_breaker_state` gauge — hangi dependency'nin CB'si açık
+2. Upstream bağımlılığın health check'ini kontrol et
+3. CB config: `cb_error_threshold_pct`, `cb_min_samples`, `cb_open_duration_seconds`
+
+### Müdahale Adımları
+1. Upstream down ise: recovery bekle, CB otomatik half-open'a geçecek
+2. CB çok agresif ise: `cb_min_samples` artır veya `cb_error_threshold_pct` yükselt
+3. Acil bypass gerekiyorsa: `OPS_GUARD_CB_PRECHECK_ENABLED=false` ile pre-check kapat (wrapper-level enforcement kalır)
+
+---
+
+# Ek: HTTP Hata Kodu Semantiği (Error Mapping)
+
+### 502 vs 503 Ayrımı (Alert Routing İçin)
+
+| HTTP | Anlam | Kaynak | Alert Route |
+|------|-------|--------|-------------|
+| 503 | Biz bilinçli reddettik (CB guard, kill-switch) | Guard katmanı | ops → guard config/tuning |
+| 502 | Upstream hatalı veya ulaşılamıyor | Dependency | ops → upstream sağlığı |
+| 504 | Upstream zaman aşımı | Dependency timeout | ops → latency/timeout tuning |
+
+Bu ayrım, incident sırasında "sorun bizde mi upstream'de mi" kararını hızlandırır.
+
+---
+
+# Ek: Dependency Wrapper — Retry & Backoff Referansı
+
+### Retry Politikası (DW-1)
+
+| Path | Retry | Neden |
+|------|-------|-------|
+| Read (is_write=False) | Aktif (max N retry) | İdempotent, güvenli |
+| Write (is_write=True) | Default KAPALI | Double-write riski; ancak idempotency key garantisi varsa `wrapper_retry_on_write=True` ile açılabilir |
+
+### Backoff Formülü
+
+```
+delay_ms = min(base_ms * 2^attempt, cap_ms)
+jitter   = uniform(0, delay_ms * jitter_pct)
+total    = (delay_ms + jitter) / 1000  # seconds
+```
+
+- Jitter tipi: **Decorrelated (additive uniform)** — `uniform(0, delay * pct)` eklenir
+- Bu "full jitter" değil (full jitter: `uniform(0, cap)`), "equal jitter" de değil (equal: `delay/2 + uniform(0, delay/2)`)
+- Mevcut implementasyon: base delay korunur, üzerine `[0, delay*pct]` aralığında rastgele ekleme yapılır
+- `jitter_pct=0.2` default → delay'in %0–20'si kadar ek süre
+
+### Varsayılan Değerler
+
+| Parametre | Default | Env Var |
+|-----------|---------|---------|
+| `wrapper_retry_max_attempts_default` | 2 | `OPS_GUARD_WRAPPER_RETRY_MAX_ATTEMPTS_DEFAULT` |
+| `wrapper_retry_backoff_base_ms` | 500 | `OPS_GUARD_WRAPPER_RETRY_BACKOFF_BASE_MS` |
+| `wrapper_retry_backoff_cap_ms` | 5000 | `OPS_GUARD_WRAPPER_RETRY_BACKOFF_CAP_MS` |
+| `wrapper_retry_jitter_pct` | 0.2 | `OPS_GUARD_WRAPPER_RETRY_JITTER_PCT` |
+| `wrapper_retry_on_write` | False | `OPS_GUARD_WRAPPER_RETRY_ON_WRITE` |
+
+### Outcome Metrikleri
+
+`ptf_admin_dependency_call_total{dependency, outcome}` outcome değerleri:
+
+| Outcome | Anlam | CB'ye failure sayılır mı? | Retry yapılır mı? |
+|---------|-------|---------------------------|-------------------|
+| `success` | Başarılı çağrı | Hayır (record_success) | — |
+| `failure` | CB failure (5xx, ConnectionError, OSError) | Evet (record_failure) | Evet (read path) |
+| `timeout` | asyncio.TimeoutError | Evet (record_failure) | Evet (read path) |
+| `circuit_open` | CB OPEN, çağrı yapılmadı | — | Hayır |
+| `client_error` | Non-CB failure (4xx, ValueError) | Hayır | Hayır |
+
+### Timeout CB İlişkisi
+
+Timeout → `record_failure()` çağrılır → CB failure sayılır. Agresif CB açılma riski varsa:
+- `cb_min_samples` artırılabilir (default: 10)
+- `cb_error_threshold_pct` yükseltilebilir (default: 50%)
+- İleride timeout'a ayrı threshold eklenebilir (ör. "N timeout in window")
+
+---
+
+# Ek: Bypass Test Failure Troubleshooting
+
+CI'da `TestBypassProtection` testleri fail olduğunda izlenecek adımlar.
+
+### Neden Fail Olur?
+
+`TestBypassProtection`, FastAPI route registry'den `CRITICAL_PATH_PREFIXES` ile eşleşen tüm endpoint'leri otomatik keşfeder ve her birinin:
+- `_get_wrapper()` kullandığını
+- `_map_wrapper_error_to_http()` kullandığını
+- Doğrudan DB çağrısı yapmadığını
+
+doğrular. Fail olması şu anlama gelir: **yeni bir kritik yol endpoint'i wrapper olmadan eklendi**.
+
+### Olası Nedenler
+
+1. Yeni endpoint eklendi, `_get_wrapper()` ile sarılmadı
+2. Yeni endpoint eklendi, `_map_wrapper_error_to_http()` ile error mapping yapılmadı
+3. Endpoint doğrudan `db.query()` / `db.execute()` / `db.commit()` çağırıyor (wrapper bypass)
+4. Deprecated/meta endpoint `EXEMPT_PATHS`'e eklenmedi
+
+### Çözüm Adımları
+
+1. **Wrapper eksik ise**: Endpoint'i `_get_wrapper(dependency_name)` + `asyncio.to_thread` ile sarın. Error handling'de `_map_wrapper_error_to_http()` kullanın. Örnek: mevcut `list_market_prices` veya `upsert_market_price` handler'larına bakın.
+
+2. **Muafiyet gerekiyorsa**: Endpoint gerçekten DB'ye erişmiyorsa veya başka bir wrapper'lı endpoint'e delege ediyorsa, `EXEMPT_PATHS`'e ekleyin. **Mutlaka "Neden?" yorumu yazın**:
+   ```python
+   EXEMPT_PATHS = {
+       # Neden: <açıklama>
+       "/admin/market-prices/yeni-endpoint",
+   }
+   ```
+
+3. **Closure pattern kullanıyorsa** (unlock_market_price gibi): `test_no_direct_db_calls_in_critical_endpoints` testindeki `CLOSURE_ENDPOINTS` set'ine ekleyin.
+
+### Muafiyet Politikası
+
+- `EXEMPT_PATHS` küçük tutulmalı (şu an 3 endpoint)
+- Her muafiyetin yanında "Neden?" yorumu zorunlu
+- Deprecated endpoint kaldırılınca muafiyet de silinmeli
+- Yeni muafiyet eklemek PR review gerektirir

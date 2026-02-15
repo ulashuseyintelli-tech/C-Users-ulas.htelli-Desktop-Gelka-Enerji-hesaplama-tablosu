@@ -556,6 +556,25 @@ class TestGuardFailopenTotal:
         assert val == 2.0
 
 
+class TestDependencyMapMissTotal:
+    """ptf_admin_dependency_map_miss_total counter tests."""
+
+    def setup_method(self):
+        self.metrics = PTFMetrics(registry=CollectorRegistry())
+
+    def test_inc_map_miss(self):
+        self.metrics.inc_dependency_map_miss()
+        val = self.metrics._dependency_map_miss_total._value.get()
+        assert val == 1.0
+
+    def test_multiple_map_miss(self):
+        self.metrics.inc_dependency_map_miss()
+        self.metrics.inc_dependency_map_miss()
+        self.metrics.inc_dependency_map_miss()
+        val = self.metrics._dependency_map_miss_total._value.get()
+        assert val == 3.0
+
+
 class TestDependencyMetricsPropertyBased:
     """Property-based tests for dependency wrapper metrics — Feature: dependency-wrappers, Task 2."""
 
