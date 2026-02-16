@@ -15,7 +15,7 @@ Key invariants:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from backend.app.testing.policy_engine import AuditEntry, AuditLog
 from backend.app.testing.release_policy import (
@@ -24,6 +24,9 @@ from backend.app.testing.release_policy import (
     ReleasePolicyResult,
     ReleaseVerdict,
 )
+
+if TYPE_CHECKING:
+    from backend.app.testing.gate_metrics import GateMetricStore
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +70,7 @@ class ReleaseGate:
     Orchestrator.execute(). If not allowed, skip execution.
 
     Entegrasyon:
-        gate = ReleaseGate(audit_log)
+        gate = ReleaseGate(audit_log, metric_store)
         decision = gate.check(policy_result, release_scope="v2.4", ...)
         if decision.allowed:
             orchestrator.execute(...)
@@ -75,8 +78,13 @@ class ReleaseGate:
             # no effects, audit already recorded
     """
 
-    def __init__(self, audit_log: AuditLog | None = None):
+    def __init__(
+        self,
+        audit_log: AuditLog | None = None,
+        metric_store: "GateMetricStore | None" = None,
+    ):
         self._audit = audit_log or AuditLog()
+        self._metrics: "GateMetricStore | None" = metric_store
 
     @property
     def audit_log(self) -> AuditLog:
@@ -95,9 +103,12 @@ class ReleaseGate:
         1. RELEASE_OK → allowed
         2. RELEASE_BLOCK → denied (absolute blocks reject override)
         3. RELEASE_HOLD → denied unless valid override
+
+        Single exit: decision computed → audit attempted → metrics emitted.
         """
         verdict = policy_result.verdict
         reasons = policy_result.reasons
+        is_breach = False
 
         # --- RELEASE_OK ---
         if verdict == ReleaseVerdict.RELEASE_OK:
@@ -108,12 +119,10 @@ class ReleaseGate:
                 override_applied=False,
                 audit_detail="release_ok: promote allowed",
             )
-            self._record_audit("release_gate_allow", decision)
-            return decision
+            audit_action = "release_gate_allow"
 
         # --- RELEASE_BLOCK ---
-        if verdict == ReleaseVerdict.RELEASE_BLOCK:
-            # Check if override was attempted on absolute block
+        elif verdict == ReleaseVerdict.RELEASE_BLOCK:
             if override is not None and self._has_absolute_block(reasons):
                 decision = GateDecision(
                     allowed=False,
@@ -123,21 +132,20 @@ class ReleaseGate:
                     audit_detail="CONTRACT_BREACH_NO_OVERRIDE: "
                                 "override rejected for absolute block reasons",
                 )
-                self._record_audit("release_gate_override_rejected_absolute", decision)
-                return decision
-
-            decision = GateDecision(
-                allowed=False,
-                verdict=verdict,
-                reasons=reasons,
-                override_applied=False,
-                audit_detail=f"release_block: {[r.value for r in reasons]}",
-            )
-            self._record_audit("release_gate_block", decision)
-            return decision
+                audit_action = "release_gate_override_rejected_absolute"
+                is_breach = True
+            else:
+                decision = GateDecision(
+                    allowed=False,
+                    verdict=verdict,
+                    reasons=reasons,
+                    override_applied=False,
+                    audit_detail=f"release_block: {[r.value for r in reasons]}",
+                )
+                audit_action = "release_gate_block"
 
         # --- RELEASE_HOLD ---
-        if override is None:
+        elif override is None:
             decision = GateDecision(
                 allowed=False,
                 verdict=verdict,
@@ -145,11 +153,17 @@ class ReleaseGate:
                 override_applied=False,
                 audit_detail="release_hold: manual override required",
             )
-            self._record_audit("release_gate_hold", decision)
-            return decision
+            audit_action = "release_gate_hold"
+        else:
+            # Override provided — validate
+            decision, audit_action = self._validate_override(
+                override, verdict, reasons, release_scope, now_ms,
+            )
 
-        # Override provided — validate
-        return self._validate_override(override, verdict, reasons, release_scope, now_ms)
+        # --- Single exit: audit → metrics ---
+        self._record_audit(audit_action, decision)
+        self._emit_metrics(decision, is_breach)
+        return decision
 
     # -- private --
 
@@ -163,50 +177,69 @@ class ReleaseGate:
         reasons: list[BlockReasonCode],
         release_scope: str,
         now_ms: int,
-    ) -> GateDecision:
+    ) -> tuple[GateDecision, str]:
         # TTL check
         if override.is_expired(now_ms):
-            decision = GateDecision(
+            return GateDecision(
                 allowed=False,
                 verdict=verdict,
                 reasons=reasons,
                 override_applied=False,
                 audit_detail="OVERRIDE_EXPIRED: override TTL has elapsed",
-            )
-            self._record_audit("release_gate_override_expired", decision)
-            return decision
+            ), "release_gate_override_expired"
 
         # Scope check
         if release_scope and override.scope != release_scope:
-            decision = GateDecision(
+            return GateDecision(
                 allowed=False,
                 verdict=verdict,
                 reasons=reasons,
                 override_applied=False,
                 audit_detail=f"SCOPE_MISMATCH: override scope '{override.scope}' "
                              f"!= release scope '{release_scope}'",
-            )
-            self._record_audit("release_gate_scope_mismatch", decision)
-            return decision
+            ), "release_gate_scope_mismatch"
 
         # Valid override
-        decision = GateDecision(
+        return GateDecision(
             allowed=True,
             verdict=verdict,
             reasons=reasons,
             override_applied=True,
             audit_detail=f"release_hold: override accepted by {override.created_by}",
-        )
-        self._record_audit("release_gate_override_accepted", decision)
-        return decision
+        ), "release_gate_override_accepted"
 
     def _record_audit(self, action: str, decision: GateDecision) -> None:
-        entry = AuditEntry(
-            timestamp_ms=0,
-            action=action,
-            override=None,
-            policy_input=None,
-            decision=None,
-            detail=decision.audit_detail,
-        )
-        self._audit.record(entry)
+        try:
+            entry = AuditEntry(
+                timestamp_ms=0,
+                action=action,
+                override=None,
+                policy_input=None,
+                decision=None,
+                detail=decision.audit_detail,
+            )
+            self._audit.record(entry)
+        except Exception:
+            # R3 fail-closed: audit write failure → emit counter
+            self._emit_audit_failure()
+
+    def _emit_metrics(self, decision: GateDecision, is_breach: bool) -> None:
+        """Fail-open metrik emisyonu. Hata gate kararını etkilemez."""
+        if self._metrics is None:
+            return
+        try:
+            reason_values = [r.value for r in decision.reasons]
+            self._metrics.record_decision(decision.allowed, reason_values)
+            if is_breach:
+                self._metrics.record_breach()
+        except Exception:
+            pass  # fail-open
+
+    def _emit_audit_failure(self) -> None:
+        """Audit yazım hatası durumunda çağrılır."""
+        if self._metrics is None:
+            return
+        try:
+            self._metrics.record_audit_write_failure()
+        except Exception:
+            pass  # fail-open

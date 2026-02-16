@@ -404,6 +404,14 @@ GateDecision
 
 Tüm hata durumları deterministik neden kodları üretir. Hiçbir hata sessizce yutulmaz; her biri BlockReason veya audit kaydı olarak raporlanır.
 
+### Fail-Closed İnvariantları
+
+| Risk | Davranış | Gerekçe |
+|---|---|---|
+| **R1: Clock skew / now_ms** | Override TTL kontrolü `>=` ile yapılır (boundary dahil expired). Prod'da NTP skew durumunda override erken expire olabilir — bu fail-closed yönündedir. Runbook'ta "time skew" notu bulunmalıdır. | Güvenli taraf: erken expire > geç expire |
+| **R2: Malformed override input** | `ReleaseOverride` frozen dataclass — construction'da type check uygulanır. Boş scope (`""`) durumunda `scope != release_scope` → SCOPE_MISMATCH → denied. Gate her zaman fail-closed davranır; geçersiz override hiçbir zaman izin vermez. | Sözleşme: "şüpheli girdi → reddet" |
+| **R3: Audit write failure** | Şu an in-memory `AuditLog.record()` — patlamaz. Prod'da persistent audit'e geçildiğinde: audit yazılamazsa `allowed=False` (fail-closed). Gate kararı audit kaydı olmadan asla `allowed=True` dönemez. | Denetlenebilirlik garantisi: "kanıt yoksa izin yok" |
+
 ## Test Stratejisi
 
 ### Property-Based Testing (Hypothesis)

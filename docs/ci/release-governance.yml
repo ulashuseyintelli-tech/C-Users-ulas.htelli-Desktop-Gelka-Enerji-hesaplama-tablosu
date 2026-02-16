@@ -1,0 +1,168 @@
+# Release Governance — GitHub Actions Workflow (Enforcement Mode)
+#
+# Kopyala-yapıştır: bu dosyayı .github/workflows/release-governance.yml olarak kaydet.
+#
+# Ne yapar:
+#   1. Release governance unit + PBT testlerini çalıştırır
+#   2. Preflight gate check yapar (enforcement mode — exit code job sonucunu belirler)
+#   3. Rapor artifact'larını yükler
+#   4. HOLD override: workflow_dispatch ile override flag'leri sağlanabilir
+#
+# Exit code sözleşmesi (preflight):
+#   0  = RELEASE_OK  (veya HOLD + geçerli override)
+#   1  = RELEASE_HOLD (override yok veya geçersiz)
+#   2  = RELEASE_BLOCK (override ile değişmez)
+#   64 = usage error
+#
+# Override kuralları:
+#   - Üç flag da zorunlu: override_reason, override_scope, override_by
+#   - HOLD + geçerli override → exit 0 (job başarılı)
+#   - BLOCK + override → exit 2 (CONTRACT_BREACH, job başarısız)
+#   - workflow_dispatch override yalnızca main/release/* branch'lerinde çalışır
+
+name: Release Governance
+
+on:
+  workflow_dispatch:
+    inputs:
+      override_reason:
+        description: 'HOLD override nedeni (üç flag da zorunlu)'
+        required: false
+        type: string
+      override_scope:
+        description: 'Override kapsamı / release identifier (ör. v2.4)'
+        required: false
+        type: string
+      override_by:
+        description: 'Override onaylayan kişi (username/handle)'
+        required: false
+        type: string
+  push:
+    paths:
+      - 'backend/app/testing/**'
+      - 'backend/tests/test_release_*.py'
+  pull_request:
+    paths:
+      - 'backend/app/testing/**'
+      - 'backend/tests/test_release_*.py'
+
+jobs:
+  test:
+    name: Unit + PBT Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12', '3.13']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: pip install pytest hypothesis
+
+      - name: Unit tests (PBT hariç)
+        run: |
+          pytest backend/tests/test_release_policy.py \
+                 backend/tests/test_release_report.py \
+                 backend/tests/test_release_gate.py \
+                 backend/tests/test_release_e2e.py \
+                 backend/tests/test_release_pack.py \
+                 backend/tests/test_release_preflight.py \
+                 backend/tests/test_release_preflight_enforcement.py \
+                 -v -k "not PBT"
+
+      - name: PBT tests
+        run: |
+          pytest backend/tests/test_release_policy.py \
+                 backend/tests/test_release_report.py \
+                 backend/tests/test_release_gate.py \
+                 backend/tests/test_release_e2e.py \
+                 backend/tests/test_release_pack.py \
+                 -v -k "PBT"
+
+  preflight:
+    name: Release Preflight (Enforcement)
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install pytest hypothesis
+
+      - name: Branch guard — override yalnızca main/release/* üzerinde
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.override_reason != '' &&
+          !(github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))
+        run: |
+          echo "::error::Override yalnızca main veya release/* branch'lerinde kullanılabilir."
+          echo "Mevcut branch: ${{ github.ref }}"
+          exit 1
+
+      - name: Run preflight (enforcement mode)
+        id: preflight
+        run: |
+          OVERRIDE_ARGS=""
+          if [ -n "${{ github.event.inputs.override_reason }}" ] && \
+             [ -n "${{ github.event.inputs.override_scope }}" ] && \
+             [ -n "${{ github.event.inputs.override_by }}" ]; then
+            OVERRIDE_ARGS="--override-reason '${{ github.event.inputs.override_reason }}'"
+            OVERRIDE_ARGS="$OVERRIDE_ARGS --override-scope '${{ github.event.inputs.override_scope }}'"
+            OVERRIDE_ARGS="$OVERRIDE_ARGS --override-by '${{ github.event.inputs.override_by }}'"
+          fi
+          eval python -m backend.app.testing.release_preflight \
+            --json \
+            --output-dir artifacts/ \
+            --metrics-dir artifacts/metrics/ \
+            $OVERRIDE_ARGS
+
+      - name: Upload preflight report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-preflight-report
+          path: artifacts/
+          retention-days: 30
+
+      - name: Upload preflight metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-preflight-metrics
+          path: artifacts/metrics/
+          retention-days: 90
+
+      - name: Preflight summary
+        if: always()
+        run: |
+          echo "## Release Preflight Result" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f artifacts/release_preflight_*.json ]; then
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat artifacts/release_preflight_*.json >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No preflight report generated." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          # Override bilgisi
+          if [ -n "${{ github.event.inputs.override_reason }}" ]; then
+            echo "### Override Bilgisi" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Alan | Değer |" >> "$GITHUB_STEP_SUMMARY"
+            echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Neden | ${{ github.event.inputs.override_reason }} |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Kapsam | ${{ github.event.inputs.override_scope }} |" >> "$GITHUB_STEP_SUMMARY"
+            echo "| Onaylayan | ${{ github.event.inputs.override_by }} |" >> "$GITHUB_STEP_SUMMARY"
+          fi

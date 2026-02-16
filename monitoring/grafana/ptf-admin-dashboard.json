@@ -501,6 +501,102 @@
           }
         }
       ]
+    },
+    {
+      "id": 600,
+      "title": "Guard Decision Layer",
+      "type": "row",
+      "collapsed": true,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 66 },
+      "panels": [
+        {
+          "id": 17,
+          "title": "DECISION | Request Rate (layer active)",
+          "description": "guard_decision_requests_total — decision layer enabled iken değerlendirilen request sayısı. OpsGuard deny path'te bu counter artmamalı.",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 67 },
+          "datasource": { "uid": "$datasource", "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "sum(rate(ptf_admin_guard_decision_requests_total{job=~\"$job\"}[5m]))",
+              "legendFormat": "decision requests/s",
+              "refId": "A",
+              "datasource": { "uid": "$datasource", "type": "prometheus" }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 15, "pointSize": 5, "showPoints": "auto" }
+            },
+            "overrides": [
+              { "matcher": { "id": "byRegexp", "options": "decision" }, "properties": [{ "id": "color", "value": { "fixedColor": "#5794F2", "mode": "fixed" } }] }
+            ]
+          }
+        },
+        {
+          "id": 18,
+          "title": "DECISION | Block Rate by Kind",
+          "description": "guard_decision_block_total{kind} — stale ve insufficient block sayıları.",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 67 },
+          "datasource": { "uid": "$datasource", "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "sum(rate(ptf_admin_guard_decision_block_total{job=~\"$job\"}[5m])) by (kind)",
+              "legendFormat": "{{kind}}",
+              "refId": "A",
+              "datasource": { "uid": "$datasource", "type": "prometheus" }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 20, "pointSize": 5, "showPoints": "auto" }
+            },
+            "overrides": [
+              { "matcher": { "id": "byRegexp", "options": "stale" }, "properties": [{ "id": "color", "value": { "fixedColor": "#FF9830", "mode": "fixed" } }] },
+              { "matcher": { "id": "byRegexp", "options": "insufficient" }, "properties": [{ "id": "color", "value": { "fixedColor": "#F2495C", "mode": "fixed" } }] }
+            ]
+          }
+        },
+        {
+          "id": 19,
+          "title": "DECISION | Snapshot Build Failures",
+          "description": "snapshot_build_failures_total — fail-open path aktif mi? 0'dan büyükse karar katmanı sessizce devre dışı.",
+          "type": "stat",
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 67 },
+          "datasource": { "uid": "$datasource", "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "sum(increase(ptf_admin_guard_decision_snapshot_build_failures_total{job=~\"$job\"}[15m]))",
+              "legendFormat": "build failures (15m)",
+              "refId": "A",
+              "datasource": { "uid": "$datasource", "type": "prometheus" }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "red", "value": 1 }
+                ]
+              },
+              "noValue": "0"
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+            "textMode": "auto",
+            "colorMode": "background",
+            "graphMode": "none"
+          }
+        }
+      ]
     }
   ]
 }

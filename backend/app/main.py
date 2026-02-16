@@ -416,6 +416,13 @@ app.add_middleware(
 from .metrics_middleware import MetricsMiddleware
 app.add_middleware(MetricsMiddleware)
 
+# ── Guard Decision Middleware (Feature: runtime-guard-decision, Wiring) ───────
+# Added BEFORE OpsGuardMiddleware → inner layer. OpsGuard (outer) runs first;
+# if it denies, GuardDecision never executes. Decision layer only activates
+# on the allow path.
+from .guards.guard_decision_middleware import GuardDecisionMiddleware
+app.add_middleware(GuardDecisionMiddleware)
+
 # ── Ops-Guard Middleware (no-op skeleton — Feature: ops-guard, Task 2.2) ──────
 from .ops_guard_middleware import OpsGuardMiddleware
 app.add_middleware(OpsGuardMiddleware)

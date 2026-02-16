@@ -555,6 +555,161 @@ Bu runbook, PTF Admin Prometheus alert'leri tetiklendiğinde izlenecek troublesh
 
 ---
 
+# Preflight Override Semantiği
+
+Preflight override metrikleri üç `kind` label değeri kullanır. Bu bölüm her birinin ne anlama geldiğini ve hangi senaryoda üretildiğini açıklar.
+
+| Kind | Anlam | Senaryo |
+|------|-------|---------|
+| `attempt` | Override reddedildi | BLOCK verdict + override flag'leri sağlandı → override reddedildi (BLOCK verdict override edilemez) |
+| `applied` | Override kabul edildi | HOLD verdict + override flag'leri sağlandı → exit 0 ile geçirildi |
+| `breach` | Sözleşme ihlali | BLOCK verdict + ABSOLUTE_BLOCK_REASONS + override girişimi → CONTRACT_BREACH kaydı |
+
+**Önemli:** `attempt` "override denendi ama reddedildi" demektir, "override başarılı" değil. `applied` ise "override başarıyla uygulandı" anlamına gelir.
+
+### Senaryo Örnekleri
+
+1. **attempt senaryosu:** Geliştirici `--override-by=john` flag'i ile preflight çalıştırır. Sonuç BLOCK (örn. TIER_FAIL). Override reddedilir çünkü BLOCK verdict override edilemez. `override_total{kind="attempt"}` +1 artar.
+
+2. **applied senaryosu:** Geliştirici `--override-by=john` flag'i ile preflight çalıştırır. Sonuç HOLD (örn. COVERAGE_LOW). Override kabul edilir, exit code 0 döner. `override_total{kind="applied"}` +1 artar.
+
+3. **breach senaryosu:** Geliştirici `--override-by=john` flag'i ile preflight çalıştırır. Sonuç BLOCK ve neden ABSOLUTE_BLOCK_REASONS listesinde (örn. SECURITY_CRITICAL). Bu bir sözleşme ihlalidir. `override_total{kind="breach"}` +1 artar. Bu durum PreflightContractBreach alert'ini tetikler.
+
+### PromQL Referansı
+
+```promql
+# Override dağılımı
+release_preflight_override_total
+
+# Sadece breach'ler (sözleşme ihlalleri)
+increase(release_preflight_override_total{kind="breach"}[5m])
+
+# Applied/attempt oranı
+increase(release_preflight_override_total{kind="applied"}[1h])
+/
+(increase(release_preflight_override_total{kind="applied"}[1h]) + increase(release_preflight_override_total{kind="attempt"}[1h]))
+```
+
+---
+
+## PreflightContractBreach
+
+**Severity:** critical
+**PromQL:** `increase(release_preflight_override_total{kind="breach"}[5m]) > 0`
+
+### Olası Nedenler
+1. Geliştirici ABSOLUTE_BLOCK_REASONS listesindeki bir nedeni override etmeye çalıştı
+2. CI pipeline'da yanlış yapılandırılmış override flag'i
+3. Otomasyon aracı bilinçsizce override flag'i gönderiyor
+
+### İlk 3 Kontrol
+1. `release_preflight_override_total{kind="breach"}` — breach sayısını ve artış zamanını kontrol et
+2. Preflight JSON audit loglarında `contract_breach: true` olan kayıtları bul — hangi repo/branch/user
+3. `release_preflight_reason_total` — hangi reason'lar breach tetikledi
+
+### Müdahale Adımları
+1. Tek seferlik ise: geliştiriciyi bilgilendir, ABSOLUTE_BLOCK_REASONS'ın override edilemeyeceğini açıkla
+2. Tekrarlayan ise: CI pipeline config'ini incele, override flag'inin yanlış kullanılıp kullanılmadığını kontrol et
+3. Otomasyon kaynaklı ise: otomasyon aracının override mantığını düzelt
+
+---
+
+## PreflightBlockSpike
+
+**Severity:** warning
+**PromQL:** `increase(release_preflight_verdict_total{verdict="BLOCK"}[15m]) > 5 and increase(release_preflight_verdict_total{verdict="BLOCK"}[15m]) / increase(release_preflight_verdict_total[15m]) > 0.2`
+
+### Olası Nedenler
+1. Yeni release policy kuralı eklendi — daha fazla repo/branch BLOCK alıyor
+2. Altyapı sorunu — tier check, coverage check veya security check geçici olarak hep fail dönüyor
+3. Toplu deploy dalgası — çok sayıda repo aynı anda preflight çalıştırıyor ve çoğu BLOCK alıyor
+4. Policy config değişikliği — threshold'lar sıkılaştırıldı
+
+### İlk 3 Kontrol
+1. `release_preflight_reason_total` — hangi reason'lar artıyor (TIER_FAIL, COVERAGE_LOW, vb.)
+2. Son policy config değişikliği — `git log` ile release_policy.py değişikliklerini kontrol et
+3. `release_preflight_verdict_total` by verdict — OK/HOLD/BLOCK dağılımını incele
+
+### Müdahale Adımları
+1. Policy değişikliği kaynaklı ise: değişikliği gözden geçir, gerekirse rollback
+2. Altyapı sorunu ise: ilgili check'in bağımlılığını (tier service, coverage API) kontrol et
+3. Geçici spike ise: monitoring'e devam et, 30 dk içinde normale dönmezse investigate et
+
+---
+
+## PreflightTelemetryWriteFailure
+
+**Severity:** warning
+**PromQL:** `increase(release_preflight_telemetry_write_failures_total[15m]) > 0`
+
+### Olası Nedenler
+1. Disk dolu — metrik dosyası yazılamıyor
+2. İzin hatası — preflight_metrics.json dosyasına yazma izni yok
+3. Atomic write başarısızlığı — temp dosya oluşturulamıyor veya rename başarısız
+4. NFS/network filesystem sorunu — uzak dosya sistemi geçici olarak erişilemez
+
+### İlk 3 Kontrol
+1. `release_preflight_telemetry_write_failures_total` — failure sayısını ve artış hızını kontrol et
+2. `release_preflight_store_generation` — generation artmaya devam ediyor mu (bazı save'ler başarılı mı)
+3. Disk kullanımı — `df -h` ile metrik dizininin disk doluluk oranını kontrol et
+
+### Müdahale Adımları
+1. Disk dolu ise: eski log/temp dosyalarını temizle, disk kapasitesini artır
+2. İzin hatası ise: dosya/dizin izinlerini düzelt
+3. Geçici ise: fail-open politikası gereği preflight verdict etkilenmez, ancak metrik kaybı olur — monitoring'e devam et
+
+### PromQL — Failure Trend
+
+```promql
+# Write failure trend (son 24 saat)
+increase(release_preflight_telemetry_write_failures_total[1h])
+
+# Store generation ile karşılaştır (başarılı save'ler)
+release_preflight_store_generation
+```
+
+---
+
+## PreflightCounterReset
+
+**Severity:** warning
+**PromQL:** `resets(release_preflight_verdict_total[6h]) > 0`
+
+### Olası Nedenler
+1. Container restart — pod yeniden başlatıldı, store dosyası kayboldu
+2. Disk kaybı — persistent volume silinmiş veya erişilemez
+3. Store dosyası silinmiş — manuel müdahale veya cleanup script
+4. Yeni deployment — store dosyası olmayan yeni pod başlatıldı
+
+### İlk 3 Kontrol
+1. `release_preflight_store_generation` — generation sıfırlandı mı (yeni store başlatıldı mı)
+2. `release_preflight_store_start_time_seconds` — store başlangıç zamanı son deploy zamanıyla eşleşiyor mu
+3. Pod restart history — `kubectl get pods -l app=<preflight-app>` ile restart sayısını kontrol et
+
+### Müdahale Adımları
+1. Planlı deployment ise: beklenen davranış, counter reset normal
+2. Beklenmeyen restart ise: pod loglarını incele, OOM/crash nedenini belirle
+3. Disk kaybı ise: persistent volume claim durumunu kontrol et, gerekirse yeniden oluştur
+
+### Counter Reset Triage — Rollout Timestamp Karşılaştırması
+
+```promql
+# Store başlangıç zamanı (Unix epoch)
+release_preflight_store_start_time_seconds
+
+# Store generation (0 ise yeni store)
+release_preflight_store_generation
+
+# Verdict counter reset sayısı (son 6 saat)
+resets(release_preflight_verdict_total[6h])
+```
+
+Rollout timestamp ile `store_start_time_seconds` karşılaştırması:
+- `store_start_time_seconds` ≈ rollout zamanı → planlı restart, beklenen reset
+- `store_start_time_seconds` ≈ şimdiki zaman ve generation = 0 → beklenmeyen restart, investigate et
+
+---
+
 # Ek: HTTP Hata Kodu Semantiği (Error Mapping)
 
 ### 502 vs 503 Ayrımı (Alert Routing İçin)
@@ -662,3 +817,258 @@ doğrular. Fail olması şu anlama gelir: **yeni bir kritik yol endpoint'i wrapp
 - Her muafiyetin yanında "Neden?" yorumu zorunlu
 - Deprecated endpoint kaldırılınca muafiyet de silinmeli
 - Yeni muafiyet eklemek PR review gerektirir
+
+
+---
+
+# Guard Decision Layer — Operasyonel Runbook
+
+## Genel Bilgi
+
+Guard Decision Layer, mevcut OpsGuard middleware zincirinin (KillSwitch → RateLimiter → CircuitBreaker) üzerine oturan ek bir karar katmanıdır. Config freshness ve CB mapping sufficiency sinyallerini değerlendirir.
+
+### Temel Özellikler
+
+| Özellik | Değer |
+|---------|-------|
+| Flag adı | `OPS_GUARD_DECISION_LAYER_ENABLED` |
+| Varsayılan | `false` (OFF) |
+| Middleware sırası | OpsGuard (dış) → GuardDecision (iç) |
+| Fail-open | Evet — crash/exception → mevcut davranış korunur |
+| 429 semantiği | Değişmez — RATE_LIMITED → 429 + Retry-After aynen korunur |
+
+### 503 Error Code'ları
+
+| errorCode | Anlam | Tetikleyen Sinyal |
+|-----------|-------|-------------------|
+| `OPS_GUARD_STALE` | Config yaşı threshold'u aştı | CONFIG_FRESHNESS → STALE |
+| `OPS_GUARD_INSUFFICIENT` | Veri eksik (config timestamp yok veya CB mapping miss) | CONFIG_FRESHNESS → INSUFFICIENT veya CB_MAPPING → INSUFFICIENT |
+
+### reasonCodes (Canonical Ordering)
+
+Response payload'daki `reasonCodes` listesi deterministik sıralıdır:
+1. SignalName enum ordinal (CONFIG_FRESHNESS < CB_MAPPING)
+2. SignalReasonCode string value (lexicographic)
+
+Olası değerler (bounded set):
+- `CONFIG_TIMESTAMP_MISSING` — last_updated_at boş
+- `CONFIG_TIMESTAMP_PARSE_ERROR` — last_updated_at parse edilemedi
+- `CONFIG_STALE` — config yaşı > max_config_age_ms
+- `CB_MAPPING_MISS` — endpoint → dependency eşlemesi bulunamadı
+
+### Enable Prosedürü (Kademeli Rollout — Shadow → Enforce)
+
+**Adım 1: Shadow mode ile aç**
+
+```bash
+OPS_GUARD_DECISION_LAYER_ENABLED=true
+OPS_GUARD_DECISION_LAYER_MODE=shadow    # default, açıkça yazılması önerilir
+OPS_GUARD_LAST_UPDATED_AT=<ISO-8601>    # config freshness için gerekli
+```
+
+1. Deploy et
+2. Grafana → Guard Decision Layer row'unu aç
+3. `guard_decision_requests_total` artışını doğrula (middleware çalışıyor)
+4. `guard_decision_block_total{kind}` izle — shadow modda 503 dönmez ama counter artar
+5. 24–48 saat gözlem yap:
+   - `block_total{kind="stale"}` > 0 ise: `OPS_GUARD_LAST_UPDATED_AT` güncel mi kontrol et
+   - `block_total{kind="insufficient"}` > 0 ise: `endpoint_dependency_map.py` eksik mapping var mı kontrol et
+   - Her iki counter 0 ise: policy sağlıklı, enforce'a geçilebilir
+
+**Adım 2: Enforce mode'a geç**
+
+```bash
+OPS_GUARD_DECISION_LAYER_MODE=enforce
+```
+
+1. Deploy et
+2. 15 dk izle — `guard_decision_block_total` artışı gerçek 503'lere dönüşecek
+3. False positive varsa hemen rollback:
+   ```bash
+   OPS_GUARD_DECISION_LAYER_ENABLED=false
+   ```
+
+**Rollback (acil)**
+
+```bash
+# Seçenek 1: Katmanı tamamen kapat
+OPS_GUARD_DECISION_LAYER_ENABLED=false
+
+# Seçenek 2: Shadow'a geri dön (metrik toplamaya devam et)
+OPS_GUARD_DECISION_LAYER_MODE=shadow
+```
+
+---
+
+## PTFAdminGuardDecisionBuildFailure
+
+**Severity:** warning
+**PromQL:** `increase(ptf_admin_guard_decision_snapshot_build_failures_total[15m]) > 0`
+
+### Olası Nedenler
+1. SnapshotFactory.build() internal exception — config parse, hash computation veya signal producer hatası
+2. GuardConfig singleton henüz initialize edilmemiş (startup race)
+3. endpoint_normalization veya endpoint_dependency_map import hatası
+
+### İlk 3 Kontrol
+1. `kubectl logs -l app=ptf-admin --tail=100 | grep "GUARD-DECISION.*SnapshotFactory"` — exception stack trace'i bul
+2. `ptf_admin_guard_decision_requests_total` — decision layer çalışıyor mu (counter artıyor mu)
+3. `ptf_admin_guard_decision_snapshot_build_failures_total` — failure sayısı ve artış hızı
+
+### Müdahale Adımları
+1. Tek seferlik ise: log'dan root cause belirle, monitoring'e devam et (fail-open aktif, trafik etkilenmez)
+2. Sürekli artıyorsa: decision layer'da bug var — `OPS_GUARD_DECISION_LAYER_ENABLED=false` ile kapat, fix deploy et
+3. Startup race ise: pod restart sonrası düzelir, kalıcı ise startup sırasını incele
+
+### PromQL — Triage
+
+```promql
+# Build failure trend (son 1 saat)
+increase(ptf_admin_guard_decision_snapshot_build_failures_total[1h])
+
+# Failure rate vs request rate
+increase(ptf_admin_guard_decision_snapshot_build_failures_total[15m])
+/
+increase(ptf_admin_guard_decision_requests_total[15m])
+```
+
+---
+
+## PTFAdminGuardDecisionBlockRate
+
+**Severity:** warning
+**PromQL:** `sum(increase(ptf_admin_guard_decision_block_total[15m])) > 5`
+
+### Olası Nedenler
+1. Config stale — `OPS_GUARD_LAST_UPDATED_AT` güncellenmemiş, config yaşı threshold'u aştı
+2. CB mapping miss — yeni endpoint eklendi ama `endpoint_dependency_map.py` güncellenmedi
+3. Config timestamp parse error — `last_updated_at` formatı bozuk
+
+### İlk 3 Kontrol
+1. `ptf_admin_guard_decision_block_total` by kind — stale mi insufficient mi
+2. `OPS_GUARD_LAST_UPDATED_AT` env var'ını kontrol et — boş mu, eski mi, parse edilebilir mi
+3. `endpoint_dependency_map.py` — son deploy'da yeni endpoint eklenmiş mi
+
+### Müdahale Adımları
+1. Config stale ise: `OPS_GUARD_LAST_UPDATED_AT` güncelle ve redeploy et
+2. Mapping miss ise: `endpoint_dependency_map.py`'ye eksik endpoint'i ekle
+3. Acil bypass: `OPS_GUARD_DECISION_LAYER_ENABLED=false` ile karar katmanını kapat
+
+### PromQL — Block Breakdown
+
+```promql
+# Block dağılımı (kind bazında)
+sum by (kind) (increase(ptf_admin_guard_decision_block_total[1h]))
+
+# Block dağılımı (mode bazında — shadow vs enforce ayırımı)
+sum by (kind, mode) (increase(ptf_admin_guard_decision_block_total[1h]))
+
+# Sadece enforce modda gerçek block'lar
+sum by (kind) (increase(ptf_admin_guard_decision_block_total{mode="enforce"}[1h]))
+
+# Sadece shadow modda potansiyel block'lar
+sum by (kind) (increase(ptf_admin_guard_decision_block_total{mode="shadow"}[1h]))
+
+# Block rate (15 dk pencere)
+sum(increase(ptf_admin_guard_decision_block_total[15m]))
+
+# Snapshot build failure rate (fail-open tespiti)
+increase(ptf_admin_guard_decision_snapshot_build_failures_total[15m])
+```
+
+---
+
+## PTFAdminGuardDecisionSilent
+
+**Severity:** warning
+**PromQL:** `increase(ptf_admin_guard_decision_requests_total[15m]) == 0 and increase(ptf_admin_api_request_total[15m]) > 10`
+
+### Olası Nedenler
+1. `OPS_GUARD_DECISION_LAYER_ENABLED=false` — flag kapalı (beklenen davranış olabilir)
+2. Middleware sırası yanlış — GuardDecisionMiddleware OpsGuard'dan dışta, tüm request'ler skip ediliyor
+3. `_SKIP_PATHS` çok geniş — tüm trafik skip path'e düşüyor
+4. Middleware import hatası — GuardDecisionMiddleware yüklenemedi
+
+### İlk 3 Kontrol
+1. `OPS_GUARD_DECISION_LAYER_ENABLED` env var'ını kontrol et — true mu
+2. `main.py`'de middleware kayıt sırasını doğrula — GuardDecision inner, OpsGuard outer olmalı
+3. Uygulama loglarında `[GUARD-DECISION]` entry var mı kontrol et
+
+### Müdahale Adımları
+1. Flag kapalı ise: beklenen davranış, alert'i acknowledge et
+2. Middleware sırası yanlış ise: `main.py`'de `add_middleware` sırasını düzelt ve redeploy et
+3. Import hatası ise: uygulama loglarını incele, dependency'leri kontrol et
+
+
+---
+
+# Guard Decision Layer — Release Note Checklist
+
+## Özellik Özeti
+
+Runtime Guard Decision Layer: mevcut OpsGuard zincirinin üzerine oturan, config freshness ve CB mapping sufficiency sinyallerini değerlendiren ek karar katmanı.
+
+## Checklist
+
+### 1. Feature Flags
+
+| Env Var | Default | Açıklama |
+|---------|---------|----------|
+| `OPS_GUARD_DECISION_LAYER_ENABLED` | `false` | Katmanı aç/kapat |
+| `OPS_GUARD_DECISION_LAYER_MODE` | `shadow` | `shadow`: metrik only, `enforce`: gerçek 503 |
+
+### 2. Yeni 503 Error Code'ları
+
+| errorCode | HTTP | Anlam |
+|-----------|------|-------|
+| `OPS_GUARD_STALE` | 503 | Config yaşı threshold'u aştı |
+| `OPS_GUARD_INSUFFICIENT` | 503 | Config timestamp eksik veya CB mapping miss |
+
+Mevcut 429 (RATE_LIMITED + Retry-After) semantiği değişmez.
+
+### 3. Prometheus Alert'leri (3 yeni)
+
+| Alert | Severity | Tetik |
+|-------|----------|-------|
+| `PTFAdminGuardDecisionBuildFailure` | warning | Snapshot build failure (fail-open aktif) |
+| `PTFAdminGuardDecisionBlockRate` | warning | Block sayısı > 5 AND oran > %1 (15dk) |
+| `PTFAdminGuardDecisionSilent` | warning | Trafik var ama decision layer çalışmıyor |
+
+### 4. Grafana Dashboard
+
+Row: "Guard Decision Layer" (id=600, 3 panel)
+- Request Rate (layer active)
+- Block Rate by Kind (stale/insufficient)
+- Snapshot Build Failures (stat panel)
+
+### 5. Yeni Metrikler
+
+| Metrik | Tip | Label |
+|--------|-----|-------|
+| `ptf_admin_guard_decision_requests_total` | Counter | — |
+| `ptf_admin_guard_decision_block_total` | Counter | `kind` (stale/insufficient), `mode` (shadow/enforce) |
+| `ptf_admin_guard_decision_snapshot_build_failures_total` | Counter | — |
+
+### 6. Rollout Prosedürü
+
+```
+shadow (24-48h gözlem) → enforce → prod
+```
+
+Sorun varsa: `OPS_GUARD_DECISION_LAYER_ENABLED=false` ile anında rollback.
+
+### 7. Rollback
+
+```bash
+# Tam kapatma
+OPS_GUARD_DECISION_LAYER_ENABLED=false
+
+# Shadow'a geri dönme (metrik toplamaya devam)
+OPS_GUARD_DECISION_LAYER_MODE=shadow
+```
+
+### 8. Bilinen Kısıtlamalar (v1)
+
+- Tenant bazlı enable yok — global aç/kapat
+- `tenant_id` sabit "default"
+- WindowParams (max_config_age_ms, clock_skew_allowance_ms) henüz env var ile konfigüre edilemiyor (kod default'ları kullanılır)

@@ -70,7 +70,7 @@ PR-10 test disiplini çıktılarını release kararlarına bağlayan üç bileş
 - [x] 4. Checkpoint — ReleaseReportGenerator testleri
   - Tüm testlerin geçtiğinden emin ol, sorular varsa kullanıcıya sor.
 
-- [-] 5. ReleaseGate (Enforcement Hook)
+- [x] 5. ReleaseGate (Enforcement Hook)
   - [x] 5.1 `backend/app/testing/release_gate.py` dosyasını oluştur: ReleaseOverride dataclass, GateDecision dataclass, ReleaseGate sınıfı
     - _Requirements: 4.1-4.7, 6.3_
   - [x] 5.2 `ReleaseGate.check()` metodunu implemente et
@@ -80,23 +80,23 @@ PR-10 test disiplini çıktılarını release kararlarına bağlayan üç bileş
     - Her karar için audit kaydı oluştur
     - GUARD_VIOLATION/OPS_GATE_FAIL kaynaklı BLOCK'ta override girişimini "CONTRACT_BREACH_NO_OVERRIDE" ile reddet
     - _Requirements: 4.1-4.7, 6.3_
-  - [-]* 5.3 ReleaseGate unit testleri yaz (`backend/tests/test_release_gate.py`)
+  - [x]* 5.3 ReleaseGate unit testleri yaz (`backend/tests/test_release_gate.py`)
     - OK/BLOCK/HOLD temel akışları
     - Override TTL sınır koşulları
     - Mutlak blok override reddi
     - En az 3 unit test (entegrasyon odaklı)
     - _Requirements: 4.1-4.7, 6.3_
-  - [ ]* 5.4 Property test: Gate verdict uyumu
+  - [x]* 5.4 Property test: Gate verdict uyumu
     - **Property 9: Gate verdict uyumu**
     - **Validates: Requirements 4.1, 4.2, 4.3**
-  - [ ]* 5.5 Property test: Override doğrulama
+  - [x]* 5.5 Property test: Override doğrulama
     - **Property 10: Override doğrulama**
     - **Validates: Requirements 4.4, 4.5, 4.6**
-  - [ ]* 5.6 Property test: Audit kaydı
+  - [x]* 5.6 Property test: Audit kaydı
     - **Property 11: Audit kaydı**
     - **Validates: Requirements 4.7**
 
-- [ ] 6. Final checkpoint — Tüm testler
+- [x] 6. Final checkpoint — Tüm testler
   - Tüm testlerin geçtiğinden emin ol, 0 flaky test, tier bütçeleri korunur. Sorular varsa kullanıcıya sor.
 
 ## Notlar

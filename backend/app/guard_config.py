@@ -91,6 +91,16 @@ class GuardConfig(BaseSettings):
     # Per-dependency override — JSON string: {"external_api": 3, "cache": 1, ...}
     wrapper_retry_max_attempts_by_dependency: str = ""
 
+    # ── Guard Decision Layer (Feature: runtime-guard-decision) ───────────
+    decision_layer_enabled: bool = False  # Explicit opt-in; default OFF
+    # Mode: "shadow" = evaluate + metrics only (no block), "enforce" = full block
+    decision_layer_mode: str = "shadow"
+
+    # ── Tenant-Level Guard Decision Override (Feature: tenant-enable) ────
+    decision_layer_default_mode: str = "shadow"  # "shadow"|"enforce"|"off"
+    decision_layer_tenant_modes_json: str = ""    # JSON: {"tenantA":"enforce",...}
+    decision_layer_tenant_allowlist_json: str = ""  # JSON: ["tenantA","tenantB"]
+
     # ── Validators ────────────────────────────────────────────────────────
 
     @field_validator("wrapper_timeout_seconds_default")
@@ -126,6 +136,22 @@ class GuardConfig(BaseSettings):
     def _validate_jitter_pct(cls, v: float) -> float:
         if v < 0 or v > 1.0:
             raise ValueError(f"wrapper_retry_jitter_pct must be in [0, 1.0], got {v}")
+        return v
+
+    @field_validator("decision_layer_mode")
+    @classmethod
+    def _validate_decision_layer_mode(cls, v: str) -> str:
+        allowed = {"shadow", "enforce"}
+        if v not in allowed:
+            raise ValueError(f"decision_layer_mode must be one of {allowed}, got {v!r}")
+        return v
+
+    @field_validator("decision_layer_default_mode")
+    @classmethod
+    def _validate_decision_layer_default_mode(cls, v: str) -> str:
+        allowed = {"shadow", "enforce", "off"}
+        if v not in allowed:
+            raise ValueError(f"decision_layer_default_mode must be one of {allowed}, got {v!r}")
         return v
 
     @model_validator(mode="after")
@@ -248,6 +274,13 @@ _FALLBACK_DEFAULTS = dict(
     wrapper_retry_backoff_cap_ms=5000,
     wrapper_retry_jitter_pct=0.2,
     wrapper_retry_max_attempts_by_dependency="",
+    # Guard Decision Layer
+    decision_layer_enabled=False,
+    decision_layer_mode="shadow",
+    # Tenant-Level Guard Decision Override
+    decision_layer_default_mode="shadow",
+    decision_layer_tenant_modes_json="",
+    decision_layer_tenant_allowlist_json="",
 )
 
 

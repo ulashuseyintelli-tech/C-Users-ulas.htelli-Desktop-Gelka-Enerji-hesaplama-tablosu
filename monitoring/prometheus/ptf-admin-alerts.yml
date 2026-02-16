@@ -141,6 +141,69 @@ spec:
             runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#ptfadminimportrejectratio"
 
     # ════════════════════════════════════════════════════════════════
+    # Preflight Guard-Rails Alert Group — Feature: preflight-guardrails, Task 6
+    # ════════════════════════════════════════════════════════════════
+    - name: ptf-admin-preflight-guardrails
+      rules:
+        # ── A1: PreflightContractBreach ────────────────────────────
+        - alert: PreflightContractBreach
+          expr: increase(release_preflight_override_total{kind="breach"}[5m]) > 0
+          for: 0m
+          labels:
+            severity: critical
+            team: platform
+            service: release-preflight
+          annotations:
+            summary: "CONTRACT BREACH — ABSOLUTE_BLOCK_REASONS override girişimi"
+            description: "release_preflight_override_total{kind=\"breach\"} son 5 dakikada artış gösterdi. Sözleşme ihlali — ABSOLUTE_BLOCK_REASONS override edilmeye çalışıldı."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PreflightContractBreach"
+
+        # ── A2: PreflightBlockSpike (mutlak + oran) ───────────────
+        - alert: PreflightBlockSpike
+          expr: >-
+            increase(release_preflight_verdict_total{verdict="BLOCK"}[15m]) > 5
+            and
+            increase(release_preflight_verdict_total{verdict="BLOCK"}[15m])
+            /
+            increase(release_preflight_verdict_total[15m])
+            > 0.2
+          for: 10m
+          labels:
+            severity: warning
+            team: platform
+            service: release-preflight
+          annotations:
+            summary: "Preflight BLOCK spike — son 15 dakikada hem mutlak hem oran eşiği aşıldı"
+            description: "release_preflight_verdict_total{verdict=\"BLOCK\"} son 15 dakikada {{ $value }} artış gösterdi ve BLOCK oranı %20'yi aştı."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PreflightBlockSpike"
+
+        # ── A3: PreflightTelemetryWriteFailure ────────────────────
+        - alert: PreflightTelemetryWriteFailure
+          expr: increase(release_preflight_telemetry_write_failures_total[15m]) > 0
+          for: 0m
+          labels:
+            severity: warning
+            team: platform
+            service: release-preflight
+          annotations:
+            summary: "Telemetry write failure — metrik dosyası yazılamadı"
+            description: "release_preflight_telemetry_write_failures_total son 15 dakikada artış gösterdi. Disk dolu, izin hatası veya atomic write başarısızlığı olabilir."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PreflightTelemetryWriteFailure"
+
+        # ── A4: PreflightCounterReset ─────────────────────────────
+        - alert: PreflightCounterReset
+          expr: resets(release_preflight_verdict_total[6h]) > 0
+          for: 0m
+          labels:
+            severity: warning
+            team: platform
+            service: release-preflight
+          annotations:
+            summary: "Counter reset tespit edildi — monotonluk bozulmuş olabilir"
+            description: "release_preflight_verdict_total son 6 saatte {{ $value }} reset gösterdi. Container restart, disk kaybı veya store dosyası silinmiş olabilir."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PreflightCounterReset"
+
+    # ════════════════════════════════════════════════════════════════
     # Ops-Guard Alert Group — Feature: ops-guard, Task 8
     # Mevcut ptf-admin-alerts grubu DEĞİŞTİRİLMEDİ.
     # ════════════════════════════════════════════════════════════════
@@ -397,3 +460,56 @@ spec:
             summary: "Dependency circuit breaker açık — çağrılar reddediliyor"
             description: "{{ $labels.dependency }} için circuit breaker açık, istekler reddediliyor. Upstream arızası devam ediyor."
             runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PTFAdminDependencyCircuitOpenRate"
+
+    # ════════════════════════════════════════════════════════════════
+    # Guard Decision Layer Alert Group — Feature: runtime-guard-decision
+    # ════════════════════════════════════════════════════════════════
+    - name: ptf-admin-guard-decision
+      rules:
+        # ── GD1: Snapshot Build Failure (fail-open detection) ─────
+        - alert: PTFAdminGuardDecisionBuildFailure
+          expr: increase(ptf_admin_guard_decision_snapshot_build_failures_total[15m]) > 0
+          for: 0m
+          labels:
+            severity: warning
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "Guard decision snapshot build failure — karar katmanı sessizce devre dışı"
+            description: "ptf_admin_guard_decision_snapshot_build_failures_total son 15 dakikada arttı. SnapshotFactory.build() exception fırlattı, fail-open path aktif — stale/insufficient kontrolü yapılmıyor."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PTFAdminGuardDecisionBuildFailure"
+
+        # ── GD2: Decision Block Rate (stale + insufficient) ──────
+        - alert: PTFAdminGuardDecisionBlockRate
+          expr: >-
+            increase(ptf_admin_guard_decision_block_total[15m]) > 5
+            and
+            increase(ptf_admin_guard_decision_block_total[15m])
+            /
+            clamp_min(increase(ptf_admin_guard_decision_requests_total[15m]), 1)
+            > 0.01
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "Guard decision layer block oranı yüksek (mutlak > 5 ve oran > %1)"
+            description: "ptf_admin_guard_decision_block_total son 15 dakikada mutlak {{ $value }} artış gösterdi ve toplam request'lerin %1'ini aştı. Config stale veya CB mapping miss olabilir."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PTFAdminGuardDecisionBlockRate"
+
+        # ── GD3: Decision Layer Silent (enabled but no requests) ──
+        - alert: PTFAdminGuardDecisionSilent
+          expr: >-
+            increase(ptf_admin_guard_decision_requests_total[15m]) == 0
+            and
+            increase(ptf_admin_api_request_total[15m]) > 10
+          for: 15m
+          labels:
+            severity: warning
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "Guard decision layer sessiz — trafik var ama decision layer çalışmıyor"
+            description: "API trafiği var ama guard_decision_requests_total artmıyor. Middleware sırası yanlış, flag kapalı veya skip path sorunu olabilir."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PTFAdminGuardDecisionSilent"

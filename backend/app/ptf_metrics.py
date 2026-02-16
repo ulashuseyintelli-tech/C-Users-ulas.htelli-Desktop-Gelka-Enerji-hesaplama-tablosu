@@ -190,6 +190,24 @@ class PTFMetrics:
             registry=self._registry,
         )
 
+        # ── Guard Decision Layer metrics (Feature: runtime-guard-decision) ─
+        self._guard_decision_block_total = Counter(
+            "ptf_admin_guard_decision_block_total",
+            "Guard decision layer block count by kind and mode",
+            labelnames=["kind", "mode"],
+            registry=self._registry,
+        )
+        self._guard_decision_snapshot_build_failures_total = Counter(
+            "ptf_admin_guard_decision_snapshot_build_failures_total",
+            "Guard decision snapshot factory build failures (fail-open)",
+            registry=self._registry,
+        )
+        self._guard_decision_requests_total = Counter(
+            "ptf_admin_guard_decision_requests_total",
+            "Guard decision layer evaluated requests (enabled path only)",
+            registry=self._registry,
+        )
+
     # ── upsert_total ──────────────────────────────────────────────────────
 
     def inc_upsert(self, status: str) -> None:
@@ -362,6 +380,26 @@ class PTFMetrics:
     def inc_dependency_map_miss(self) -> None:
         """Increment dependency map miss counter (endpoint not in mapping)."""
         self._dependency_map_miss_total.inc()
+
+    # ── Guard Decision Layer metrics (Feature: runtime-guard-decision) ────
+
+    def inc_guard_decision_block(self, kind: str, mode: str = "enforce") -> None:
+        """Increment guard decision block counter. kind: 'stale' | 'insufficient', mode: 'shadow' | 'enforce'."""
+        if kind not in ("stale", "insufficient"):
+            logger.warning(f"[METRICS] Invalid guard_decision_block kind: {kind}")
+            return
+        if mode not in ("shadow", "enforce"):
+            logger.warning(f"[METRICS] Invalid guard_decision_block mode: {mode}")
+            return
+        self._guard_decision_block_total.labels(kind=kind, mode=mode).inc()
+
+    def inc_guard_decision_snapshot_build_failure(self) -> None:
+        """Increment snapshot factory build failure counter."""
+        self._guard_decision_snapshot_build_failures_total.inc()
+
+    def inc_guard_decision_request(self) -> None:
+        """Increment decision layer evaluated request counter."""
+        self._guard_decision_requests_total.inc()
 
     # ── Snapshot (test/debug only) ────────────────────────────────────────
 
