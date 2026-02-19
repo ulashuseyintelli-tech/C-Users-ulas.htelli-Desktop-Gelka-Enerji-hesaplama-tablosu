@@ -48,6 +48,7 @@ ROW_MIN_PANELS = {
     "Lookup / History": 3,
     "Frontend Telemetry": 2,
     "Dependency Health": 4,
+    "Guard Decision Layer": 5,
 }
 
 REQUIRED_TOP_KEYS = {"title", "uid", "panels", "templating", "time", "refresh"}

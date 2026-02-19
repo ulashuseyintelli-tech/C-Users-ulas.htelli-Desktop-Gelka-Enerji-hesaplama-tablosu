@@ -19,10 +19,16 @@ Mevcut yapıyı bozmaz; tenant-mode çözümlemesinin çıktısını risk sını
 
 ### E3 — Endpoint → RiskClass Eşlemesi (Config-Driven)
 - E3.1: `decision_layer_endpoint_risk_map_json` config alanı ile endpoint pattern → risk class eşlemesi tanımlanır.
-- E3.2: Eşleme formatı: JSON object, key = endpoint template (exact match), value = risk class string.
+- E3.2: Eşleme formatı: JSON object, key = endpoint pattern, value = risk class string.
 - E3.3: Bilinmeyen endpoint (map'te yok) → `LOW` (varsayılan risk class).
 - E3.4: Geçersiz JSON → boş map + log (fail-open, mevcut parse pattern).
 - E3.5: Geçersiz risk class değeri olan entry'ler atlanır + log (mevcut tenant_modes pattern).
+- E3.6: Endpoint key'leri `normalize_endpoint()` çıktısı (template) üzerinden çözülür — raw path değil. Path param drift risk map'i kırmaz.
+- E3.7: Precedence sırası (tek satır kural, sabit):
+  1. Exact match (template == key)
+  2. Longest prefix match (key, endpoint template'in prefix'i)
+  3. Default LOW
+- E3.8: Aynı endpoint birden fazla pattern'e match olduğunda precedence sırası deterministik sonuç üretir — ambiguity yok.
 
 ### E4 — Efektif Mod Çözümlemesi (Resolve Table)
 - E4.1: `resolve_effective_mode(tenant_mode, risk_class, policy_overrides)` pure fonksiyonu, tenant_mode ve risk_class'ı birleştirerek efektif TenantMode döner.
@@ -47,10 +53,13 @@ Mevcut yapıyı bozmaz; tenant-mode çözümlemesinin çıktısını risk sını
 - E6.4: Efektif mod `SHADOW` → build + evaluate, BLOCK'ta log+metrik, no block.
 - E6.5: Efektif mod `ENFORCE` → build + evaluate, BLOCK'ta 503.
 
-### E7 — Metrik Cardinality Kontrolü
+### E7 — Metrik Cardinality Kontrolü ve Observability
 - E7.1: Metrik label'larında `risk_class` kullanılır (bounded: 3 değer).
 - E7.2: Endpoint template metrik label'ına KONMAZ (cardinality explosion riski).
 - E7.3: Mevcut `tenant` label'ı (sanitize_metric_tenant) korunur.
+- E7.4: `guard_decision_requests_total` metriğine `mode` ve `risk_class` label'ları eklenir.
+- E7.5: `guard_decision_block_total` metriğine `risk_class` label'ı eklenir.
+- E7.6: Risk map boş → `risk_class=low` durumunda decision layer çalışır ama enforce yok (SHADOW) — silent alert doğru çalışmaya devam eder.
 
 ### E8 — Mevcut Testlerin Geriye Uyumluluğu
 - E8.1: Mevcut tenant-enable PBT'leri (P1–P3) ve integration testleri (I1–I4) geçerliliğini korur.

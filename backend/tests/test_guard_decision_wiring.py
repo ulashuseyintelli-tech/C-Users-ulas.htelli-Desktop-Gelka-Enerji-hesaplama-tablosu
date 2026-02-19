@@ -25,6 +25,7 @@ from app.guards.guard_decision import (
     SignalName,
     SignalReasonCode,
     SignalStatus,
+    TenantMode,
     WindowParams,
 )
 from app.guards.guard_enforcement import EnforcementVerdict
@@ -178,6 +179,8 @@ class TestW4AllowInsufficient:
             derived_has_stale=False,
             derived_has_insufficient=True,
             is_degrade_mode=False,
+            tenant_mode=TenantMode.ENFORCE,
+            effective_mode=TenantMode.ENFORCE,
         )
 
         with patch(
@@ -233,6 +236,8 @@ class TestW5AllowStale:
             derived_has_stale=True,
             derived_has_insufficient=False,
             is_degrade_mode=False,
+            tenant_mode=TenantMode.ENFORCE,
+            effective_mode=TenantMode.ENFORCE,
         )
 
         with patch(

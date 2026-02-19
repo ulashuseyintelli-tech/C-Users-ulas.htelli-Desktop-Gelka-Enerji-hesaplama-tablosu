@@ -61,6 +61,16 @@ class TenantMode(str, Enum):
     OFF = "off"
 
 
+class RiskClass(str, Enum):
+    """Endpoint risk classification. Exactly 3 values — bounded cardinality.
+    Safe for metric labels (max 3 distinct values).
+    Feature: endpoint-class-policy, Requirements E2.1, E2.3
+    """
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Config parse helpers — fail-open (never raise)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -96,6 +106,117 @@ def parse_tenant_modes(raw_json: str) -> dict[str, TenantMode]:
                 mode_val, tenant_id,
             )
     return result
+
+
+def parse_endpoint_risk_map(raw_json: str) -> dict[str, RiskClass]:
+    """
+    JSON string → endpoint pattern → RiskClass eşlemesi.
+
+    Flat dict format: {"endpoint_pattern": "risk_class", ...}
+    Keys are normalized endpoint templates (exact or prefix patterns).
+
+    Fail-open (mevcut parse_tenant_modes pattern):
+    - Geçersiz JSON → boş dict + log
+    - Geçersiz risk class değeri → entry atlanır + log
+    - Boş/None → boş dict
+
+    Feature: endpoint-class-policy, Requirements E3.1, E3.2, E3.4, E3.5
+    """
+    if not raw_json or not raw_json.strip():
+        return {}
+
+    try:
+        parsed = json.loads(raw_json)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("[GUARD-DECISION] parse_endpoint_risk_map: invalid JSON, returning empty map")
+        return {}
+
+    if not isinstance(parsed, dict):
+        logger.warning(
+            "[GUARD-DECISION] parse_endpoint_risk_map: expected JSON object, got %s",
+            type(parsed).__name__,
+        )
+        return {}
+
+    result: dict[str, RiskClass] = {}
+    for endpoint_key, risk_val in parsed.items():
+        try:
+            result[str(endpoint_key)] = RiskClass(risk_val)
+        except (ValueError, KeyError):
+            logger.warning(
+                "[GUARD-DECISION] parse_endpoint_risk_map: invalid risk class %r for endpoint %r, skipping",
+                risk_val, endpoint_key,
+            )
+    return result
+
+
+def resolve_endpoint_risk_class(
+    endpoint: str,
+    risk_map: dict[str, RiskClass],
+) -> RiskClass:
+    """
+    Normalized endpoint template → RiskClass çözümlemesi.
+
+    Precedence (sabit sıra, deterministik):
+      1. Exact match: endpoint == key
+      2. Longest prefix match: key endpoint'in prefix'i, en uzun kazanır
+      3. Default: LOW
+
+    Endpoint key'i normalize_endpoint() çıktısı (template) üzerinden
+    çözülür — raw path asla kullanılmaz.
+
+    Pure function: aynı input → aynı output, side-effect yok.
+
+    Feature: endpoint-class-policy, Requirements E3.3, E3.6, E3.7, E3.8
+    """
+    if not risk_map:
+        return RiskClass.LOW
+
+    # 1. Exact match
+    if endpoint in risk_map:
+        return risk_map[endpoint]
+
+    # 2. Longest prefix match
+    best_prefix = ""
+    best_risk = None
+    for key, risk in risk_map.items():
+        if endpoint.startswith(key) and len(key) > len(best_prefix):
+            best_prefix = key
+            best_risk = risk
+
+    if best_risk is not None:
+        return best_risk
+
+    # 3. Default LOW
+    return RiskClass.LOW
+
+
+def resolve_effective_mode(
+    tenant_mode: TenantMode,
+    risk_class: RiskClass,
+) -> TenantMode:
+    """
+    Pure function: tenant_mode × risk_class → efektif TenantMode.
+
+    Resolve tablosu (sabit, blast radius control):
+    ┌──────────────┬──────────┬──────────┬──────────┐
+    │ tenant_mode  │ HIGH     │ MEDIUM   │ LOW      │
+    ├──────────────┼──────────┼──────────┼──────────┤
+    │ OFF          │ OFF      │ OFF      │ OFF      │
+    │ SHADOW       │ SHADOW   │ SHADOW   │ SHADOW   │
+    │ ENFORCE      │ ENFORCE  │ ENFORCE  │ SHADOW   │
+    └──────────────┴──────────┴──────────┴──────────┘
+
+    Tek özel durum: ENFORCE + LOW → SHADOW.
+    Diğer tüm kombinasyonlar tenant_mode'u olduğu gibi döner.
+
+    Deterministic. No IO. No side-effects.
+
+    Feature: endpoint-class-policy, Requirements E4.1, E4.2, E4.4
+    """
+    if tenant_mode == TenantMode.ENFORCE and risk_class == RiskClass.LOW:
+        return TenantMode.SHADOW
+    return tenant_mode
 
 
 def parse_tenant_allowlist(raw_json: str) -> frozenset[str]:
@@ -219,6 +340,8 @@ class GuardDecisionSnapshot:
     derived_has_insufficient: bool
     is_degrade_mode: bool
     tenant_mode: TenantMode = TenantMode.SHADOW
+    risk_class: RiskClass = RiskClass.LOW
+    effective_mode: TenantMode = TenantMode.SHADOW
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -347,9 +470,12 @@ def compute_risk_context_hash(
     guard_deny_reason_name: str | None,
     derived_has_stale: bool,
     derived_has_insufficient: bool,
+    risk_class: str = "low",
+    effective_mode: str = "shadow",
 ) -> str:
     """
-    Deterministic risk context hash. Includes windowParams (R5).
+    Deterministic risk context hash. Includes windowParams (R5),
+    risk_class and effective_mode (endpoint-class-policy).
 
     Canonicalization: json.dumps(sort_keys=True, separators=(',',':'))
     Hash: SHA-256, first 16 hex chars.
@@ -366,6 +492,8 @@ def compute_risk_context_hash(
         "guard_deny_reason": guard_deny_reason_name,
         "derived_has_stale": derived_has_stale,
         "derived_has_insufficient": derived_has_insufficient,
+        "risk_class": risk_class,
+        "effective_mode": effective_mode,
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
@@ -393,10 +521,14 @@ class SnapshotFactory:
         is_degrade_mode: bool = False,
         window_params: WindowParams | None = None,
         now_ms: int | None = None,
+        risk_class: RiskClass = RiskClass.LOW,
     ) -> GuardDecisionSnapshot | None:
         """
         Build immutable snapshot. All signals evaluated, flags derived,
         hash computed, result frozen.
+
+        risk_class: Endpoint risk classification (default LOW).
+        effective_mode derived from resolve_effective_mode(tenant_mode, risk_class).
 
         Returns None on internal error (fail-open).
         """
@@ -414,6 +546,9 @@ class SnapshotFactory:
                 default_mode = TenantMode.SHADOW
             tenant_mode = resolve_tenant_mode(tenant_id, default_mode, tenant_modes)
 
+            # Resolve effective mode from tenant_mode × risk_class
+            effective_mode = resolve_effective_mode(tenant_mode, risk_class)
+
             # Collect signals
             sig_config = check_config_freshness(config, now_ms, window_params)
             sig_mapping = check_cb_mapping(endpoint, dependencies, now_ms)
@@ -422,7 +557,7 @@ class SnapshotFactory:
             # Derive flags from signals only
             has_stale, has_insufficient = derive_signal_flags(signals)
 
-            # Compute hash (includes window_params)
+            # Compute hash (includes window_params, risk_class, effective_mode)
             deny_name = guard_deny_reason.value if guard_deny_reason else None
             risk_hash = compute_risk_context_hash(
                 tenant_id=tenant_id,
@@ -433,6 +568,8 @@ class SnapshotFactory:
                 guard_deny_reason_name=deny_name,
                 derived_has_stale=has_stale,
                 derived_has_insufficient=has_insufficient,
+                risk_class=risk_class.value,
+                effective_mode=effective_mode.value,
             )
 
             return GuardDecisionSnapshot(
@@ -449,6 +586,8 @@ class SnapshotFactory:
                 derived_has_insufficient=has_insufficient,
                 is_degrade_mode=is_degrade_mode,
                 tenant_mode=tenant_mode,
+                risk_class=risk_class,
+                effective_mode=effective_mode,
             )
 
         except Exception as exc:

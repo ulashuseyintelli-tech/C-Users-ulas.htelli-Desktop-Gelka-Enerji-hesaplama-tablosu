@@ -69,12 +69,14 @@ class TestPropertyAlertRuleCompleteness:
             f"Alert '{rule['alert']}' has invalid severity: {severity}"
         )
 
+    VALID_SERVICES = {"ptf-admin", "release-gate", "release-preflight"}
+
     @given(rule_idx=st.sampled_from(list(range(len(RULES)))))
     @settings(max_examples=100, suppress_health_check=[HealthCheck.function_scoped_fixture])
-    def test_rule_service_is_ptf_admin(self, rule_idx):
+    def test_rule_service_is_valid(self, rule_idx):
         rule = RULES[rule_idx]
-        assert rule["labels"]["service"] == "ptf-admin", (
-            f"Alert '{rule['alert']}' service != ptf-admin"
+        assert rule["labels"]["service"] in self.VALID_SERVICES, (
+            f"Alert '{rule['alert']}' service '{rule['labels']['service']}' not in {self.VALID_SERVICES}"
         )
 
     @given(rule_idx=st.sampled_from(list(range(len(RULES)))))

@@ -100,6 +100,8 @@ class GuardConfig(BaseSettings):
     decision_layer_default_mode: str = "shadow"  # "shadow"|"enforce"|"off"
     decision_layer_tenant_modes_json: str = ""    # JSON: {"tenantA":"enforce",...}
     decision_layer_tenant_allowlist_json: str = ""  # JSON: ["tenantA","tenantB"]
+    # Endpoint → RiskClass eşlemesi (JSON): {"/admin/market-prices/upsert":"high",...}
+    decision_layer_endpoint_risk_map_json: str = ""  # Empty → all endpoints LOW
 
     # ── Validators ────────────────────────────────────────────────────────
 

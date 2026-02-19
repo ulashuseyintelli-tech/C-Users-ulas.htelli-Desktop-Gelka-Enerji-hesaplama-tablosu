@@ -78,8 +78,10 @@ def tenant_client(_tenant_singletons):
         fastapi_app.dependency_overrides.clear()
 
 
-def _insufficient_snapshot(tenant_id: str = "default", tenant_mode: TenantMode = TenantMode.ENFORCE):
+def _insufficient_snapshot(tenant_id: str = "default", tenant_mode: TenantMode = TenantMode.ENFORCE, effective_mode: TenantMode | None = None):
     """Build a snapshot with INSUFFICIENT CB mapping signal."""
+    if effective_mode is None:
+        effective_mode = tenant_mode  # caller controls effective_mode explicitly
     return GuardDecisionSnapshot(
         now_ms=1000000,
         tenant_id=tenant_id,
@@ -107,11 +109,14 @@ def _insufficient_snapshot(tenant_id: str = "default", tenant_mode: TenantMode =
         derived_has_insufficient=True,
         is_degrade_mode=False,
         tenant_mode=tenant_mode,
+        effective_mode=effective_mode,
     )
 
 
-def _ok_snapshot(tenant_id: str = "default", tenant_mode: TenantMode = TenantMode.ENFORCE):
+def _ok_snapshot(tenant_id: str = "default", tenant_mode: TenantMode = TenantMode.ENFORCE, effective_mode: TenantMode | None = None):
     """Build a snapshot with all-OK signals."""
+    if effective_mode is None:
+        effective_mode = tenant_mode
     return GuardDecisionSnapshot(
         now_ms=1000000,
         tenant_id=tenant_id,
@@ -139,6 +144,7 @@ def _ok_snapshot(tenant_id: str = "default", tenant_mode: TenantMode = TenantMod
         derived_has_insufficient=False,
         is_degrade_mode=False,
         tenant_mode=tenant_mode,
+        effective_mode=effective_mode,
     )
 
 

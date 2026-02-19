@@ -174,9 +174,9 @@ class TestOpsGuardAlertGroup:
         assert len(original) == 1
         assert len(original[0]["rules"]) == 9
 
-    def test_three_groups_total(self, alert_rules):
-        """Exactly three rule groups exist (alerts, ops-guard, dependency-health)."""
-        assert len(self._get_groups(alert_rules)) == 3
+    def test_seven_groups_total(self, alert_rules):
+        """Exactly seven rule groups exist (alerts, preflight-guardrails, ops-guard, dependency-health, guard-decision, release-gate, pdf-worker)."""
+        assert len(self._get_groups(alert_rules)) == 7
 
     def test_ops_guard_alert_count(self, alert_rules):
         """Ops-guard group has exactly 7 alerts."""

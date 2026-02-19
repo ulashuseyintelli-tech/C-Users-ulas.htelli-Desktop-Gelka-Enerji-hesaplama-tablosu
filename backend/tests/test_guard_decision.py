@@ -22,6 +22,7 @@ from backend.app.guard_config import GuardConfig, GuardDenyReason
 from backend.app.guards.guard_decision import (
     GuardDecisionSnapshot,
     GuardSignal,
+    RiskClass,
     SignalName,
     SignalReasonCode,
     SignalStatus,
@@ -32,8 +33,11 @@ from backend.app.guards.guard_decision import (
     check_config_freshness,
     compute_risk_context_hash,
     derive_signal_flags,
+    parse_endpoint_risk_map,
     parse_tenant_allowlist,
     parse_tenant_modes,
+    resolve_endpoint_risk_class,
+    resolve_effective_mode,
     resolve_tenant_mode,
     sanitize_metric_tenant,
     sanitize_tenant_id,
@@ -555,3 +559,390 @@ class TestSanitizeMetricTenant:
     def test_empty_allowlist_empty_tenant_id(self):
         result = sanitize_metric_tenant("", frozenset())
         assert result == "_other"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# RiskClass Enum — Feature: endpoint-class-policy
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestRiskClass:
+    """RiskClass enum tests. Requirements: E2.1, E2.3"""
+
+    def test_exactly_three_members(self):
+        assert len(RiskClass) == 3
+
+    def test_values(self):
+        assert RiskClass.HIGH.value == "high"
+        assert RiskClass.MEDIUM.value == "medium"
+        assert RiskClass.LOW.value == "low"
+
+    def test_is_str_enum(self):
+        assert isinstance(RiskClass.HIGH, str)
+
+    def test_construct_from_string(self):
+        assert RiskClass("high") == RiskClass.HIGH
+        assert RiskClass("medium") == RiskClass.MEDIUM
+        assert RiskClass("low") == RiskClass.LOW
+
+    def test_invalid_value_raises(self):
+        with pytest.raises(ValueError):
+            RiskClass("critical")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# parse_endpoint_risk_map — Feature: endpoint-class-policy
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestParseEndpointRiskMap:
+    """parse_endpoint_risk_map tests. Requirements: E3.1, E3.2, E3.4, E3.5"""
+
+    def test_valid_json(self):
+        raw = '{"/admin/market-prices/upsert": "high", "/admin/market-prices": "low"}'
+        result = parse_endpoint_risk_map(raw)
+        assert result["/admin/market-prices/upsert"] == RiskClass.HIGH
+        assert result["/admin/market-prices"] == RiskClass.LOW
+
+    def test_empty_string_returns_empty_dict(self):
+        assert parse_endpoint_risk_map("") == {}
+
+    def test_none_returns_empty_dict(self):
+        assert parse_endpoint_risk_map(None) == {}
+
+    def test_whitespace_only_returns_empty_dict(self):
+        assert parse_endpoint_risk_map("   ") == {}
+
+    def test_invalid_json_returns_empty_dict(self):
+        assert parse_endpoint_risk_map("{not valid json}") == {}
+
+    def test_non_dict_json_returns_empty_dict(self):
+        assert parse_endpoint_risk_map('["high", "low"]') == {}
+
+    def test_invalid_risk_class_value_skipped(self):
+        raw = '{"/a": "high", "/b": "critical", "/c": "low"}'
+        result = parse_endpoint_risk_map(raw)
+        assert result == {"/a": RiskClass.HIGH, "/c": RiskClass.LOW}
+        assert "/b" not in result
+
+    def test_all_invalid_risk_classes_returns_empty_dict(self):
+        raw = '{"/a": "critical", "/b": "extreme"}'
+        assert parse_endpoint_risk_map(raw) == {}
+
+    def test_mixed_valid_invalid(self):
+        raw = '{"/admin": "medium", "/health": "unknown"}'
+        result = parse_endpoint_risk_map(raw)
+        assert result == {"/admin": RiskClass.MEDIUM}
+
+    def test_all_three_risk_classes(self):
+        raw = '{"/a": "high", "/b": "medium", "/c": "low"}'
+        result = parse_endpoint_risk_map(raw)
+        assert len(result) == 3
+        assert set(result.values()) == {RiskClass.HIGH, RiskClass.MEDIUM, RiskClass.LOW}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# resolve_endpoint_risk_class — Feature: endpoint-class-policy
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestResolveEndpointRiskClass:
+    """resolve_endpoint_risk_class tests. Requirements: E3.3, E3.6, E3.7, E3.8"""
+
+    # ── Exact match ──────────────────────────────────────────────────────
+
+    def test_exact_match(self):
+        risk_map = {"/admin/market-prices/upsert": RiskClass.HIGH}
+        assert resolve_endpoint_risk_class("/admin/market-prices/upsert", risk_map) == RiskClass.HIGH
+
+    def test_exact_match_overrides_prefix(self):
+        """Exact match takes precedence over any prefix match."""
+        risk_map = {
+            "/admin/market-prices": RiskClass.LOW,
+            "/admin/market-prices/upsert": RiskClass.HIGH,
+            "/admin": RiskClass.MEDIUM,
+        }
+        assert resolve_endpoint_risk_class("/admin/market-prices/upsert", risk_map) == RiskClass.HIGH
+
+    # ── Longest prefix match ─────────────────────────────────────────────
+
+    def test_longest_prefix_wins(self):
+        """When multiple prefixes match, longest wins."""
+        risk_map = {
+            "/admin": RiskClass.LOW,
+            "/admin/market-prices": RiskClass.MEDIUM,
+            "/admin/market-prices/import": RiskClass.HIGH,
+        }
+        assert resolve_endpoint_risk_class("/admin/market-prices/import/apply", risk_map) == RiskClass.HIGH
+
+    def test_shorter_prefix_when_longer_doesnt_match(self):
+        risk_map = {
+            "/admin": RiskClass.LOW,
+            "/admin/market-prices/import": RiskClass.HIGH,
+        }
+        assert resolve_endpoint_risk_class("/admin/market-prices/list", risk_map) == RiskClass.LOW
+
+    def test_two_prefixes_longest_wins(self):
+        """Two prefixes match same endpoint — longest prefix wins, map order irrelevant."""
+        risk_map = {
+            "/admin/market-prices/": RiskClass.LOW,
+            "/admin/": RiskClass.MEDIUM,
+        }
+        assert resolve_endpoint_risk_class("/admin/market-prices/upsert", risk_map) == RiskClass.LOW
+
+    # ── Default LOW ──────────────────────────────────────────────────────
+
+    def test_no_match_returns_low(self):
+        risk_map = {"/admin/market-prices/upsert": RiskClass.HIGH}
+        assert resolve_endpoint_risk_class("/health", risk_map) == RiskClass.LOW
+
+    def test_empty_risk_map_returns_low(self):
+        assert resolve_endpoint_risk_class("/admin/anything", {}) == RiskClass.LOW
+
+    # ── Determinism ──────────────────────────────────────────────────────
+
+    def test_deterministic_same_inputs_same_output(self):
+        risk_map = {
+            "/admin": RiskClass.LOW,
+            "/admin/market-prices": RiskClass.MEDIUM,
+            "/admin/market-prices/upsert": RiskClass.HIGH,
+        }
+        results = [
+            resolve_endpoint_risk_class("/admin/market-prices/upsert", risk_map)
+            for _ in range(100)
+        ]
+        assert all(r == RiskClass.HIGH for r in results)
+
+    # ── Case sensitivity ─────────────────────────────────────────────────
+
+    def test_case_sensitive(self):
+        """Risk map keys are case-sensitive (normalized templates are lowercase)."""
+        risk_map = {"/admin/market-prices": RiskClass.HIGH}
+        assert resolve_endpoint_risk_class("/Admin/Market-Prices", risk_map) == RiskClass.LOW
+
+    # ── Normalization integration ────────────────────────────────────────
+
+    def test_normalized_template_matches(self):
+        """Risk map keys should match normalized endpoint templates, not raw paths."""
+        risk_map = {
+            "/admin/market-prices/{period}": RiskClass.HIGH,
+        }
+        # Exact match on normalized template
+        assert resolve_endpoint_risk_class("/admin/market-prices/{period}", risk_map) == RiskClass.HIGH
+        # Raw path with actual param value won't exact-match the template
+        assert resolve_endpoint_risk_class("/admin/market-prices/2024-01", risk_map) == RiskClass.LOW
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# resolve_effective_mode — Feature: endpoint-class-policy
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestResolveEffectiveMode:
+    """resolve_effective_mode tests. Requirements: E4.1, E4.2, E4.4"""
+
+    # ── OFF dominates ────────────────────────────────────────────────────
+
+    def test_off_high_returns_off(self):
+        assert resolve_effective_mode(TenantMode.OFF, RiskClass.HIGH) == TenantMode.OFF
+
+    def test_off_medium_returns_off(self):
+        assert resolve_effective_mode(TenantMode.OFF, RiskClass.MEDIUM) == TenantMode.OFF
+
+    def test_off_low_returns_off(self):
+        assert resolve_effective_mode(TenantMode.OFF, RiskClass.LOW) == TenantMode.OFF
+
+    # ── SHADOW preserved ─────────────────────────────────────────────────
+
+    def test_shadow_high_returns_shadow(self):
+        assert resolve_effective_mode(TenantMode.SHADOW, RiskClass.HIGH) == TenantMode.SHADOW
+
+    def test_shadow_medium_returns_shadow(self):
+        assert resolve_effective_mode(TenantMode.SHADOW, RiskClass.MEDIUM) == TenantMode.SHADOW
+
+    def test_shadow_low_returns_shadow(self):
+        assert resolve_effective_mode(TenantMode.SHADOW, RiskClass.LOW) == TenantMode.SHADOW
+
+    # ── ENFORCE ──────────────────────────────────────────────────────────
+
+    def test_enforce_high_returns_enforce(self):
+        assert resolve_effective_mode(TenantMode.ENFORCE, RiskClass.HIGH) == TenantMode.ENFORCE
+
+    def test_enforce_medium_returns_enforce(self):
+        assert resolve_effective_mode(TenantMode.ENFORCE, RiskClass.MEDIUM) == TenantMode.ENFORCE
+
+    def test_enforce_low_returns_shadow(self):
+        """The only special case: ENFORCE + LOW → SHADOW (blast radius control)."""
+        assert resolve_effective_mode(TenantMode.ENFORCE, RiskClass.LOW) == TenantMode.SHADOW
+
+    # ── Exhaustive 3×3 table ─────────────────────────────────────────────
+
+    def test_exhaustive_table(self):
+        """All 9 combinations verified against the resolve table."""
+        expected = {
+            (TenantMode.OFF, RiskClass.HIGH): TenantMode.OFF,
+            (TenantMode.OFF, RiskClass.MEDIUM): TenantMode.OFF,
+            (TenantMode.OFF, RiskClass.LOW): TenantMode.OFF,
+            (TenantMode.SHADOW, RiskClass.HIGH): TenantMode.SHADOW,
+            (TenantMode.SHADOW, RiskClass.MEDIUM): TenantMode.SHADOW,
+            (TenantMode.SHADOW, RiskClass.LOW): TenantMode.SHADOW,
+            (TenantMode.ENFORCE, RiskClass.HIGH): TenantMode.ENFORCE,
+            (TenantMode.ENFORCE, RiskClass.MEDIUM): TenantMode.ENFORCE,
+            (TenantMode.ENFORCE, RiskClass.LOW): TenantMode.SHADOW,
+        }
+        for (tm, rc), exp in expected.items():
+            result = resolve_effective_mode(tm, rc)
+            assert result == exp, f"resolve_effective_mode({tm}, {rc}) = {result}, expected {exp}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Snapshot risk_class + effective_mode — Feature: endpoint-class-policy, Task 3.4
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestSnapshotRiskClassEffectiveMode:
+    """SnapshotFactory.build() risk_class and effective_mode integration.
+    Requirements: E5.1, E5.2, E5.3"""
+
+    def test_default_risk_class_is_low(self):
+        """No risk_class param → defaults to LOW."""
+        config = _config(last_updated_at=_iso_ago(1))
+        snapshot = SnapshotFactory.build(
+            guard_deny_reason=None,
+            config=config,
+            endpoint="/admin/test",
+            method="GET",
+            dependencies=["db_primary"],
+            now_ms=_now_ms(),
+        )
+        assert snapshot is not None
+        assert snapshot.risk_class == RiskClass.LOW
+
+    def test_default_effective_mode_shadow_when_enforce_low(self):
+        """ENFORCE tenant + default LOW risk → effective_mode SHADOW."""
+        config = _config(
+            last_updated_at=_iso_ago(1),
+            decision_layer_default_mode="enforce",
+        )
+        snapshot = SnapshotFactory.build(
+            guard_deny_reason=None,
+            config=config,
+            endpoint="/admin/test",
+            method="GET",
+            dependencies=["db_primary"],
+            now_ms=_now_ms(),
+        )
+        assert snapshot is not None
+        assert snapshot.tenant_mode == TenantMode.ENFORCE
+        assert snapshot.risk_class == RiskClass.LOW
+        assert snapshot.effective_mode == TenantMode.SHADOW
+
+    def test_enforce_high_effective_mode_enforce(self):
+        """ENFORCE tenant + HIGH risk → effective_mode ENFORCE."""
+        config = _config(
+            last_updated_at=_iso_ago(1),
+            decision_layer_default_mode="enforce",
+        )
+        snapshot = SnapshotFactory.build(
+            guard_deny_reason=None,
+            config=config,
+            endpoint="/admin/test",
+            method="GET",
+            dependencies=["db_primary"],
+            now_ms=_now_ms(),
+            risk_class=RiskClass.HIGH,
+        )
+        assert snapshot is not None
+        assert snapshot.risk_class == RiskClass.HIGH
+        assert snapshot.effective_mode == TenantMode.ENFORCE
+
+    def test_shadow_tenant_any_risk_stays_shadow(self):
+        """SHADOW tenant + any risk → effective_mode SHADOW."""
+        config = _config(last_updated_at=_iso_ago(1))
+        for rc in RiskClass:
+            snapshot = SnapshotFactory.build(
+                guard_deny_reason=None,
+                config=config,
+                endpoint="/admin/test",
+                method="GET",
+                dependencies=["db_primary"],
+                now_ms=_now_ms(),
+                risk_class=rc,
+            )
+            assert snapshot is not None
+            assert snapshot.effective_mode == TenantMode.SHADOW, (
+                f"SHADOW + {rc} should be SHADOW, got {snapshot.effective_mode}"
+            )
+
+    def test_risk_class_preserved_in_snapshot(self):
+        """risk_class param is stored as-is in snapshot."""
+        config = _config(last_updated_at=_iso_ago(1))
+        for rc in RiskClass:
+            snapshot = SnapshotFactory.build(
+                guard_deny_reason=None,
+                config=config,
+                endpoint="/admin/test",
+                method="GET",
+                dependencies=["db_primary"],
+                now_ms=_now_ms(),
+                risk_class=rc,
+            )
+            assert snapshot is not None
+            assert snapshot.risk_class == rc
+
+    def test_hash_changes_with_risk_class(self):
+        """Different risk_class → different risk_context_hash."""
+        config = _config(
+            last_updated_at=_iso_ago(1),
+            decision_layer_default_mode="shadow",
+        )
+        common = dict(
+            guard_deny_reason=None,
+            config=config,
+            endpoint="/admin/test",
+            method="GET",
+            dependencies=["db_primary"],
+            now_ms=1_700_000_000_000,
+        )
+        snap_low = SnapshotFactory.build(**common, risk_class=RiskClass.LOW)
+        snap_high = SnapshotFactory.build(**common, risk_class=RiskClass.HIGH)
+        assert snap_low is not None and snap_high is not None
+        assert snap_low.risk_context_hash != snap_high.risk_context_hash
+
+    def test_hash_changes_with_effective_mode(self):
+        """Different effective_mode (via tenant_mode change) → different hash."""
+        common_kwargs = dict(
+            guard_deny_reason=None,
+            endpoint="/admin/test",
+            method="GET",
+            dependencies=["db_primary"],
+            now_ms=1_700_000_000_000,
+            risk_class=RiskClass.HIGH,
+        )
+        config_shadow = _config(
+            last_updated_at=_iso_ago(1),
+            decision_layer_default_mode="shadow",
+        )
+        config_enforce = _config(
+            last_updated_at=_iso_ago(1),
+            decision_layer_default_mode="enforce",
+        )
+        snap_shadow = SnapshotFactory.build(config=config_shadow, **common_kwargs)
+        snap_enforce = SnapshotFactory.build(config=config_enforce, **common_kwargs)
+        assert snap_shadow is not None and snap_enforce is not None
+        assert snap_shadow.effective_mode == TenantMode.SHADOW
+        assert snap_enforce.effective_mode == TenantMode.ENFORCE
+        assert snap_shadow.risk_context_hash != snap_enforce.risk_context_hash
+
+    def test_snapshot_frozen_with_new_fields(self):
+        """risk_class and effective_mode are frozen (immutable)."""
+        config = _config(last_updated_at=_iso_ago(1))
+        snapshot = SnapshotFactory.build(
+            guard_deny_reason=None,
+            config=config,
+            endpoint="/admin/test",
+            method="GET",
+            dependencies=["db_primary"],
+            now_ms=_now_ms(),
+            risk_class=RiskClass.HIGH,
+        )
+        assert snapshot is not None
+        with pytest.raises((FrozenInstanceError, AttributeError)):
+            snapshot.risk_class = RiskClass.LOW  # type: ignore[misc]
+        with pytest.raises((FrozenInstanceError, AttributeError)):
+            snapshot.effective_mode = TenantMode.ENFORCE  # type: ignore[misc]

@@ -1,0 +1,147 @@
+{
+  "__inputs": [],
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "9.0.0"
+    }
+  ],
+  "id": null,
+  "uid": "pdf-worker-telemetry",
+  "title": "PDF Render Worker Telemetry",
+  "description": "PDF job status, failures by error code, render duration, queue depth",
+  "tags": ["pdf-worker", "telemetry", "ptf-admin"],
+  "timezone": "browser",
+  "schemaVersion": 36,
+  "version": 1,
+  "refresh": "5m",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Jobs by Status",
+      "description": "PDF job status transitions over time. See runbook: monitoring/runbooks/ptf-admin-runbook.md#PTFAdminPdfFailureSpike",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum by (status) (increase(ptf_admin_pdf_jobs_total[15m]))",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "stacking": { "mode": "normal" },
+            "lineWidth": 2,
+            "fillOpacity": 30
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "succeeded" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "failed" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "queued" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }]
+          }
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "title": "Failures by Error Code",
+      "description": "Top failure error codes. See runbook: monitoring/runbooks/ptf-admin-runbook.md#PTFAdminPdfFailureSpike",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "topk(7, sum by (error_code) (increase(ptf_admin_pdf_job_failures_total[1h])))",
+          "legendFormat": "{{error_code}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "always",
+        "barWidth": 0.8
+      }
+    },
+    {
+      "id": 3,
+      "title": "Render Duration (p50 / p95)",
+      "description": "PDF render job duration percentiles (15m rate window). See runbook: monitoring/runbooks/ptf-admin-runbook.md#PTFAdminPdfFailureSpike",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(ptf_admin_pdf_job_duration_seconds_bucket[15m])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(ptf_admin_pdf_job_duration_seconds_bucket[15m])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "Queue Depth",
+      "description": "Current number of QUEUED PDF jobs. Threshold: yellow=20, red=50 (alert PW3: PTFAdminPdfQueueBacklog). See runbook: monitoring/runbooks/ptf-admin-runbook.md#PTFAdminPdfQueueBacklog",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "ptf_admin_pdf_queue_depth",
+          "legendFormat": "Queue Depth",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 20 },
+              { "color": "red", "value": 50 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    }
+  ]
+}

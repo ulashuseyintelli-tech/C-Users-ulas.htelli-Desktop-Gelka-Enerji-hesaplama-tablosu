@@ -1120,11 +1120,12 @@ function App() {
                         <div>
                           <label className="text-xs text-gray-500 block mb-1">Tüketim (kWh)</label>
                           <input
-                            type="number"
+                            type="text"
+                            inputMode="decimal"
                             className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500"
                             value={manualValues.consumption_kwh || ''}
                             onChange={(e) => setManualValues({...manualValues, consumption_kwh: parseNumber(e.target.value)})}
-                            placeholder="168330"
+                            placeholder="8.959,5"
                           />
                         </div>
                       </div>

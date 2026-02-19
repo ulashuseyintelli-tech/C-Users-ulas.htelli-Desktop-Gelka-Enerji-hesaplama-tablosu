@@ -823,7 +823,7 @@ doğrular. Fail olması şu anlama gelir: **yeni bir kritik yol endpoint'i wrapp
 
 # Guard Decision Layer — Operasyonel Runbook
 
-## Genel Bilgi
+### Genel Bilgi
 
 Guard Decision Layer, mevcut OpsGuard middleware zincirinin (KillSwitch → RateLimiter → CircuitBreaker) üzerine oturan ek bir karar katmanıdır. Config freshness ve CB mapping sufficiency sinyallerini değerlendirir.
 
@@ -976,6 +976,22 @@ sum(increase(ptf_admin_guard_decision_block_total[15m]))
 increase(ptf_admin_guard_decision_snapshot_build_failures_total[15m])
 ```
 
+### PromQL — Risk Class Breakdown (Endpoint-Class Policy)
+
+```promql
+# Request dağılımı (mode × risk_class)
+sum by (mode, risk_class) (increase(ptf_admin_guard_decision_requests_by_risk_total[15m]))
+
+# Block dağılımı (kind × mode × risk_class)
+sum by (kind, mode, risk_class) (increase(ptf_admin_guard_decision_block_by_risk_total[15m]))
+
+# Sadece HIGH risk endpoint block'ları
+sum by (kind, mode) (increase(ptf_admin_guard_decision_block_by_risk_total{risk_class="high"}[1h]))
+
+# Risk class bazında request oranı
+sum by (risk_class) (rate(ptf_admin_guard_decision_requests_by_risk_total[5m]))
+```
+
 ---
 
 ## PTFAdminGuardDecisionSilent
@@ -1004,11 +1020,11 @@ increase(ptf_admin_guard_decision_snapshot_build_failures_total[15m])
 
 # Guard Decision Layer — Release Note Checklist
 
-## Özellik Özeti
+### Özellik Özeti
 
 Runtime Guard Decision Layer: mevcut OpsGuard zincirinin üzerine oturan, config freshness ve CB mapping sufficiency sinyallerini değerlendiren ek karar katmanı.
 
-## Checklist
+### Checklist
 
 ### 1. Feature Flags
 
@@ -1048,6 +1064,8 @@ Row: "Guard Decision Layer" (id=600, 3 panel)
 | `ptf_admin_guard_decision_requests_total` | Counter | — |
 | `ptf_admin_guard_decision_block_total` | Counter | `kind` (stale/insufficient), `mode` (shadow/enforce) |
 | `ptf_admin_guard_decision_snapshot_build_failures_total` | Counter | — |
+| `ptf_admin_guard_decision_requests_by_risk_total` | Counter | `mode` (shadow/enforce), `risk_class` (low/medium/high) |
+| `ptf_admin_guard_decision_block_by_risk_total` | Counter | `kind` (stale/insufficient), `mode` (shadow/enforce), `risk_class` (low/medium/high) |
 
 ### 6. Rollout Prosedürü
 
@@ -1072,3 +1090,822 @@ OPS_GUARD_DECISION_LAYER_MODE=shadow
 - Tenant bazlı enable yok — global aç/kapat
 - `tenant_id` sabit "default"
 - WindowParams (max_config_age_ms, clock_skew_allowance_ms) henüz env var ile konfigüre edilemiyor (kod default'ları kullanılır)
+
+---
+
+# Release Gate Telemetry
+
+Bu bölüm, Release Gate enforcement hook'unun telemetri alert'leri tetiklendiğinde izlenecek troubleshooting adımlarını içerir. Dashboard: `monitoring/grafana/release-gate-dashboard.json` (uid: release-gate-telemetry).
+
+---
+
+## ReleaseGateContractBreach
+
+**Severity:** critical
+**PromQL:** `increase(release_gate_contract_breach_total[5m]) > 0`
+
+### Olası Nedenler
+1. Geliştirici ABSOLUTE_BLOCK_REASONS (GUARD_VIOLATION, OPS_GATE_FAIL) içeren bir kararı override etmeye çalıştı
+2. CI pipeline'da yanlış yapılandırılmış override flag'i — otomasyon bilinçsizce override gönderiyor
+3. Policy config değişikliği — ABSOLUTE_BLOCK_REASONS kümesi genişletildi, mevcut override'lar breach'e dönüştü
+
+### İlk 3 Kontrol
+1. `increase(release_gate_contract_breach_total[1h])` — breach sayısını ve artış zamanını kontrol et
+2. Audit loglarında `CONTRACT_BREACH_NO_OVERRIDE` olan kayıtları bul — hangi repo/branch/user
+3. `sum by (reason) (increase(release_gate_decision_total{decision="DENY"}[1h]))` — hangi reason'lar breach tetikledi
+
+### Müdahale Adımları
+1. Tek seferlik ise: geliştiriciyi bilgilendir, ABSOLUTE_BLOCK_REASONS'ın override edilemeyeceğini açıkla
+2. Tekrarlayan ise: CI pipeline config'ini incele, override flag'inin yanlış kullanılıp kullanılmadığını kontrol et
+3. Otomasyon kaynaklı ise: otomasyon aracının override mantığını düzelt
+
+### PromQL — Tanılama
+
+```promql
+# Breach trend (son 24 saat)
+increase(release_gate_contract_breach_total[1h])
+
+# Breach ile eşzamanlı DENY nedenleri
+sum by (reason) (increase(release_gate_decision_total{decision="DENY"}[1h]))
+
+# ALLOW/DENY dağılımı
+sum by (decision) (increase(release_gate_decision_total[15m]))
+```
+
+---
+
+## ReleaseGateAuditWriteFailure
+
+**Severity:** warning
+**PromQL:** `increase(release_gate_audit_write_failures_total[15m]) > 0`
+
+### Olası Nedenler
+1. Disk dolu — audit dosyası yazılamıyor
+2. İzin hatası — audit log dosyasına yazma izni yok
+3. Atomic write başarısızlığı — temp dosya oluşturulamıyor veya rename başarısız
+4. NFS/network filesystem sorunu — uzak dosya sistemi geçici olarak erişilemez
+
+### İlk 3 Kontrol
+1. `increase(release_gate_audit_write_failures_total[1h])` — failure sayısını ve artış hızını kontrol et
+2. Disk kullanımı — `df -h` ile audit dizininin disk doluluk oranını kontrol et
+3. Gate kararlarını kontrol et — audit failure durumunda R3 invariantı gereği gate allowed=False döner
+
+### Müdahale Adımları
+1. Disk dolu ise: eski log/temp dosyalarını temizle, disk kapasitesini artır
+2. İzin hatası ise: dosya/dizin izinlerini düzelt
+3. R3 invariantı aktif: audit yazılamadığında gate otomatik olarak DENY döner — "kanıt yoksa izin yok". Audit düzeltilene kadar tüm release'ler bloklanır
+
+### PromQL — Tanılama
+
+```promql
+# Audit failure trend (son 24 saat)
+increase(release_gate_audit_write_failures_total[1h])
+
+# Gate karar dağılımı (audit failure DENY artışı ile korelasyon)
+sum by (decision) (increase(release_gate_decision_total[15m]))
+
+# Metric write failures (dahili telemetri sağlığı)
+increase(release_gate_metric_write_failures_total[15m])
+```
+
+---
+
+## ReleaseGateDenySpike
+
+**Severity:** warning
+**PromQL:** `increase(release_gate_decision_total{decision="DENY"}[15m]) > 10 and increase(release_gate_decision_total{decision="DENY"}[15m]) / clamp_min(increase(release_gate_decision_total[15m]), 1) > 0.3`
+
+### Olası Nedenler
+1. Yeni release policy kuralı eklendi — daha fazla repo/branch DENY alıyor
+2. Altyapı sorunu — tier check, coverage check veya security check geçici olarak hep fail dönüyor
+3. Toplu deploy dalgası — çok sayıda repo aynı anda gate'den geçmeye çalışıyor ve çoğu DENY alıyor
+4. Policy config değişikliği — threshold'lar sıkılaştırıldı
+
+### İlk 3 Kontrol
+1. `topk(10, sum by (reason) (increase(release_gate_decision_total{decision="DENY"}[1h])))` — hangi reason'lar artıyor
+2. Son policy config değişikliği — `git log` ile release_policy.py ve release_gate.py değişikliklerini kontrol et
+3. `sum by (decision) (increase(release_gate_decision_total[15m]))` — ALLOW/DENY dağılımını incele
+
+### Müdahale Adımları
+1. Policy değişikliği kaynaklı ise: değişikliği gözden geçir, gerekirse rollback
+2. Altyapı sorunu ise: ilgili check'in bağımlılığını (tier service, coverage API) kontrol et
+3. Geçici spike ise: monitoring'e devam et, 30 dk içinde normale dönmezse investigate et
+
+### PromQL — Tanılama
+
+```promql
+# DENY spike trend
+increase(release_gate_decision_total{decision="DENY"}[15m])
+
+# Top deny reasons
+topk(10, sum by (reason) (increase(release_gate_decision_total{decision="DENY"}[1h])))
+
+# DENY oranı
+increase(release_gate_decision_total{decision="DENY"}[15m])
+/
+clamp_min(increase(release_gate_decision_total[15m]), 1)
+
+# Contract breach korelasyonu
+increase(release_gate_contract_breach_total[15m])
+```
+
+---
+
+## PTFAdminPdfQueueUnavailable
+
+**Severity:** warning
+**PromQL:** `increase(ptf_admin_pdf_job_failures_total{error_code="QUEUE_UNAVAILABLE"}[15m]) > 0`
+
+### Olası Nedenler
+1. Redis down veya bağlantı kopmuş — RQ enqueue başarısız
+2. RQ worker crash — worker process ölmüş, kuyruk yazılamıyor
+3. Connection pool exhaustion — Redis bağlantı havuzu dolmuş
+4. Network partition — uygulama ile Redis arasında ağ sorunu
+
+### İlk 3 Kontrol
+1. `redis-cli ping` — Redis erişilebilir mi kontrol et
+2. `rq info` — RQ worker durumunu ve kuyruk boyutunu kontrol et
+3. Uygulama logları — `QUEUE_UNAVAILABLE` hata mesajlarını filtrele
+
+### Müdahale Adımları
+1. Redis down ise: Redis'i restart et veya failover'a geç
+2. Connection pool ise: `REDIS_MAX_CONNECTIONS` artır ve redeploy et
+3. Worker crash ise: `rq worker` process'ini restart et, OOM/crash loglarını incele
+
+### PromQL Referansı
+
+```promql
+# Queue unavailable trend
+increase(ptf_admin_pdf_job_failures_total{error_code="QUEUE_UNAVAILABLE"}[1h])
+
+# Tüm failure'lar by error_code
+sum by (error_code) (increase(ptf_admin_pdf_job_failures_total[1h]))
+```
+
+---
+
+## PTFAdminPdfFailureSpike
+
+**Severity:** warning
+**PromQL:** `increase(ptf_admin_pdf_jobs_total{status="failed"}[15m]) > 3 and ... > 0.2`
+
+### Olası Nedenler
+1. BROWSER_LAUNCH_FAILED — Playwright browser başlatılamıyor (sandbox, binary eksik)
+2. NAVIGATION_TIMEOUT — Sayfa render süresi aşıldı (karmaşık HTML, büyük payload)
+3. TEMPLATE_ERROR — Geçersiz template veya HTML içeriği
+4. ARTIFACT_WRITE_FAILED — PDF dosyası yazılamıyor (disk dolu, izin hatası)
+5. UNSUPPORTED_PLATFORM — Playwright desteklenmeyen platform
+
+### İlk 3 Kontrol
+1. `ptf_admin_pdf_job_failures_total` by error_code — hangi hata tipi baskın
+2. Uygulama logları — `Job .* failed:` pattern'ini filtrele
+3. `ptf_admin_pdf_job_duration_seconds` p95 — render süresi artmış mı
+
+### Müdahale Adımları
+1. Hata tipine göre aşağıdaki adımları uygulayın:
+
+**BROWSER_LAUNCH_FAILED:**
+1. Playwright binary kurulu mu: `playwright install chromium`
+2. Sandbox izinleri: `--no-sandbox` flag'i gerekebilir (container ortamında)
+3. Memory: browser launch için yeterli memory var mı kontrol et
+
+**NAVIGATION_TIMEOUT:**
+1. HTML payload boyutunu kontrol et — çok büyük payload'lar timeout'a neden olur
+2. `PDF_HARD_TIMEOUT` env var'ını artır (varsayılan: 60s)
+3. Karmaşık CSS/JS içeren template'leri optimize et
+
+**ARTIFACT_WRITE_FAILED:**
+1. Disk kullanımı: `df -h` ile artifact dizininin doluluk oranını kontrol et
+2. İzinler: artifact dizinine yazma izni var mı
+3. Storage backend (S3) erişilebilir mi
+
+### PromQL Referansı
+
+```promql
+# Failure by error_code (son 1 saat)
+sum by (error_code) (increase(ptf_admin_pdf_job_failures_total[1h]))
+
+# Failure rate
+increase(ptf_admin_pdf_jobs_total{status="failed"}[15m])
+/
+clamp_min(increase(ptf_admin_pdf_jobs_total[15m]), 1)
+
+# Render duration p95
+histogram_quantile(0.95, sum(rate(ptf_admin_pdf_job_duration_seconds_bucket[15m])) by (le))
+```
+
+---
+
+## PTFAdminPdfQueueBacklog
+
+**Severity:** warning
+**PromQL:** `ptf_admin_pdf_queue_depth > 50`
+
+**Not:** `ptf_admin_pdf_queue_depth` gauge'u uygulama tarafından set edilir (`set_pdf_queue_depth()`). Kaynak: RQ/Redis'den okunan gerçek kuyruk derinliği veya store'daki QUEUED job sayısı — hangisi kullanılıyorsa worker bootstrap kodunda belirlenir. Alert eşiği: 50 (PW3 ile senkron).
+
+### Olası Nedenler
+1. Worker sayısı yetersiz — gelen iş yükü worker kapasitesini aşıyor
+2. Worker crash — worker process'leri ölmüş, kuyruk işlenmiyor
+3. Render süresi artmış — her job daha uzun sürüyor, throughput düşmüş
+4. Burst traffic — ani PDF oluşturma talebi artışı
+
+### İlk 3 Kontrol
+1. `rq info` — aktif worker sayısını ve kuyruk boyutunu kontrol et
+2. `ptf_admin_pdf_job_duration_seconds` p95 — render süresi artmış mı
+3. `ptf_admin_pdf_jobs_total{status="succeeded"}` rate — throughput düşmüş mü
+
+### Müdahale Adımları
+1. Worker yetersiz ise: worker replica sayısını artır
+2. Worker crash ise: worker loglarını incele, restart et
+3. Render süresi artmış ise: template optimizasyonu veya timeout ayarı
+4. Burst traffic ise: geçici, kuyruk boşalmasını bekle; tekrarlıyorsa worker scale-up planlayın
+
+### PromQL Referansı
+
+```promql
+# Queue depth
+ptf_admin_pdf_queue_depth
+
+# Throughput (succeeded/min)
+sum(rate(ptf_admin_pdf_jobs_total{status="succeeded"}[5m])) * 60
+
+# Duration p95
+histogram_quantile(0.95, sum(rate(ptf_admin_pdf_job_duration_seconds_bucket[15m])) by (le))
+```
+
+---
+
+# Prod Rollout Checklist
+
+Bu checklist, PTF Admin sisteminin production ortamına ilk deploy'u veya major versiyon güncellemesi için kullanılır. Her madde doğrulanmadan bir sonraki aşamaya geçilmez.
+
+---
+
+### 0) Ön Koşullar
+
+| # | Kontrol | Doğrulama |
+|---|---------|-----------|
+| 0.1 | Redis erişilebilir (PDF worker + RQ) | `redis-cli ping` → PONG |
+| 0.2 | RQ worker deployment hazır (en az 1 instance) | `rq info` → worker count ≥ 1 |
+| 0.3 | Storage backend prod'da aktif (S3/minio/local persistent) | `PDF_STORAGE_BACKEND` env set |
+| 0.4 | `PDF_ENV=production` doğrulanmış | Env var kontrolü |
+| 0.5 | `CORS_ALLOWED_ORIGINS` prod'da kısıtlı (wildcard değil) | Env var kontrolü |
+| 0.6 | `PDF_TEMPLATE_ALLOWLIST` prod'da set (boş değil) | Env var kontrolü — boş ise tüm template'ler açık |
+| 0.7 | `ADMIN_API_KEY_ENABLED=true` ve `API_KEY_ENABLED=true` | Kill-switch admin API auth olmadan açık kalmamalı |
+| 0.8 | DB schema uyumlu — migration çalıştırılmış | `alembic current` veya `init_db()` startup log kontrolü |
+| 0.9 | Tüm testler yeşil (CI son run) | CI pipeline son commit'te pass |
+
+---
+
+### 1) Deploy Sırası
+
+### 1.1 Monitoring önce
+
+- [ ] Prometheus scrape targets yeni metrikleri görüyor:
+  - `ptf_admin_api_request_total` (runtime)
+  - `release_gate_decision_total` (release gate)
+  - `ptf_admin_pdf_jobs_total` (PDF worker)
+- [ ] Grafana dashboard'lar provision edildi (4 dashboard):
+  - `ptf-admin-dashboard.json`
+  - `pdf-worker-dashboard.json`
+  - `preflight-dashboard.json`
+  - `release-gate-dashboard.json`
+- [ ] Alert rule'lar yüklendi — `ptf-admin-alerts.yml` 7 grup, "pending/firing" hatası yok
+- [ ] Runbook erişilebilir — alert annotation'larındaki `runbook_url` linkleri çalışıyor
+
+### 1.2 Worker önce (PDF)
+
+- [ ] Worker up — `rq info` worker count ≥ 1
+- [ ] Queue depth 0'a dönüyor — `ptf_admin_pdf_queue_depth` gauge çalışıyor
+- [ ] Worker log'larında Playwright launch loop yok (crash-restart döngüsü)
+- [ ] Artifact TTL cleanup cron aktif — en az 1 kez çalıştığı gözlemlendi
+
+### 1.3 API sonra
+
+- [ ] Backend deploy — pod'lar Running, restart count 0
+- [ ] `/health/ready` → 200 (config, DB, OpenAI, queue kontrolü geçiyor)
+- [ ] `/metrics` → 200, `ptf_admin_` prefix'li metrikler mevcut
+- [ ] Frontend deploy — CORS hataları yok, telemetry endpoint'e ulaşılıyor
+
+---
+
+### 2) Canary / Smoke Test (Prod)
+
+### 2.1 Runtime Guard
+
+```bash
+# Baseline: guard decision layer kapalı
+# OPS_GUARD_DECISION_LAYER_ENABLED=false
+curl -s https://<host>/health/ready | jq .status  # "ok"
+curl -s https://<host>/metrics | grep guard_decision_requests_total
+# → metrik yok veya 0 (beklenen)
+```
+
+- [ ] `OPS_GUARD_DECISION_LAYER_ENABLED=false` ile baseline doğrulandı — 503 yok
+- [ ] `enabled=true` + `default_mode=shadow` ile geçiş yapıldı
+- [ ] `guard_decision_requests_total{mode="shadow"}` artıyor
+- [ ] 503 yok (shadow modda block olmamalı)
+- [ ] Endpoint-class policy: high-risk endpoint'ler sınıflandırılmış, shadow davranışı beklenen
+
+### 2.2 Release Gate Telemetry
+
+- [ ] `release_gate_decision_total` artıyor (allow/deny)
+- [ ] `release_gate_contract_breach_total` = 0 (normal operasyonda)
+- [ ] `release_gate_audit_write_failures_total` = 0 (normal operasyonda)
+
+### 2.3 PDF Worker
+
+```bash
+# Job oluştur
+JOB=$(curl -s -X POST https://<host>/pdf/jobs \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Key: <key>" \
+  -d '{"template_name":"<allowed_template>","payload":{}}' | jq -r .job_id)
+
+# Status kontrol (queued → running → succeeded)
+curl -s https://<host>/pdf/jobs/$JOB | jq .status
+
+# Download
+curl -s -o test.pdf https://<host>/pdf/jobs/$JOB/download
+# PDF açılıyor mu kontrol et
+```
+
+- [ ] `POST /pdf/jobs` → 202 + job_id
+- [ ] `GET /pdf/jobs/{id}` → queued → running → succeeded
+- [ ] `GET /pdf/jobs/{id}/download` → 200, PDF açılıyor
+- [ ] `ptf_admin_pdf_jobs_total{status="succeeded"}` artıyor
+- [ ] `ptf_admin_pdf_job_duration_seconds` histogram doluyor
+
+### 2.4 Frontend Telemetry
+
+- [ ] Frontend'den `POST /admin/telemetry/events` başarılı (CORS hatası yok)
+- [ ] `ptf_admin_frontend_events_total` artıyor
+- [ ] Rate limit çalışıyor — 60 req/min/IP aşıldığında 429
+
+---
+
+### 3) Rollout Gates (Ne Zaman İlerlenir?)
+
+### Shadow → Enforce (Runtime Guard)
+
+| Gate | Kriter | Doğrulama |
+|------|--------|-----------|
+| False positive yok | `block_total{mode="shadow"}` beklenen seviyede | Grafana panel inceleme |
+| Build failure ~0 | `snapshot_build_failures_total` ≈ 0 | `/metrics` grep |
+| Silent alert yok | `PTFAdminGuardDecisionSilent` firing değil | Prometheus alerts UI |
+| Yeterli veri | En az 24 saat shadow data | Zaman kontrolü |
+
+Enforce'a geçiş: tenant/endpoint sınırlı başla (mümkünse), rollback hazır tut.
+
+### PDF Scale
+
+| Gate | Kriter | Doğrulama |
+|------|--------|-----------|
+| p95 duration stabil | `pdf_job_duration_seconds` p95 < SLO | Grafana panel |
+| Queue depth alarm yok | `PTFAdminPdfQueueBacklog` firing değil | Prometheus alerts UI |
+| Failure spike yok | `PTFAdminPdfFailureSpike` firing değil | Prometheus alerts UI |
+| Worker health | Restart count 0, log'da crash yok | `kubectl get pods` + logs |
+
+---
+
+### 4) Rollback Prosedürü
+
+| Bileşen | Rollback Komutu | Etki |
+|---------|----------------|------|
+| Runtime Guard | `OPS_GUARD_DECISION_LAYER_ENABLED=false` → redeploy | Guard decision layer devre dışı, mevcut guard chain çalışmaya devam eder |
+| PDF Worker | Worker scale 0 + API `/pdf` endpoint'lerini kill-switch ile kapat | Yeni job kabul edilmez, mevcut queue drain olur |
+| Release Gate Telemetry | Alert rule disable (core alert'lere dokunma) | Telemetri toplanmaya devam eder, alert'ler sessizleşir |
+| Full rollback | `kubectl rollout undo deployment/ptf-admin` | Önceki versiyona dön |
+
+**Bilinen sınırlama:** DB schema değişikliği içeren deploy'larda `rollout undo` yetmez — schema rollback ayrıca planlanmalıdır. Mevcut sistemde `init_db()` additive schema kullanır (yeni tablo/kolon ekler, silmez), bu nedenle çoğu durumda geriye uyumludur.
+
+---
+
+### 5) Post-Deploy Doğrulama (İlk 24 Saat)
+
+- [ ] SLO burn-rate alert'leri firing değil (`PTFAdminSLOBurnRateFast`, `PTFAdminSLOBurnRateSlow`)
+- [ ] Error rate baseline'da — `ptf_admin_api_request_total{status_class="5xx"}` rate < %1
+- [ ] Guard fail-open counter artmıyor — `ptf_admin_guard_failopen_total` stabil
+- [ ] PDF queue depth stabil — `ptf_admin_pdf_queue_depth` < 10 (normal operasyonda)
+- [ ] Kill-switch'ler pasif — `ptf_admin_killswitch_state` tüm switch'ler 0
+- [ ] Circuit breaker'lar kapalı — `ptf_admin_circuit_breaker_state` tüm dependency'ler 0 (closed)
+
+
+---
+
+# Yük Testi Planı
+
+Bu plan, PTF Admin sisteminin üç kritik hattını (PDF worker, runtime guard, release gate telemetry) stres altında doğrular. Tek sprintte koşulabilir. Ağırlık PDF hattındadır — en pahalı ve en çok sürpriz çıkaran bileşen.
+
+---
+
+### Hedefler (Ölçülebilir)
+
+| Hat | Metrik | Hedef |
+|-----|--------|-------|
+| PDF | p95 render süresi | Baseline'da ölçülecek, sonraki senaryolarda regresyon yok |
+| PDF | Queue backlog davranışı | Burst sonrası drain, monoton artış yok |
+| PDF | Retry oranı | Transient hatalarda bounded (max 2), permanent'ta 0 |
+| API | 99p latency (guard açık/kapalı) | Shadow'da baseline'dan < %10 sapma |
+| API | Error rate (guard açık/kapalı) | Shadow'da 0 ek hata, enforce'da sadece beklenen sınıfta |
+| Stabilite | Memory leak | `process_resident_memory_bytes` senaryo başı/sonu < %20 artış |
+| Stabilite | Worker stuck | RUNNING > 5 dk olan job yok |
+| Stabilite | TTL cleanup | `cleanup_expired()` çağrısı sonrası expired count > 0 |
+| Observability | Alert eşikleri | Beklenen alert'ler firing, beklenmeyen'ler silent |
+
+---
+
+### Test Katmanları
+
+Plan iki katmanda koşar. Katmanlar birbirini dışlamaz.
+
+| Katman | Araç | Ortam | Kapsam |
+|--------|------|-------|--------|
+| Katman 1: In-process | Mevcut `load_harness.py` + `scenario_runner.py` | CI (mock'lu) | Guard, dependency, retry policy, write-path güvenliği |
+| Katman 2: HTTP E2E | k6 | Staging (gerçek Redis + Playwright) | PDF end-to-end, queue davranışı, alert doğrulaması |
+
+Rapor formatı:
+- Katman 1 → mevcut `StressReport` dataclass (programatik, CI assertion'lı)
+- Katman 2 → k6 JSON summary + Grafana annotation (görsel, manuel review)
+
+---
+
+### İzlenecek Paneller
+
+| Dashboard | Panel | Senaryo |
+|-----------|-------|---------|
+| PDF Worker | Status / Failures / Duration / Queue Depth | S1, S2, S3 |
+| PTF Admin Overview | API Traffic & Health, Guard Decision Layer | S4, S5 |
+| Release Gate | Decision Total, Breach Counter | S4 |
+| Dependency Health | Call Rate by Outcome, P95 Latency | S5 |
+
+Log sampling: worker + api (error only, `level=ERROR` filter).
+
+---
+
+### Senaryo 1 — PDF "Steady-State" (Baseline)
+
+**Katman:** 2 (k6 HTTP)
+**Amaç:** Nominal yükte p95 ve hata oranını ölç. İlk çalıştırma baseline olur.
+
+| Parametre | Değer |
+|-----------|-------|
+| Süre | 20 dk |
+| Yük | 2 job/dk → 5 job/dk → 10 job/dk (5'er dk ramp) |
+| Template | 1–2 tip (allowlist içinden) |
+| Payload | Tipik boyut (20–50 KB) |
+
+**Başarı kriterleri:**
+
+| # | Kriter | Metrik | Eşik |
+|---|--------|--------|------|
+| S1.1 | Failure rate düşük | `ptf_admin_pdf_jobs_total{status="failed"} / total` | < %2 |
+| S1.2 | p95 duration baseline | `ptf_admin_pdf_job_duration_seconds` p95 | İlk ölçümde kaydet |
+| S1.3 | Queue depth stabil | `ptf_admin_pdf_queue_depth` | < 10 (steady-state) |
+| S1.4 | Memory stabil | `process_resident_memory_bytes` delta | < %20 artış |
+| S1.5 | TTL cleanup çalışıyor | Senaryo sonrası `cleanup_expired()` | expired count > 0 |
+
+---
+
+### Senaryo 2 — PDF "Burst / Backlog"
+
+**Katman:** 2 (k6 HTTP)
+**Amaç:** Queue davranışı + backlog alert doğrulaması.
+
+| Parametre | Değer |
+|-----------|-------|
+| Burst | 200 job / 60 sn |
+| Drain | 10 dk "no new jobs" |
+| Toplam süre | ~12 dk |
+
+> **Not:** Burst boyutu 200 (100 değil) — `PTFAdminPdfQueueBacklog` alert'i `for: 10m` olduğu için yeterli backlog oluşması gerekir. Alternatif: test ortamında `for` süresini 2 dk'ya kısalt.
+
+**Başarı kriterleri:**
+
+| # | Kriter | Metrik | Eşik |
+|---|--------|--------|------|
+| S2.1 | Queue yükselir ve drain olur | `ptf_admin_pdf_queue_depth` | Monoton değil, düşmeli |
+| S2.2 | Backlog alert firing | `PTFAdminPdfQueueBacklog` | pending/firing olmalı |
+| S2.3 | Worker stuck yok | RUNNING job'lar | Hepsi 5 dk içinde tamamlanıyor |
+| S2.4 | Memory stabil | `process_resident_memory_bytes` delta | < %20 artış |
+
+**Worker stuck detection yöntemi:**
+```promql
+# 5 dk'dan uzun RUNNING kalan job var mı?
+# Job store'dan: status=running AND started_at < now()-300
+# k6 script'inde: poll loop 5 dk timeout, aşarsa FAIL flag
+```
+
+---
+
+### Senaryo 3 — PDF "Retry Injection"
+
+**Katman:** 2 (k6 HTTP)
+**Amaç:** Retry policy + failure taxonomy doğrulaması.
+
+**Fault injection mekanizması:**
+Mevcut PDF worker'da test-mode flag yok ve `load-characterization` R10 production kodu değişikliğini yasaklıyor. Bu nedenle "doğal hata" yaklaşımı kullanılır:
+
+| Hata Türü | Simülasyon Yöntemi |
+|-----------|-------------------|
+| TEMPLATE_ERROR | Allowlist'te olmayan template gönder → 403 (API seviyesi, worker'a ulaşmaz) |
+| NAVIGATION_TIMEOUT | Kasıtlı olarak ağır template (infinite loop JS, büyük DOM) → worker timeout |
+| BROWSER_LAUNCH_FAILED | Worker'ı resource-constrained ortamda çalıştır (memory limit) |
+
+Alternatif (R10 kısıtı gevşetilirse): `PDF_FAULT_INJECTION_RATE=0.2` env var'ı ile worker'da %20 oranla simüle.
+
+| Parametre | Değer |
+|-----------|-------|
+| Süre | 15 dk |
+| Yük | 5 job/dk |
+| Hata oranı | ~%20 (ağır template mix ile) |
+
+**Başarı kriterleri:**
+
+| # | Kriter | Metrik | Eşik |
+|---|--------|--------|------|
+| S3.1 | Failure counter artıyor | `ptf_admin_pdf_job_failures_total{error_code="..."}` | > 0 |
+| S3.2 | Retry bounded | `retry_count` per job | max 2 (transient), 0 (permanent) |
+| S3.3 | Job'lar terminal state'e ulaşıyor | Tüm job'lar | SUCCEEDED veya FAILED (stuck yok) |
+| S3.4 | Failure spike alert | `PTFAdminPdfFailureSpike` | Eşik aşılınca firing, altında silent |
+
+---
+
+### Senaryo 4 — API + Guard (Shadow vs Enforce)
+
+**Katman:** 1 (in-process, mevcut harness) + 2 (k6 HTTP, staging)
+
+**Amaç:** Guard açıkken latency/error değişimi.
+
+**Endpoint mix (explicit):**
+
+| Endpoint | Oran | Risk Class | Tip |
+|----------|------|------------|-----|
+| `GET /admin/market-prices` | %40 | low | read |
+| `GET /admin/market-prices/{id}/history` | %20 | low | read |
+| `POST /admin/market-prices` | %15 | medium | write |
+| `POST /admin/market-prices/import` | %5 | high | write |
+| `POST /pdf/jobs` | %10 | medium | write |
+| `GET /pdf/jobs/{id}` | %5 | low | read |
+| `POST /admin/telemetry/events` | %5 | — (skip path) | write |
+
+**4A) Guard OFF baseline**
+
+| Parametre | Değer |
+|-----------|-------|
+| Süre | 10 dk |
+| RPS | 20 (sabit) |
+| Guard | `OPS_GUARD_DECISION_LAYER_ENABLED=false` |
+
+**4B) Guard SHADOW**
+
+| Parametre | Değer |
+|-----------|-------|
+| Süre | 10 dk |
+| RPS | 20 (sabit, aynı mix) |
+| Guard | `enabled=true`, `default_mode=shadow` |
+
+**4C) Guard ENFORCE (sınırlı)**
+
+| Parametre | Değer |
+|-----------|-------|
+| Süre | 10 dk |
+| RPS | 20 (sabit, aynı mix) |
+| Guard | `enabled=true`, high-risk endpoint'lere enforce, diğerleri shadow |
+
+**Başarı kriterleri:**
+
+| # | Kriter | Metrik | Eşik |
+|---|--------|--------|------|
+| S4.1 | Shadow'da error rate değişmez | 4A vs 4B error rate delta | < %1 |
+| S4.2 | Shadow'da 503 yok | `status_class="5xx"` (guard kaynaklı) | 0 |
+| S4.3 | Decision counter artıyor | `guard_decision_requests_total{mode="shadow"}` | > 0 |
+| S4.4 | Enforce'da 503 sadece beklenen sınıfta | `block_total{kind, mode, risk_class}` | Sadece high-risk'te |
+| S4.5 | Risk class kırılımı anlamlı | `sum by (risk_class, mode)` | 3 risk_class × 2 mode |
+| S4.6 | Telemetry endpoint çalışıyor | `ptf_admin_frontend_events_total` | > 0 (CORS hatası yok) |
+
+---
+
+### Senaryo 5 — "Dependency Outage" (Ops Guard)
+
+**Katman:** 1 (in-process, mevcut harness + FaultInjector)
+
+**Amaç:** Circuit open / rate limit bypass doğrulaması.
+
+**5A) Circuit breaker tetikleme**
+
+- Downstream'i "fail" ettir (FaultInjector + StubServer)
+- `ptf_admin_circuit_breaker_state` → 2 (OPEN)
+- `PTFAdminCircuitBreakerOpen` alert firing
+
+**5B) Rate limiter tetikleme**
+
+- Yükü kısa süre artır (burst RPS)
+- `ptf_admin_rate_limit_total{decision="deny"}` artıyor
+- 429 + `Retry-After` header doğrulaması
+
+**Başarı kriterleri:**
+
+| # | Kriter | Metrik | Eşik |
+|---|--------|--------|------|
+| S5.1 | 429 semantiği korunur | Response status + `Retry-After` header | Header mevcut |
+| S5.2 | OpsGuard deny path'te decision layer bypass | `guard_decision_requests_total` | Artmamalı (deny path'te) |
+| S5.3 | CB open alert firing | `PTFAdminCircuitBreakerOpen` | firing |
+| S5.4 | Rate limit alert firing | `PTFAdminRateLimitSpike` | firing |
+| S5.5 | Fail-open counter stabil | `ptf_admin_guard_failopen_total` | Artmamalı (normal operasyonda) |
+
+---
+
+### Koşma Sırası ve Öneri
+
+| Sıra | Senaryo | Öncelik | Gerekçe |
+|------|---------|---------|---------|
+| 1 | S1 (PDF steady) | Kritik | Baseline olmadan diğer senaryolar anlamsız |
+| 2 | S2 (PDF burst) | Kritik | Queue davranışı + alert doğrulaması |
+| 3 | S3 (PDF retry) | Yüksek | Failure taxonomy + retry policy |
+| 4 | S4 (Guard shadow/enforce) | Yüksek | Latency impact + risk class doğrulaması |
+| 5 | S5 (Dependency outage) | Orta | CB/rate limit — mevcut harness testleri zaten kapsıyor |
+
+S1 + S2 temizse guard tarafını koşmak kolay. S5 büyük ölçüde mevcut `test_lc_failure_matrix.py` ve `test_lc_cb_lifecycle.py` testleri ile kapsanıyor — staging'de tekrar doğrulama niteliğinde.
+
+---
+
+### Rapor Şablonu (Her Senaryo İçin)
+
+| Alan | Açıklama |
+|------|----------|
+| Senaryo | S1 / S2 / S3 / S4 / S5 |
+| RPS / Job Rate | Gerçekleşen değer |
+| p50 / p95 Duration | ms cinsinden |
+| Queue Depth Max | Burst senaryolarında |
+| Time-to-Drain | Queue depth 0'a dönme süresi |
+| Failure Breakdown | `error_code` bazında sayılar |
+| Retry Oranı | `retry_count / total_jobs` |
+| Memory Delta | `process_resident_memory_bytes` başlangıç → bitiş |
+| Firing Alert Listesi | Beklenen / Beklenmeyen ayrımı |
+| Stuck Job Count | RUNNING > 5 dk |
+| TTL Cleanup Count | `cleanup_expired()` sonucu |
+
+
+---
+
+# Yük Testi Sonuç Raporu Şablonu
+
+Bu şablon, yük testi planındaki senaryoların (S1–S5) koşum sonuçlarını tek sayfada özetler. Üstte go/no-go kararı, altta metrik ve alert kanıtları. Her koşumda bu şablon kopyalanıp doldurulur.
+
+---
+
+### Koşum Bilgileri
+
+| Alan | Değer |
+|------|-------|
+| Run ID | `<YYYYMMDD-HHMM>` |
+| Ortam | staging / prod-like |
+| Commit / Versiyon | `<git sha / tag>` |
+| Test Penceresi | `<başlangıç>` — `<bitiş>` (TZ: Europe/Istanbul) |
+| Instance'lar | API=`<n>`, RQ Worker=`<n>`, Redis=`<single/cluster>` |
+
+### Bayraklar (Koşum Anındaki Konfigürasyon)
+
+| Flag | Değer |
+|------|-------|
+| Guard Decision Layer | `enabled=<true/false>`, `default_mode=<off/shadow/enforce>` |
+| Endpoint-class policy | `risk_map=<empty/non-empty>` |
+| PDF | `PDF_ENV=production`, `ALLOWLIST=<set/missing>` |
+| Admin Auth | `ADMIN_API_KEY_ENABLED=<true/false>` |
+
+---
+
+### Go / No-Go Kararı
+
+| Alan | Değer |
+|------|-------|
+| Karar | ✅ GO / ❌ NO-GO |
+| Gerekçe (tek satır) | `<ör: PDF p95 stabil, stuck yok, alert'ler temiz>` |
+
+### Kabul Kontrolleri
+
+- [ ] K6-1 steady: p95 < `<hedef>` ve fail rate < `<hedef>`
+- [ ] K6-2 burst: backlog drain oluyor, PW3 beklenen şekilde firing/pending
+- [ ] K6-3 retry: retry bounded (≤2), error taxonomy doğru
+- [ ] S4 API mix: shadow'da 0 block; enforce'da sadece beklenen risk_class'ta block
+- [ ] Worker stuck yok; memory artışı < %20
+- [ ] TTL cleanup doğrulandı
+
+---
+
+### PDF Metrikleri (k6 — S1, S2, S3)
+
+| Senaryo | Yük | p50 | p95 | Fail % | Queue Depth Max | Drain Süresi | Retry/Job | Notlar |
+|---------|-----|-----|-----|--------|-----------------|--------------|-----------|--------|
+| K6-1 Steady | `<job/dk>` | `<ms>` | `<ms>` | `<%>` | `<n>` | n/a | `<x>` | |
+| K6-2 Burst | 200/60s | `<ms>` | `<ms>` | `<%>` | `<n>` | `<mm:ss>` | `<x>` | |
+| K6-3 Retry | `<job/dk>` | `<ms>` | `<ms>` | `<%>` | `<n>` | n/a | `<x>` | |
+
+### PDF PromQL Kanıtları
+
+```promql
+# Fail count (15 dk pencere)
+sum(increase(ptf_admin_pdf_jobs_total{status="failed"}[15m])) = <n>
+
+# Queue depth max
+max_over_time(ptf_admin_pdf_queue_depth[15m]) = <n>
+
+# p95 duration
+histogram_quantile(0.95, sum(rate(ptf_admin_pdf_job_duration_seconds_bucket[15m])) by (le)) = <s>
+```
+
+---
+
+### API / Guard Metrikleri (k6 — S4)
+
+| Faz | RPS | p95 Latency | Error % | Block (shadow/enforce) | Notlar |
+|-----|-----|-------------|---------|------------------------|--------|
+| S4A Guard OFF | `<rps>` | `<ms>` | `<%>` | n/a | |
+| S4B Shadow | `<rps>` | `<ms>` | `<%>` | shadow=`<n>` | |
+| S4C Enforce | `<rps>` | `<ms>` | `<%>` | enforce=`<n>` | |
+
+### Guard PromQL Kanıtları
+
+```promql
+# Decision counter (mode × risk_class kırılımı)
+sum by (mode, risk_class) (increase(ptf_admin_guard_decision_requests_total[15m]))
+
+# Block counter (kind × mode × risk_class kırılımı)
+sum by (mode, risk_class, kind) (increase(ptf_admin_guard_decision_block_total[15m]))
+```
+
+---
+
+### Alert Gözlemleri (Beklenen vs Beklenmeyen)
+
+| Alert | Beklenen? | Fired? | Severity | Süre | Notlar |
+|-------|-----------|--------|----------|------|--------|
+| PTFAdminPdfQueueUnavailable | Hayır | Evet/Hayır | warn | `<mm:ss>` | |
+| PTFAdminPdfFailureSpike | Sadece K6-3 | Evet/Hayır | warn | `<mm:ss>` | |
+| PTFAdminPdfQueueBacklog | Evet (K6-2) | Evet/Hayır | warn | `<mm:ss>` | |
+| PTFAdminGuardDecisionSilent | Hayır | Evet/Hayır | warn | `<mm:ss>` | |
+| PTFAdminReleaseGateContractBreach | Hayır | Evet/Hayır | high | `<mm:ss>` | |
+| PTFAdminSLOBurnRateFast | Hayır | Evet/Hayır | critical | `<mm:ss>` | |
+| PTFAdminSLOBurnRateSlow | Hayır | Evet/Hayır | warn | `<mm:ss>` | |
+| PTFAdminCircuitBreakerOpen | Sadece S5 | Evet/Hayır | warn | `<mm:ss>` | |
+| PTFAdminRateLimitSpike | Sadece S5 | Evet/Hayır | warn | `<mm:ss>` | |
+
+---
+
+### Güvenilirlik Kontrolleri
+
+### Worker Stuck Detection
+
+| Alan | Değer |
+|------|-------|
+| Tanım | Job RUNNING > 5 dk VEYA RUNNING count hiç düşmüyor |
+| Sonuç | ✅ Pass / ❌ Fail |
+| Kanıt | k6 poll loop: stuck count = `<n>` |
+
+### Memory Leak Kontrolü
+
+| Bileşen | Başlangıç | Bitiş | Delta (%) | Sonuç |
+|---------|-----------|-------|-----------|-------|
+| API | `<MB>` | `<MB>` | `<%>` | ✅ / ❌ |
+| Worker | `<MB>` | `<MB>` | `<%>` | ✅ / ❌ |
+
+Eşik: > %20 artış = ❌ Fail
+
+### TTL Cleanup Doğrulaması
+
+| Alan | Değer |
+|------|-------|
+| Expired job sayısı | `<n>` |
+| Silinen artifact sayısı | `<n>` |
+| Cleanup hata sayısı | `<n>` (`artifact_cleanup_failures_total`) |
+| Sonuç | ✅ Pass / ❌ Fail |
+
+---
+
+### Ekler ve Bağlantılar
+
+| Kaynak | Konum |
+|--------|-------|
+| k6 summary JSON | `<path>` |
+| Grafana snapshot'ları | `<link veya snapshot id>` |
+| StressReport (in-process) | `<path>` |
+| İlgili loglar (error-only) | `<path>` |
+
+---
+
+### Aksiyonlar (Sadece Gerekirse)
+
+| # | Aksiyon | Sahip | Tarih |
+|---|---------|-------|-------|
+| 1 | `<tuning item>` | `<isim>` | `<tarih>` |
+| 2 | `<tuning item>` | `<isim>` | `<tarih>` |
+
+---
+
+### Kontrol Notları
+
+- [ ] Template allowlist prod'da zorunlu
+- [ ] Enqueue fail semantics (QUEUE_UNAVAILABLE) doğru çalışıyor
+- [ ] Risk map empty ⇒ enforce tenant'ta shadow'a düşüyor
+- [ ] CORS + frontend telemetry smoke test geçti

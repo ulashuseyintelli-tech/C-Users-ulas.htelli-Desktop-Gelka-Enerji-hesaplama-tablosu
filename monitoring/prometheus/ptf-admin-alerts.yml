@@ -513,3 +513,103 @@ spec:
             summary: "Guard decision layer sessiz — trafik var ama decision layer çalışmıyor"
             description: "API trafiği var ama guard_decision_requests_total artmıyor. Middleware sırası yanlış, flag kapalı veya skip path sorunu olabilir."
             runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PTFAdminGuardDecisionSilent"
+
+    # ════════════════════════════════════════════════════════════════
+    # Release Gate Telemetry Alert Group — Feature: release-gate-telemetry
+    # ════════════════════════════════════════════════════════════════
+    - name: ptf-admin-release-gate
+      rules:
+        # ── RG1: Sözleşme ihlali — kritik ─────────────────────────
+        - alert: ReleaseGateContractBreach
+          expr: increase(release_gate_contract_breach_total[5m]) > 0
+          for: 0m
+          labels:
+            severity: critical
+            team: platform
+            service: release-gate
+          annotations:
+            summary: "CONTRACT BREACH — ABSOLUTE_BLOCK_REASONS override girişimi"
+            description: "release_gate_contract_breach_total son 5 dakikada artış gösterdi. GUARD_VIOLATION veya OPS_GATE_FAIL üzerinde override denenmiş ve hard reject edilmiş."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#ReleaseGateContractBreach"
+
+        # ── RG2: Audit yazım hatası — warning ─────────────────────
+        - alert: ReleaseGateAuditWriteFailure
+          expr: increase(release_gate_audit_write_failures_total[15m]) > 0
+          for: 0m
+          labels:
+            severity: warning
+            team: platform
+            service: release-gate
+          annotations:
+            summary: "Audit write failure — R3 fail-closed invariantı tetiklendi"
+            description: "release_gate_audit_write_failures_total son 15 dakikada artış gösterdi. Audit yazılamadığında gate allowed=False döner (kanıt yoksa izin yok)."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#ReleaseGateAuditWriteFailure"
+
+        # ── RG3: DENY spike — warning ─────────────────────────────
+        - alert: ReleaseGateDenySpike
+          expr: >-
+            increase(release_gate_decision_total{decision="DENY"}[15m]) > 10
+            and
+            increase(release_gate_decision_total{decision="DENY"}[15m])
+            /
+            clamp_min(increase(release_gate_decision_total[15m]), 1)
+            > 0.3
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+            service: release-gate
+          annotations:
+            summary: "Release gate DENY spike — son 15 dakikada mutlak ve oran eşiği aşıldı"
+            description: "release_gate_decision_total{decision=\"DENY\"} son 15 dakikada mutlak > 10 ve DENY oranı > %30. Policy değişikliği, altyapı sorunu veya toplu deploy dalgası olabilir."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#ReleaseGateDenySpike"
+
+    # ════════════════════════════════════════════════════════════════
+    # PDF Render Worker Alert Group — Feature: pdf-render-worker, Task 5
+    # ════════════════════════════════════════════════════════════════
+    - name: ptf-admin-pdf-worker
+      rules:
+        # ── PW1: Queue Unavailable Spike ──────────────────────────
+        - alert: PTFAdminPdfQueueUnavailable
+          expr: increase(ptf_admin_pdf_job_failures_total{error_code="QUEUE_UNAVAILABLE"}[15m]) > 0
+          for: 0m
+          labels:
+            severity: warning
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "PDF queue unavailable — RQ/Redis bağlantı sorunu"
+            description: "ptf_admin_pdf_job_failures_total{error_code=\"QUEUE_UNAVAILABLE\"} son 15 dakikada artış gösterdi. Redis down, RQ worker crash veya connection pool exhaustion olabilir."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PTFAdminPdfQueueUnavailable"
+
+        # ── PW2: Failure Rate Spike ───────────────────────────────
+        - alert: PTFAdminPdfFailureSpike
+          expr: >-
+            increase(ptf_admin_pdf_jobs_total{status="failed"}[15m]) > 3
+            and
+            increase(ptf_admin_pdf_jobs_total{status="failed"}[15m])
+            /
+            clamp_min(increase(ptf_admin_pdf_jobs_total[15m]), 1)
+            > 0.2
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "PDF job failure spike — son 15 dakikada mutlak > 3 ve oran > %20"
+            description: "ptf_admin_pdf_jobs_total{status=\"failed\"} artış gösterdi. Playwright crash, template hatası veya artifact storage sorunu olabilir."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PTFAdminPdfFailureSpike"
+
+        # ── PW3: Queue Backlog ────────────────────────────────────
+        - alert: PTFAdminPdfQueueBacklog
+          expr: ptf_admin_pdf_queue_depth > 50
+          for: 10m
+          labels:
+            severity: warning
+            team: platform
+            service: ptf-admin
+          annotations:
+            summary: "PDF queue depth > 50 — 10+ dakikadır birikme var"
+            description: "ptf_admin_pdf_queue_depth 10 dakikadır 50'nin üzerinde. Worker sayısı yetersiz, render süresi artmış veya worker crash olabilir."
+            runbook_url: "https://github.com/<repo>/blob/main/monitoring/runbooks/ptf-admin-runbook.md#PTFAdminPdfQueueBacklog"

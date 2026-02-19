@@ -595,6 +595,60 @@
             "colorMode": "background",
             "graphMode": "none"
           }
+        },
+        {
+          "id": 20,
+          "title": "DECISION | Request Rate by Risk Class",
+          "description": "guard_decision_requests_by_risk_total{mode, risk_class} — risk class bazında request dağılımı. Bounded: 3 risk_class × 2 mode = 6 seri.",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 75 },
+          "datasource": { "uid": "$datasource", "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "sum by (mode, risk_class) (rate(ptf_admin_guard_decision_requests_by_risk_total{job=~\"$job\"}[5m]))",
+              "legendFormat": "{{mode}} / {{risk_class}}",
+              "refId": "A",
+              "datasource": { "uid": "$datasource", "type": "prometheus" }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 15, "pointSize": 5, "showPoints": "auto" }
+            },
+            "overrides": [
+              { "matcher": { "id": "byRegexp", "options": "high" }, "properties": [{ "id": "color", "value": { "fixedColor": "#F2495C", "mode": "fixed" } }] },
+              { "matcher": { "id": "byRegexp", "options": "medium" }, "properties": [{ "id": "color", "value": { "fixedColor": "#FF9830", "mode": "fixed" } }] },
+              { "matcher": { "id": "byRegexp", "options": "low" }, "properties": [{ "id": "color", "value": { "fixedColor": "#73BF69", "mode": "fixed" } }] }
+            ]
+          }
+        },
+        {
+          "id": 21,
+          "title": "DECISION | Block Rate by Risk Class",
+          "description": "guard_decision_block_by_risk_total{kind, mode, risk_class} — risk class bazında block dağılımı.",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 75 },
+          "datasource": { "uid": "$datasource", "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "sum by (kind, mode, risk_class) (rate(ptf_admin_guard_decision_block_by_risk_total{job=~\"$job\"}[5m]))",
+              "legendFormat": "{{kind}} / {{mode}} / {{risk_class}}",
+              "refId": "A",
+              "datasource": { "uid": "$datasource", "type": "prometheus" }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 20, "pointSize": 5, "showPoints": "auto" }
+            },
+            "overrides": [
+              { "matcher": { "id": "byRegexp", "options": "high" }, "properties": [{ "id": "color", "value": { "fixedColor": "#F2495C", "mode": "fixed" } }] },
+              { "matcher": { "id": "byRegexp", "options": "medium" }, "properties": [{ "id": "color", "value": { "fixedColor": "#FF9830", "mode": "fixed" } }] },
+              { "matcher": { "id": "byRegexp", "options": "low" }, "properties": [{ "id": "color", "value": { "fixedColor": "#73BF69", "mode": "fixed" } }] }
+            ]
+          }
         }
       ]
     }

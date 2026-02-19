@@ -79,11 +79,11 @@ ReleaseGate enforcement hook'una gözlemlenebilirlik katmanı eklenir: GateMetri
     - **Property 5: Metrik emisyonu fail-open — gate kararı değişmez**
     - **Validates: Requirements 4.1, 4.2, 6.5**
 
-- [ ] 3. Checkpoint — Tüm testlerin geçtiğinden emin ol
+- [x] 3. Checkpoint — Tüm testlerin geçtiğinden emin ol
   - Tüm testlerin geçtiğinden emin ol, sorular varsa kullanıcıya sor.
 
-- [ ] 4. Prometheus alert kuralları
-  - [ ] 4.1 `monitoring/prometheus/ptf-admin-alerts.yml` — yeni alert grubu ekle
+- [-] 4. Prometheus alert kuralları
+  - [x] 4.1 `monitoring/prometheus/ptf-admin-alerts.yml` — yeni alert grubu ekle
     - Grup adı: `ptf-admin-release-gate`
     - RG1: `ReleaseGateContractBreach` — `increase(release_gate_contract_breach_total[5m]) > 0`, severity: critical
     - RG2: `ReleaseGateAuditWriteFailure` — `increase(release_gate_audit_write_failures_total[15m]) > 0`, severity: warning
@@ -98,30 +98,35 @@ ReleaseGate enforcement hook'una gözlemlenebilirlik katmanı eklenir: GateMetri
     - runbook_url formatı kontrolü
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5_
 
-- [ ] 5. Grafana dashboard
-  - [ ] 5.1 `monitoring/grafana/release-gate-dashboard.json` oluştur
-    - Panel 1: Allow vs Deny Rate (timeseries) — `release_gate_decision_total{decision="ALLOW|DENY"}`
-    - Panel 2: Top Deny Reasons (barchart) — `topk(10, release_gate_reason_total)`
-    - Panel 3: Audit Write Failures (stat) — `release_gate_audit_write_failures_total`
-    - Panel 4: Contract Breaches (stat) — `release_gate_contract_breach_total`
-    - Mevcut preflight-dashboard.json yapısını ve stilini takip et
+- [x] 5. Grafana dashboard
+  - [x] 5.1 `monitoring/grafana/release-gate-dashboard.json` oluştur
+    - Panel 1: Allow vs Deny Rate (timeseries, stacked) — `sum by (decision) (increase(release_gate_decision_total[15m]))`
+    - Panel 2: Top Deny Reasons (barchart) — `topk(10, sum by (reason) (increase(release_gate_decision_total{decision="DENY"}[1h])))`
+    - Panel 3: Contract Breach Count (stat) — `increase(release_gate_contract_breach_total[1h])`
+    - Panel 4: Audit Write Failures (stat) — `increase(release_gate_audit_write_failures_total[15m])`
+    - Panel descriptions: decision/reason semantics + runbook link
+    - Folder/row naming: "Release Gate Telemetry"
+    - Mevcut preflight-dashboard.json yapısını ve stilini takip eder
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5_
 
-  - [ ]* 5.2 Dashboard unit testleri yaz
-    - JSON yapı doğrulama: uid, title, panels dizisi
+  - [x] 5.2 Dashboard unit testleri yaz (19 test, tümü geçti)
+    - JSON yapı doğrulama: uid, title, panels dizisi, schemaVersion
     - Gerekli panel tiplerinin varlığı (timeseries, barchart, stat)
-    - Her panelde targets ve expr alanlarının varlığı
+    - Her panelde targets, expr, description ve runbook link varlığı
+    - Stacking mode doğrulama (Allow vs Deny Rate paneli)
+    - Metrik isim doğrulama (release_gate_decision_total, release_gate_contract_breach_total, release_gate_audit_write_failures_total)
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5_
 
-- [ ] 6. Runbook güncellemesi
-  - [ ] 6.1 `monitoring/runbooks/ptf-admin-runbook.md` — gate telemetrisi bölümleri ekle
+- [x] 6. Runbook güncellemesi
+  - [x] 6.1 `monitoring/runbooks/ptf-admin-runbook.md` — gate telemetrisi bölümleri eklendi
     - ReleaseGateContractBreach: PromQL snippet'leri, kök nedenler, müdahale adımları
-    - ReleaseGateAuditWriteFailure: PromQL snippet'leri, kök nedenler, müdahale adımları
+    - ReleaseGateAuditWriteFailure: PromQL snippet'leri, kök nedenler, müdahale adımları (R3 invariantı referansı)
     - ReleaseGateDenySpike: PromQL snippet'leri, kök nedenler, müdahale adımları
     - _Requirements: 10.1, 10.2, 10.3_
 
-- [ ] 7. Final checkpoint — Tüm testlerin geçtiğinden emin ol
-  - Tüm testlerin geçtiğinden emin ol, sorular varsa kullanıcıya sor.
+- [x] 7. Final checkpoint — Tüm testlerin geçtiğinden emin ol
+  - Dashboard testleri: 19/19 geçti
+  - Runbook: 3 yeni bölüm eklendi (ReleaseGateContractBreach, ReleaseGateAuditWriteFailure, ReleaseGateDenySpike)
 
 ## Notlar
 

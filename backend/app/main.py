@@ -404,12 +404,21 @@ def validate_uploaded_file(file: UploadFile, content: bytes) -> None:
             }
         )
 
+# ── CORS — environment-aware ──────────────────────────────────────────────────
+_CORS_ORIGINS_ENV = os.getenv("CORS_ALLOWED_ORIGINS", "")  # comma-separated
+_cors_origins: list[str] = (
+    [o.strip() for o in _CORS_ORIGINS_ENV.split(",") if o.strip()]
+    if _CORS_ORIGINS_ENV
+    else ["*"]  # dev fallback — prod MUST set CORS_ALLOWED_ORIGINS
+)
+_cors_env = os.getenv("ENV", "development").lower()
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_env != "production",  # prod'da False (cookie yoksa gereksiz)
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Api-Key", "X-Admin-Key", "X-Tenant-Id"],
 )
 
 # ── Metrics Middleware ────────────────────────────────────────────────────────

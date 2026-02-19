@@ -29,6 +29,7 @@ from .guard_decision import (
     SnapshotFactory, WindowParams, SignalReasonCode,
     TenantMode, resolve_tenant_mode, parse_tenant_modes,
     parse_tenant_allowlist, sanitize_metric_tenant, sanitize_tenant_id,
+    parse_endpoint_risk_map, resolve_endpoint_risk_class,
 )
 from .guard_enforcement import EnforcementVerdict, evaluate
 
@@ -106,11 +107,16 @@ class GuardDecisionMiddleware(BaseHTTPMiddleware):
 
         dependencies = get_dependencies(endpoint)
 
+        # ── Risk class resolution (endpoint-class-policy) ───────────────
+        risk_map = parse_endpoint_risk_map(config.decision_layer_endpoint_risk_map_json)
+        risk_class = resolve_endpoint_risk_class(endpoint, risk_map)
+
         # Metric tenant label (cardinality-safe)
         allowlist = parse_tenant_allowlist(config.decision_layer_tenant_allowlist_json)
         metric_tenant = sanitize_metric_tenant(tenant_id, allowlist)
 
         # Build snapshot — fail-open on error (returns None)
+        # SnapshotFactory resolves effective_mode internally via resolve_effective_mode()
         snapshot = SnapshotFactory.build(
             guard_deny_reason=None,  # We're on the allow path
             config=config,
@@ -118,6 +124,7 @@ class GuardDecisionMiddleware(BaseHTTPMiddleware):
             method=method,
             dependencies=dependencies if dependencies else None,
             tenant_id=tenant_id,
+            risk_class=risk_class,
         )
 
         if snapshot is None:
@@ -130,14 +137,27 @@ class GuardDecisionMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
             return response
 
+        # ── Effective mode OFF → passthrough (risk class downgraded to OFF) ─
+        if snapshot.effective_mode == TenantMode.OFF:
+            return await call_next(request)
+
         # Evaluate enforcement verdict
         verdict = evaluate(snapshot)
 
-        is_shadow = tenant_mode == TenantMode.SHADOW
+        # Enforcement uses effective_mode (not tenant_mode)
+        is_shadow = snapshot.effective_mode == TenantMode.SHADOW
         current_mode = "shadow" if is_shadow else "enforce"
+        risk_class_label = snapshot.risk_class.value  # low|medium|high
+
+        # Emit risk-class-aware request counter (Yol A: new metric name)
+        try:
+            from ..ptf_metrics import get_ptf_metrics
+            get_ptf_metrics().inc_guard_decision_request_by_risk(current_mode, risk_class_label)
+        except Exception:
+            pass
 
         if verdict == EnforcementVerdict.BLOCK_STALE:
-            self._emit_block_metric("stale", current_mode, tenant=metric_tenant)
+            self._emit_block_metric("stale", current_mode, risk_class=risk_class_label, tenant=metric_tenant)
             if not is_shadow:
                 return self._build_block_response(
                     error_code="OPS_GUARD_STALE",
@@ -150,7 +170,7 @@ class GuardDecisionMiddleware(BaseHTTPMiddleware):
             )
 
         if verdict == EnforcementVerdict.BLOCK_INSUFFICIENT:
-            self._emit_block_metric("insufficient", current_mode, tenant=metric_tenant)
+            self._emit_block_metric("insufficient", current_mode, risk_class=risk_class_label, tenant=metric_tenant)
             if not is_shadow:
                 return self._build_block_response(
                     error_code="OPS_GUARD_INSUFFICIENT",
@@ -207,10 +227,14 @@ class GuardDecisionMiddleware(BaseHTTPMiddleware):
         return [c[2] for c in codes]
 
     @staticmethod
-    def _emit_block_metric(kind: str, mode: str = "enforce", *, tenant: str | None = None) -> None:
-        """Emit block metric with mode and optional tenant label. Safe to call anytime."""
+    def _emit_block_metric(kind: str, mode: str = "enforce", *, risk_class: str = "low", tenant: str | None = None) -> None:
+        """Emit block metrics (legacy + risk-class-aware). Safe to call anytime."""
         try:
             from ..ptf_metrics import get_ptf_metrics
-            get_ptf_metrics().inc_guard_decision_block(kind, mode)
+            m = get_ptf_metrics()
+            # Legacy metric (unchanged — backward compat)
+            m.inc_guard_decision_block(kind, mode)
+            # New risk-class-aware metric (Yol A)
+            m.inc_guard_decision_block_by_risk(kind, mode, risk_class)
         except Exception:
             pass

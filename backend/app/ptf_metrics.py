@@ -208,6 +208,45 @@ class PTFMetrics:
             registry=self._registry,
         )
 
+        # ── Endpoint-Class Policy metrics (Feature: endpoint-class-policy) ─
+        # Yol A: New metric names — eski metrikler kırılmaz
+        self._guard_decision_requests_by_risk_total = Counter(
+            "ptf_admin_guard_decision_requests_by_risk_total",
+            "Guard decision requests split by mode and risk_class",
+            labelnames=["mode", "risk_class"],
+            registry=self._registry,
+        )
+        self._guard_decision_block_by_risk_total = Counter(
+            "ptf_admin_guard_decision_block_by_risk_total",
+            "Guard decision blocks split by kind, mode, and risk_class",
+            labelnames=["kind", "mode", "risk_class"],
+            registry=self._registry,
+        )
+
+        # ── PDF Render Worker metrics (Feature: pdf-render-worker, Task 5) ─
+        self._pdf_jobs_total = Counter(
+            "ptf_admin_pdf_jobs_total",
+            "PDF job status transitions",
+            labelnames=["status"],
+            registry=self._registry,
+        )
+        self._pdf_job_failures_total = Counter(
+            "ptf_admin_pdf_job_failures_total",
+            "PDF job failures by error code",
+            labelnames=["error_code"],
+            registry=self._registry,
+        )
+        self._pdf_job_duration_seconds = Histogram(
+            "ptf_admin_pdf_job_duration_seconds",
+            "PDF render job duration (queued to finished)",
+            registry=self._registry,
+        )
+        self._pdf_queue_depth = Gauge(
+            "ptf_admin_pdf_queue_depth",
+            "Current number of QUEUED PDF jobs",
+            registry=self._registry,
+        )
+
     # ── upsert_total ──────────────────────────────────────────────────────
 
     def inc_upsert(self, status: str) -> None:
@@ -400,6 +439,59 @@ class PTFMetrics:
     def inc_guard_decision_request(self) -> None:
         """Increment decision layer evaluated request counter."""
         self._guard_decision_requests_total.inc()
+
+    def inc_guard_decision_request_by_risk(self, mode: str, risk_class: str) -> None:
+        """Increment risk-class-aware request counter. Bounded: mode × risk_class = 6 series."""
+        if mode not in ("shadow", "enforce"):
+            logger.warning(f"[METRICS] Invalid guard_decision_request_by_risk mode: {mode}")
+            return
+        if risk_class not in ("low", "medium", "high"):
+            logger.warning(f"[METRICS] Invalid guard_decision_request_by_risk risk_class: {risk_class}")
+            return
+        self._guard_decision_requests_by_risk_total.labels(mode=mode, risk_class=risk_class).inc()
+
+    def inc_guard_decision_block_by_risk(self, kind: str, mode: str, risk_class: str) -> None:
+        """Increment risk-class-aware block counter. Bounded: kind × mode × risk_class = 12 series."""
+        if kind not in ("stale", "insufficient"):
+            logger.warning(f"[METRICS] Invalid guard_decision_block_by_risk kind: {kind}")
+            return
+        if mode not in ("shadow", "enforce"):
+            logger.warning(f"[METRICS] Invalid guard_decision_block_by_risk mode: {mode}")
+            return
+        if risk_class not in ("low", "medium", "high"):
+            logger.warning(f"[METRICS] Invalid guard_decision_block_by_risk risk_class: {risk_class}")
+            return
+        self._guard_decision_block_by_risk_total.labels(kind=kind, mode=mode, risk_class=risk_class).inc()
+
+    # ── PDF Render Worker metrics (Feature: pdf-render-worker, Task 5) ────
+
+    _VALID_PDF_STATUSES = frozenset({"queued", "running", "succeeded", "failed", "expired"})
+    _VALID_PDF_ERROR_CODES = frozenset({
+        "BROWSER_LAUNCH_FAILED", "NAVIGATION_TIMEOUT", "TEMPLATE_ERROR",
+        "UNSUPPORTED_PLATFORM", "ARTIFACT_WRITE_FAILED", "QUEUE_UNAVAILABLE", "UNKNOWN",
+    })
+
+    def inc_pdf_job(self, status: str) -> None:
+        """Increment pdf_jobs_total counter. status: queued|running|succeeded|failed|expired."""
+        if status not in self._VALID_PDF_STATUSES:
+            logger.warning(f"[METRICS] Invalid pdf_jobs_total status: {status}")
+            return
+        self._pdf_jobs_total.labels(status=status).inc()
+
+    def inc_pdf_failure(self, error_code: str) -> None:
+        """Increment pdf_job_failures_total counter. error_code from PdfErrorCode enum."""
+        if error_code not in self._VALID_PDF_ERROR_CODES:
+            logger.warning(f"[METRICS] Invalid pdf_job_failures_total error_code: {error_code}")
+            return
+        self._pdf_job_failures_total.labels(error_code=error_code).inc()
+
+    def observe_pdf_job_duration(self, duration_seconds: float) -> None:
+        """Record PDF render job duration."""
+        self._pdf_job_duration_seconds.observe(duration_seconds)
+
+    def set_pdf_queue_depth(self, depth: int) -> None:
+        """Set current PDF queue depth gauge."""
+        self._pdf_queue_depth.set(depth)
 
     # ── Snapshot (test/debug only) ────────────────────────────────────────
 

@@ -1,0 +1,141 @@
+{
+  "__inputs": [],
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "9.0.0"
+    }
+  ],
+  "id": null,
+  "uid": "release-gate-telemetry",
+  "title": "Release Gate Telemetry",
+  "description": "Release gate karar dağılımı, deny nedenleri, contract breach ve audit write failure panelleri. Runbook: ptf-admin-runbook.md#ReleaseGateContractBreach",
+  "tags": ["release-governance", "release-gate", "telemetry"],
+  "timezone": "browser",
+  "schemaVersion": 36,
+  "version": 1,
+  "refresh": "5m",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Allow vs Deny Rate",
+      "description": "Gate karar dağılımı (ALLOW/DENY) — 15 dakikalık pencerede artış. decision etiketi {ALLOW, DENY} sabit kümesinden gelir. Runbook: ptf-admin-runbook.md#ReleaseGateDenySpike",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum by (decision) (increase(release_gate_decision_total[15m]))",
+          "legendFormat": "{{decision}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "stacking": { "mode": "normal", "group": "A" }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "ALLOW" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "DENY" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }]
+          }
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "title": "Top Deny Reasons",
+      "description": "En sık karşılaşılan DENY nedenleri (topk 10). reason etiketi BlockReasonCode enum üyelerinden gelir. Runbook: ptf-admin-runbook.md#ReleaseGateDenySpike",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "topk(10, sum by (reason) (increase(release_gate_decision_total{decision=\"DENY\"}[1h])))",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "always",
+        "barWidth": 0.8
+      }
+    },
+    {
+      "id": 3,
+      "title": "Contract Breach Count",
+      "description": "Sözleşme ihlali sayısı — ABSOLUTE_BLOCK_REASONS (GUARD_VIOLATION, OPS_GATE_FAIL) üzerinde override girişimi. Saatlik artış. Runbook: ptf-admin-runbook.md#ReleaseGateContractBreach",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "increase(release_gate_contract_breach_total[1h])",
+          "legendFormat": "Contract Breaches",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "Audit Write Failures",
+      "description": "Audit yazım hataları — R3 fail-closed invariantı tetiklenme sayısı. 15 dakikalık pencerede artış. Runbook: ptf-admin-runbook.md#ReleaseGateAuditWriteFailure",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "increase(release_gate_audit_write_failures_total[15m])",
+          "legendFormat": "Audit Write Failures",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    }
+  ]
+}
