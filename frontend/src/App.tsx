@@ -115,6 +115,7 @@ function App() {
   
   // Manuel fatura değerleri override
   const [manualMode, setManualMode] = useState(false);
+  const [consumptionInput, setConsumptionInput] = useState('');
   const [manualValues, setManualValues] = useState({
     consumption_kwh: 0,
     current_unit_price: 0,
@@ -715,20 +716,64 @@ function App() {
                     />
                   </div>
                   <div>
-                    <label className="text-xs font-medium text-gray-700 mb-1 block">
-                      YEKDEM (TL/MWh)
-                      {liveCalculation && !liveCalculation.include_yekdem && !manualMode && (
-                        <span className="text-gray-400 ml-1">(yok)</span>
-                      )}
-                    </label>
-                    <input
-                      type="number"
-                      className={`w-full px-2 py-1.5 text-sm border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 focus:border-primary-500 outline-none ${(liveCalculation && !liveCalculation.include_yekdem && !manualMode) || (useReferencePrices && !manualMode) ? 'bg-gray-100 text-gray-400' : ''}`}
-                      value={liveCalculation && !liveCalculation.include_yekdem && !manualMode ? 0 : yekdemPrice}
-                      onChange={(e) => setYekdemPrice(parseFloat(e.target.value) || 0)}
-                      step="0.1"
-                      disabled={!!(liveCalculation && !liveCalculation.include_yekdem && !manualMode) || (useReferencePrices && !manualMode)}
-                    />
+                    {(() => {
+                      const yekdemDisabled = !!(liveCalculation && !liveCalculation.include_yekdem && !manualMode) || (useReferencePrices && !manualMode);
+                      const yekdemVal = liveCalculation && !liveCalculation.include_yekdem && !manualMode ? 0 : yekdemPrice;
+                      const yekdemPresets = [
+                        { label: 'Oca 26 — 274,89', value: 274.89 },
+                        { label: 'Şub 26 — 201,41', value: 201.41 },
+                        { label: 'Mar 26 — 460,88', value: 460.88 },
+                        { label: 'Nis 26 — 441,29', value: 441.29 },
+                        { label: 'May 26 — 563,78', value: 563.78 },
+                        { label: 'Haz 26 — 617,89', value: 617.89 },
+                        { label: 'Tem 26 — 292,21', value: 292.21 },
+                        { label: 'Ağu 26 — 302,65', value: 302.65 },
+                        { label: 'Eyl 26 — 395,98', value: 395.98 },
+                        { label: 'Eki 26 — 416,69', value: 416.69 },
+                        { label: 'Kas 26 — 374,19', value: 374.19 },
+                        { label: 'Ara 26 — 281,23', value: 281.23 },
+                      ];
+                      return (
+                        <>
+                          <label className="text-xs font-medium text-gray-700 mb-1 block">
+                            YEKDEM (TL/MWh)
+                            {liveCalculation && !liveCalculation.include_yekdem && !manualMode && (
+                              <span className="text-gray-400 ml-1">(yok)</span>
+                            )}
+                          </label>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              className={`w-full px-2 py-1.5 pr-7 text-sm border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 focus:border-primary-500 outline-none ${yekdemDisabled ? 'bg-gray-100 text-gray-400' : ''}`}
+                              value={yekdemVal}
+                              onChange={(e) => setYekdemPrice(parseFloat(e.target.value) || 0)}
+                              step="0.1"
+                              disabled={yekdemDisabled}
+                            />
+                            <select
+                              className="absolute inset-0 opacity-0 cursor-pointer"
+                              value=""
+                              onChange={(e) => {
+                                if (e.target.value) {
+                                  setYekdemPrice(parseFloat(e.target.value));
+                                }
+                              }}
+                              disabled={yekdemDisabled}
+                            >
+                              <option value="">Seç...</option>
+                              {yekdemPresets.map(p => (
+                                <option key={p.value} value={p.value.toString()}>{p.label}</option>
+                              ))}
+                            </select>
+                            {!yekdemDisabled && (
+                              <div className="absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
+                                <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                              </div>
+                            )}
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
                 
@@ -1123,8 +1168,21 @@ function App() {
                             type="text"
                             inputMode="decimal"
                             className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500"
-                            value={manualValues.consumption_kwh || ''}
-                            onChange={(e) => setManualValues({...manualValues, consumption_kwh: parseNumber(e.target.value)})}
+                            value={consumptionInput}
+                            onChange={(e) => {
+                              setConsumptionInput(e.target.value);
+                              const parsed = parseNumber(e.target.value);
+                              if (parsed > 0) {
+                                setManualValues(prev => ({...prev, consumption_kwh: parsed}));
+                              }
+                            }}
+                            onBlur={(e) => {
+                              const parsed = parseNumber(e.target.value);
+                              setManualValues(prev => ({...prev, consumption_kwh: parsed}));
+                              if (parsed > 0) {
+                                setConsumptionInput(formatNumber(parsed));
+                              }
+                            }}
                             placeholder="8.959,5"
                           />
                         </div>

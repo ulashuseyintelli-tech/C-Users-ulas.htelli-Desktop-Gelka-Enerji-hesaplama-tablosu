@@ -70,6 +70,25 @@ VALID_TRANSITIONS: dict[PdfJobStatus, frozenset[PdfJobStatus]] = {
 
 
 # ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
+
+class BackpressureActiveError(Exception):
+    """Raised when backpressure is active — HOLD semantics (Req 8.1, 8.2).
+
+    HTTP 429 + Retry-After + BACKPRESSURE_ACTIVE error code.
+    Hard block: job is NOT queued, NOT retried, NOT delayed.
+    """
+
+    def __init__(self, retry_after_seconds: int = 30) -> None:
+        self.retry_after_seconds = retry_after_seconds
+        super().__init__(
+            f"BACKPRESSURE_ACTIVE: not accepting new jobs. "
+            f"Retry-After: {retry_after_seconds}s"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Data model
 # ---------------------------------------------------------------------------
 
@@ -127,6 +146,27 @@ class PdfJobStore:
 
     def __init__(self, redis_conn: Any) -> None:
         self._r = redis_conn
+        self._backpressure_active: bool = False
+        self._backpressure_retry_after: int = 30  # seconds
+
+    # -- backpressure (Feature: slo-adaptive-control, Req 8.1, 8.2, 8.4) --
+
+    def set_backpressure(self, active: bool, retry_after_seconds: int = 30) -> None:
+        """Enable/disable backpressure. HOLD semantics: hard block, no queue."""
+        self._backpressure_active = active
+        self._backpressure_retry_after = retry_after_seconds
+        logger.info(
+            f"[PDF-JOB-STORE] Backpressure {'ACTIVE' if active else 'INACTIVE'}, "
+            f"retry_after={retry_after_seconds}s"
+        )
+
+    @property
+    def backpressure_active(self) -> bool:
+        return self._backpressure_active
+
+    @property
+    def backpressure_retry_after(self) -> int:
+        return self._backpressure_retry_after
 
     # -- helpers ----------------------------------------------------------
 
@@ -169,7 +209,14 @@ class PdfJobStore:
     # -- public API -------------------------------------------------------
 
     def create_job(self, template_name: str, payload: dict[str, Any]) -> PdfJob:
-        """Create a new job (or return existing via idempotency)."""
+        """Create a new job (or return existing via idempotency).
+
+        Raises BackpressureActiveError if backpressure is active (HOLD semantics).
+        """
+        # Backpressure check: HOLD = hard block, no queue (Req 8.1, 8.2)
+        if self._backpressure_active:
+            raise BackpressureActiveError(self._backpressure_retry_after)
+
         job_key = compute_job_key(template_name, payload)
 
         existing = self.find_by_key(job_key)

@@ -103,6 +103,9 @@ class GuardConfig(BaseSettings):
     # Endpoint → RiskClass eşlemesi (JSON): {"/admin/market-prices/upsert":"high",...}
     decision_layer_endpoint_risk_map_json: str = ""  # Empty → all endpoints LOW
 
+    # ── Adaptive Control (Feature: slo-adaptive-control) ─────────────────
+    adaptive_control_enabled: bool = False  # Safe default: OFF (Req 9.1, 9.4)
+
     # ── Validators ────────────────────────────────────────────────────────
 
     @field_validator("wrapper_timeout_seconds_default")
@@ -283,6 +286,8 @@ _FALLBACK_DEFAULTS = dict(
     decision_layer_default_mode="shadow",
     decision_layer_tenant_modes_json="",
     decision_layer_tenant_allowlist_json="",
+    # Adaptive Control
+    adaptive_control_enabled=False,
 )
 
 
