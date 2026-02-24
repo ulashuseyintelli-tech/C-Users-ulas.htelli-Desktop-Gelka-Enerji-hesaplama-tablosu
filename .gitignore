@@ -91,3 +91,13 @@ backend/outputs/*
 
 # Excel
 *.xlsx
+
+# Electron
+electron/node_modules/
+electron/release/
+electron/dist/
+
+# PyInstaller
+backend/dist/
+backend/build/
+backend/*.spec

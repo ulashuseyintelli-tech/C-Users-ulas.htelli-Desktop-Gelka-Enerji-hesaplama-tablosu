@@ -116,9 +116,10 @@ function App() {
   // Manuel fatura değerleri override
   const [manualMode, setManualMode] = useState(false);
   const [consumptionInput, setConsumptionInput] = useState('');
+  const [currentUnitPriceInput, setCurrentUnitPriceInput] = useState('');
   const [manualValues, setManualValues] = useState({
     consumption_kwh: 0,
-    current_unit_price: 0,
+    current_unit_price: 0,  // Mevcut tedarikçinin birim aktif enerji fiyatı (TL/kWh)
     current_energy_tl: 0,
     current_distribution_tl: 0,
     current_btv_tl: 0,
@@ -164,8 +165,12 @@ function App() {
       const ptfKwh = ptfPrice / 1000;
       const yekdemKwh = yekdemPrice / 1000;
       
-      // Mevcut fatura değerleri: Manuel girişten enerji ve dağıtım
-      const current_energy_tl = manualValues.current_energy_tl;
+      // Mevcut fatura değerleri: Mevcut tedarikçinin birim fiyatı × kWh
+      // current_unit_price = tedarikçinin uyguladığı birim aktif enerji fiyatı (TL/kWh)
+      // Bu, EPİAŞ PTF'den farklıdır — tedarikçi kendi marjını, risk primini vs. ekler
+      const current_energy_tl = manualValues.current_unit_price > 0
+        ? manualValues.current_unit_price * kwh
+        : manualValues.current_energy_tl;
       const current_distribution_tl = manualValues.current_distribution_tl;
       // BTV ve KDV: Seçilen oranlara göre HESAPLA
       const current_btv_tl = current_energy_tl * btvRate;
@@ -309,6 +314,19 @@ function App() {
     }
   }, [manualMode, manualValues.consumption_kwh, getDistributionUnitPrice]);
 
+  // Enerji bedeli otomatik hesaplama: Mevcut birim fiyat × kWh
+  useEffect(() => {
+    if (!manualMode) return;
+    const kwh = manualValues.consumption_kwh;
+    const unitPrice = manualValues.current_unit_price;
+    if (kwh > 0 && unitPrice > 0) {
+      const autoVal = unitPrice * kwh;
+      if (Math.abs(manualValues.current_energy_tl - autoVal) > 0.01) {
+        setManualValues(prev => ({...prev, current_energy_tl: autoVal}));
+      }
+    }
+  }, [manualMode, manualValues.consumption_kwh, manualValues.current_unit_price]);
+
   // Dönem değiştiğinde PTF/YEKDEM fiyatlarını otomatik çek
   useEffect(() => {
     // Sadece manuel modda ve dönem seçilmişse çalış
@@ -322,14 +340,15 @@ function App() {
       setPriceError(null);
       
       try {
-        // Mock veri kullan (test için) - production'da use_mock=false yapılacak
-        const response = await syncEpiasPrices(period, false, true);
+        // DB'den PTF/YEKDEM fiyatlarını çek (önce DB, yoksa EPİAŞ fallback)
+        const res = await fetch(`http://localhost:8000/api/epias/prices/${period}?auto_fetch=false`);
+        const response = await res.json();
         
-        if (response.status === 'ok' && response.ptf_tl_per_mwh) {
+        if (response.ptf_tl_per_mwh) {
           setPtfPrice(response.ptf_tl_per_mwh);
-          if (response.yekdem_tl_per_mwh !== undefined) {
-            setYekdemPrice(response.yekdem_tl_per_mwh);
-          }
+        }
+        if (response.yekdem_tl_per_mwh !== undefined) {
+          setYekdemPrice(response.yekdem_tl_per_mwh);
         }
       } catch (err: any) {
         const errorMsg = err.response?.data?.detail || err.message || 'Fiyat çekilemedi';
@@ -436,6 +455,8 @@ function App() {
     setResult(null);
     setError(null);
     setManualMode(false);
+    setConsumptionInput('');
+    setCurrentUnitPriceInput('');
     setManualValues({
       consumption_kwh: 0,
       current_unit_price: 0,
@@ -534,7 +555,12 @@ function App() {
       const link = document.createElement('a');
       link.href = url;
       const period = manualMode ? manualValues.invoice_period : result?.extraction?.invoice_period;
-      link.download = `teklif_${period || 'fatura'}.pdf`;
+      const companySlug = customerInfo.company_name
+        ? customerInfo.company_name.trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_çÇğĞıİöÖşŞüÜ]/g, '')
+        : '';
+      link.download = companySlug
+        ? `teklif_${companySlug}_${period || 'fatura'}.pdf`
+        : `teklif_${period || 'fatura'}.pdf`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -569,7 +595,7 @@ function App() {
   }
 
   return (
-    <div className="h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex flex-col overflow-hidden">
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex flex-col overflow-auto">
       {/* Header */}
       <header className="bg-white border-b border-gray-200 flex-shrink-0">
         <div className="max-w-7xl mx-auto px-4 py-2">
@@ -594,10 +620,10 @@ function App() {
         </div>
       </header>
 
-      <main className="flex-1 max-w-7xl mx-auto px-4 py-3 w-full overflow-hidden">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-full">
+      <main className="flex-1 max-w-7xl mx-auto px-4 py-3 w-full overflow-auto">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Sol Panel - Yükleme ve Parametreler */}
-          <div className="lg:col-span-1 space-y-2 overflow-hidden">
+          <div className="lg:col-span-1 space-y-2 overflow-auto">
             {/* Dosya Yükleme */}
             <div className="card p-3">
               <h2 className="text-sm font-semibold text-gray-900 mb-2 flex items-center gap-2">
@@ -700,20 +726,61 @@ function App() {
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="text-xs font-medium text-gray-700 mb-1 block">
-                      PTF (TL/MWh)
+                      Teklif PTF (TL/MWh)
                       {priceLoading && <Loader2 className="w-3 h-3 inline ml-1 animate-spin text-primary-500" />}
-                      {useReferencePrices && !manualMode && result?.calculation?.meta_ptf_tl_per_mwh && (
-                        <span className="text-primary-600 ml-1">({result.calculation.meta_ptf_tl_per_mwh})</span>
-                      )}
                     </label>
-                    <input
-                      type="number"
-                      className={`w-full px-2 py-1.5 text-sm border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 focus:border-primary-500 outline-none ${useReferencePrices && !manualMode ? 'bg-gray-50' : ''} ${priceLoading ? 'animate-pulse' : ''}`}
-                      value={ptfPrice}
-                      onChange={(e) => setPtfPrice(parseFloat(e.target.value) || 0)}
-                      step="0.1"
-                      disabled={useReferencePrices && !manualMode}
-                    />
+                    {(() => {
+                      const ptfDisabled = useReferencePrices && !manualMode;
+                      const ptfPresets = [
+                        { label: 'Oca 25 — 2.508,80', value: 2508.80 },
+                        { label: 'Şub 25 — 2.478,28', value: 2478.28 },
+                        { label: 'Mar 25 — 2.183,83', value: 2183.83 },
+                        { label: 'Nis 25 — 2.452,67', value: 2452.67 },
+                        { label: 'May 25 — 2.458,15', value: 2458.15 },
+                        { label: 'Haz 25 — 2.202,23', value: 2202.23 },
+                        { label: 'Tem 25 — 2.965,16', value: 2965.16 },
+                        { label: 'Ağu 25 — 2.939,24', value: 2939.24 },
+                        { label: 'Eyl 25 — 2.729,02', value: 2729.02 },
+                        { label: 'Eki 25 — 2.739,50', value: 2739.50 },
+                        { label: 'Kas 25 — 2.784,10', value: 2784.10 },
+                        { label: 'Ara 25 — 2.973,04', value: 2973.04 },
+                        { label: 'Oca 26 — 2.894,92', value: 2894.92 },
+                        { label: 'Şub 26 — 2.134,31', value: 2134.31 },
+                      ];
+                      return (
+                        <div className="relative">
+                          <input
+                            type="number"
+                            className={`w-full px-2 py-1.5 pr-7 text-sm border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 focus:border-primary-500 outline-none ${ptfDisabled ? 'bg-gray-50' : ''} ${priceLoading ? 'animate-pulse' : ''}`}
+                            value={ptfPrice}
+                            onChange={(e) => setPtfPrice(parseFloat(e.target.value) || 0)}
+                            step="0.1"
+                            disabled={ptfDisabled}
+                          />
+                          {!ptfDisabled && (
+                            <div className="absolute right-0 top-0 bottom-0 w-7 flex items-center justify-center">
+                              <select
+                                className="absolute inset-0 opacity-0 cursor-pointer"
+                                value=""
+                                onChange={(e) => {
+                                  if (e.target.value) {
+                                    setPtfPrice(parseFloat(e.target.value));
+                                  }
+                                }}
+                              >
+                                <option value="">EPİAŞ PTF</option>
+                                {ptfPresets.map(p => (
+                                  <option key={p.value} value={p.value.toString()}>{p.label}</option>
+                                ))}
+                              </select>
+                              <div className="pointer-events-none text-gray-400">
+                                <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                   <div>
                     {(() => {
@@ -750,24 +817,25 @@ function App() {
                               step="0.1"
                               disabled={yekdemDisabled}
                             />
-                            <select
-                              className="absolute inset-0 opacity-0 cursor-pointer"
-                              value=""
-                              onChange={(e) => {
-                                if (e.target.value) {
-                                  setYekdemPrice(parseFloat(e.target.value));
-                                }
-                              }}
-                              disabled={yekdemDisabled}
-                            >
-                              <option value="">Seç...</option>
-                              {yekdemPresets.map(p => (
-                                <option key={p.value} value={p.value.toString()}>{p.label}</option>
-                              ))}
-                            </select>
                             {!yekdemDisabled && (
-                              <div className="absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
-                                <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                              <div className="absolute right-0 top-0 bottom-0 w-7 flex items-center justify-center">
+                                <select
+                                  className="absolute inset-0 opacity-0 cursor-pointer"
+                                  value=""
+                                  onChange={(e) => {
+                                    if (e.target.value) {
+                                      setYekdemPrice(parseFloat(e.target.value));
+                                    }
+                                  }}
+                                >
+                                  <option value="">2026 Öngörü</option>
+                                  {yekdemPresets.map(p => (
+                                    <option key={p.value} value={p.value.toString()}>{p.label}</option>
+                                  ))}
+                                </select>
+                                <div className="pointer-events-none text-gray-400">
+                                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                                </div>
                               </div>
                             )}
                           </div>
@@ -962,7 +1030,7 @@ function App() {
           </div>
 
           {/* Sağ Panel - Sonuçlar */}
-          <div className="lg:col-span-2 space-y-2 overflow-hidden">
+          <div className="lg:col-span-2 space-y-2 overflow-auto">
             {/* Hesaplama Hatası Durumu */}
             {result && result.calculation_error && (
               <div className="card bg-gradient-to-br from-red-50 to-red-100 border-red-300">
@@ -1128,7 +1196,7 @@ function App() {
                   {manualMode ? (
                     /* Manuel Giriş Formu */
                     <div className="space-y-3">
-                      <div className="grid grid-cols-3 gap-2">
+                      <div className="grid grid-cols-4 gap-2">
                         <div>
                           <label className="text-xs text-gray-500 block mb-1">Tedarikçi</label>
                           <input
@@ -1186,6 +1254,31 @@ function App() {
                             placeholder="8.959,5"
                           />
                         </div>
+                        <div>
+                          <label className="text-xs text-gray-500 block mb-1">Mevcut Birim Fiyat (TL/kWh)</label>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            className="w-full px-2 py-1 text-xs border border-blue-200 rounded focus:ring-1 focus:ring-blue-500 bg-blue-50"
+                            value={currentUnitPriceInput}
+                            onChange={(e) => {
+                              setCurrentUnitPriceInput(e.target.value);
+                              const parsed = parseNumber(e.target.value);
+                              if (parsed > 0) {
+                                setManualValues(prev => ({...prev, current_unit_price: parsed}));
+                              }
+                            }}
+                            onBlur={(e) => {
+                              const parsed = parseNumber(e.target.value);
+                              setManualValues(prev => ({...prev, current_unit_price: parsed}));
+                              if (parsed > 0) {
+                                setCurrentUnitPriceInput(formatNumber(parsed));
+                              }
+                            }}
+                            placeholder="2,85"
+                            title="Mevcut tedarikçinin uyguladığı aktif enerji birim fiyatı"
+                          />
+                        </div>
                       </div>
                       
                       <div className="pt-2 border-t border-gray-100">
@@ -1195,14 +1288,17 @@ function App() {
                             <label className="text-xs text-gray-500 block mb-1">Enerji Bedeli</label>
                             <input
                               type="text"
-                              className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500"
-                              placeholder="58761,15"
-                              defaultValue=""
-                              onBlur={(e) => {
-                                const val = parseNumber(e.target.value);
-                                setManualValues({...manualValues, current_energy_tl: val});
-                                e.target.value = val ? formatNumber(val) : '';
-                              }}
+                              className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 bg-gray-50"
+                              value={(() => {
+                                const kwh = manualValues.consumption_kwh;
+                                const unitPrice = manualValues.current_unit_price;
+                                if (kwh > 0 && unitPrice > 0) {
+                                  return formatNumber(unitPrice * kwh);
+                                }
+                                return manualValues.current_energy_tl ? formatNumber(manualValues.current_energy_tl) : '';
+                              })()}
+                              readOnly
+                              title="Mevcut birim fiyat × kWh otomatik hesaplanır"
                             />
                           </div>
                           <div>
@@ -1457,6 +1553,16 @@ function App() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
+                      {manualMode && manualValues.current_unit_price > 0 && (
+                        <tr className="bg-blue-50/50">
+                          <td className="py-1 px-2 text-gray-600 italic">Birim Aktif Enerji (TL/kWh)</td>
+                          <td className="py-1 px-2 text-right text-blue-700 font-medium">{manualValues.current_unit_price.toLocaleString('tr-TR', {minimumFractionDigits: 4, maximumFractionDigits: 4})}</td>
+                          <td className="py-1 px-2 text-right text-primary-700 font-medium">{((ptfPrice / 1000) * multiplier).toLocaleString('tr-TR', {minimumFractionDigits: 4, maximumFractionDigits: 4})}</td>
+                          <td className={`py-1 px-2 text-right font-medium ${manualValues.current_unit_price > (ptfPrice / 1000) * multiplier ? 'text-green-600' : 'text-red-600'}`}>
+                            {(manualValues.current_unit_price - (ptfPrice / 1000) * multiplier).toLocaleString('tr-TR', {minimumFractionDigits: 4, maximumFractionDigits: 4})}
+                          </td>
+                        </tr>
+                      )}
                       <tr>
                         <td className="py-1 px-2 text-gray-700">Enerji Bedeli</td>
                         <td className="py-1 px-2 text-right text-gray-900">{formatCurrency(liveCalculation.current_energy_tl)}</td>
@@ -1548,6 +1654,8 @@ function App() {
                   <button
                     onClick={() => {
                       setManualMode(true);
+                      setConsumptionInput('');
+                      setCurrentUnitPriceInput('');
                       setManualValues({
                         consumption_kwh: 0,
                         current_unit_price: 0,

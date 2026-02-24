@@ -1,0 +1,65 @@
+{
+  "name": "gelka-enerji",
+  "version": "1.0.0",
+  "description": "Gelka Enerji - Fatura Analiz ve Teklif Sistemi",
+  "main": "main.js",
+  "author": "Gelka Enerji",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "build:frontend": "cd ../frontend && npm run build",
+    "build:backend": "cd ../backend && pyinstaller --onefile --name gelka-backend --add-data \"app;app\" --hidden-import uvicorn.logging --hidden-import uvicorn.protocols.http --hidden-import uvicorn.protocols.http.auto --hidden-import uvicorn.protocols.websockets --hidden-import uvicorn.protocols.websockets.auto --hidden-import uvicorn.lifespan --hidden-import uvicorn.lifespan.on run_server.py",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.gelkaenerji.app",
+    "productName": "Gelka Enerji",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js"
+    ],
+    "extraResources": [
+      {
+        "from": "../frontend/dist",
+        "to": "frontend/dist",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../backend/dist/gelka-backend.exe",
+        "to": "backend/gelka-backend.exe"
+      },
+      {
+        "from": "../backend/gelka_enerji.db",
+        "to": "backend/gelka_enerji.db"
+      },
+      {
+        "from": "../backend/.env",
+        "to": "backend/.env"
+      }
+    ],
+    "forceCodeSigning": false,
+    "win": {
+      "target": ["nsis"],
+      "signAndEditExecutable": false,
+      "verifyUpdateCodeSignature": false,
+      "signDlls": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Gelka Enerji"
+    }
+  }
+}
