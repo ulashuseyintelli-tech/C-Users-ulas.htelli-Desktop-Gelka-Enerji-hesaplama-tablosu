@@ -67,7 +67,7 @@ Aşağıdaki kısıtlar tüm gereksinimleri keser ve her gereksinimde ayrıca te
 
 1. THE SLO_Evaluator SHALL her SLO sinyali için şu parametreleri açıkça tanımlamak: kaynak histogram (API latency histogram vs PDF render duration histogram), pencere boyutu (5m veya 15m), quantile hesaplama yöntemi (histogram_quantile + rate(bucket))
 2. THE SLO_Evaluator SHALL Guard subsystem'i için tek bir canonical sinyal kullanmak: `p95 API latency over 5m sliding window` (histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))); bu sinyal v1'de bağlayıcıdır ve değiştirilmesi yeni bir config revision + test gate gerektirir
-3. THE SLO_Evaluator SHALL PDF subsystem'i için tek bir canonical sinyal kullanmak: `p95 PDF render duration over 5m sliding window` (histogram_quantile(0.95, rate(pdf_render_duration_seconds_bucket[5m]))); bu sinyal v1'de bağlayıcıdır
+3. THE SLO_Evaluator SHALL PDF subsystem'i için tek bir canonical sinyal kullanmak: `p95 PDF render total duration over 5m sliding window` (histogram_quantile(0.95, rate(ptf_admin_pdf_render_total_seconds_bucket[5m]))); bu sinyal v1'de bağlayıcıdır. Kapasite tuning için ayrıca `ptf_admin_pdf_render_executor_seconds` kullanılır (SLO dışı)
 4. THE SLO_Evaluator SHALL sabit query/window yapılandırmasını config olarak tanımlamak; yapılandırma değişikliklerini test gate'i ile korumak (config drift test-gated)
 5. IF SLO query parametreleri yapılandırma ile uyuşmuyorsa, THEN THE SLO_Evaluator SHALL "config_drift_detected" hatası üretmek ve kontrol kararı almamak
 

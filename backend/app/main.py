@@ -1,12 +1,15 @@
 import io
 import os
+import uuid
+import asyncio
 import hashlib
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional, List
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Query, Header, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response, JSONResponse
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
@@ -17,7 +20,14 @@ from .extractor import extract_invoice_data, clear_extraction_cache, mask_pii, E
 from .calculator import calculate_offer
 from .validator import validate_extraction
 from .database import init_db, get_db, Customer, Offer, Invoice, Job, STORAGE_DIR, API_KEY, API_KEY_ENABLED
-from .pdf_generator import generate_offer_html, generate_offer_pdf
+from .pdf_generator import generate_offer_html, generate_offer_pdf, generate_offer_pdf_bytes
+
+# ── PDF Concurrency Limiter ──────────────────────────────────────────────────
+# Max 2 concurrent PDF renders — Playwright launches Chromium per request
+_PDF_MAX_CONCURRENT = int(os.getenv("PDF_MAX_CONCURRENT", "2"))
+_pdf_semaphore = asyncio.Semaphore(_PDF_MAX_CONCURRENT)
+_pdf_executor = ThreadPoolExecutor(max_workers=_PDF_MAX_CONCURRENT, thread_name_prefix="pdf-render")
+_PDF_RENDER_TIMEOUT = int(os.getenv("PDF_RENDER_TIMEOUT", "30"))  # seconds
 from .pdf_render import render_pdf_first_page, get_page1_path
 from .image_prep import preprocess_image_bytes
 from .job_queue import enqueue_job, enqueue_job_idempotent, get_job_by_id, get_jobs_by_invoice, get_active_job, list_jobs
@@ -409,7 +419,7 @@ _CORS_ORIGINS_ENV = os.getenv("CORS_ALLOWED_ORIGINS", "")  # comma-separated
 _cors_origins: list[str] = (
     [o.strip() for o in _CORS_ORIGINS_ENV.split(",") if o.strip()]
     if _CORS_ORIGINS_ENV
-    else ["*"]  # dev fallback — prod MUST set CORS_ALLOWED_ORIGINS
+    else ["http://localhost:3000", "http://127.0.0.1:3000"]  # dev — explicit, asla "*"
 )
 _cors_env = os.getenv("ENV", "development").lower()
 
@@ -419,6 +429,7 @@ app.add_middleware(
     allow_credentials=_cors_env != "production",  # prod'da False (cookie yoksa gereksiz)
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Api-Key", "X-Admin-Key", "X-Tenant-Id"],
+    expose_headers=["Content-Disposition", "Content-Length", "Content-Type", "Retry-After", "X-Request-Id"],
 )
 
 # ── Metrics Middleware ────────────────────────────────────────────────────────
@@ -1949,7 +1960,7 @@ async def generate_pdf_direct(
 
 
 @app.post("/generate-pdf-simple")
-def generate_pdf_simple(
+async def generate_pdf_simple(
     weighted_ptf_tl_per_mwh: float = Form(2974.1),
     yekdem_tl_per_mwh: float = Form(364.0),
     agreement_multiplier: float = Form(1.01),
@@ -1980,32 +1991,66 @@ def generate_pdf_simple(
     offer_date: Optional[str] = Form(None),  # Teklif tarihi (YYYY-MM-DD)
     offer_validity_days: int = Form(15),  # Teklif geçerlilik süresi (gün)
 ):
-    """Basit parametrelerle PDF oluştur - Frontend için"""
-    logger.info(f"PDF Generation Request:")
-    logger.info(f"  customer_name: '{customer_name}'")
-    logger.info(f"  contact_person: '{contact_person}'")
-    logger.info(f"  offer_energy_tl: {offer_energy_tl}")
-    logger.info(f"  offer_vat_matrah_tl: {offer_vat_matrah_tl}")
-    logger.info(f"  offer_total: {offer_total}")
-    logger.info(f"  current_energy_tl: {current_energy_tl}")
-    logger.info(f"  vat_rate: {vat_rate}")
-    
+    """Basit parametrelerle PDF oluştur.
+
+    Concurrency: max _PDF_MAX_CONCURRENT eşzamanlı render.
+    Üstü 429 döner. Render timeout: _PDF_RENDER_TIMEOUT saniye.
+    Temp dosya yazmaz — bytes doğrudan response'a stream edilir.
+    """
+    import time as _time
+    from .ptf_metrics import get_ptf_metrics as _get_pdf_metrics
+
+    request_id = str(uuid.uuid4())[:8]
+    _metrics = _get_pdf_metrics()
+    _t0 = _time.monotonic()
+    _t_acquire = 0.0
+    _t_executor = 0.0
+    _acquired = False
+
+    # PII maskeleme
+    _masked_name = (customer_name[:2] + "***") if customer_name and len(customer_name) >= 2 else "***"
+    _masked_contact = (contact_person[:2] + "***") if contact_person and len(contact_person) >= 2 else "***"
+    logger.info(f"[{request_id}] PDF request: customer='{_masked_name}' contact='{_masked_contact}' "
+                f"offer_total={offer_total} vat_rate={vat_rate}")
+
+    # ── Concurrency limiter: acquire with short timeout, fail fast ──
+    _t_acq_start = _time.monotonic()
     try:
-        # Mevcut toplam hesapla (eğer gönderilmediyse)
+        await asyncio.wait_for(_pdf_semaphore.acquire(), timeout=2.0)
+    except asyncio.TimeoutError:
+        _t_acquire = _time.monotonic() - _t_acq_start
+        _metrics.observe_pdf_render_acquire(_t_acquire)
+        _t_total = _time.monotonic() - _t0
+        _metrics.inc_pdf_render_request("429")
+        _metrics.observe_pdf_render_total(_t_total)
+        _metrics.observe_pdf_render_bytes(0)
+        logger.warning(
+            f"[{request_id}] PDF concurrency limit reached ({_PDF_MAX_CONCURRENT}) | "
+            f"status=429 error_reason=rate_limited acquire_ms={_t_acquire*1000:.1f} "
+            f"executor_ms=0 overhead_ms=0 total_ms={_t_total*1000:.1f} pdf_bytes=0"
+        )
+        return JSONResponse(
+            status_code=429,
+            content={"error": {"code": "too_many_requests", "message": "Sunucu meşgul. Lütfen birkaç saniye bekleyin.", "request_id": request_id}},
+            headers={"Retry-After": "5", "X-Request-Id": request_id},
+        )
+
+    _t_acquire = _time.monotonic() - _t_acq_start
+    _metrics.observe_pdf_render_acquire(_t_acquire)
+    _acquired = True
+    _metrics.pdf_render_inflight_inc()
+
+    try:
+        # Mevcut toplam hesapla
         if current_total_with_vat_tl == 0 and invoice_total > 0:
             current_total_with_vat_tl = invoice_total
-        
-        # KDV matrahı hesapla (eğer gönderilmediyse)
         if current_vat_matrah_tl == 0:
             current_vat_matrah_tl = current_energy_tl + current_distribution_tl + current_btv_tl
         if offer_vat_matrah_tl == 0:
             offer_vat_matrah_tl = offer_energy_tl + offer_distribution_tl + offer_btv_tl
-        
-        # Fark hesapla (eğer gönderilmediyse)
         if difference_incl_vat_tl == 0:
             difference_incl_vat_tl = current_total_with_vat_tl - offer_total
-        
-        # Basit extraction oluştur
+
         extraction = InvoiceExtraction(
             vendor=vendor,
             invoice_period=invoice_period,
@@ -2017,24 +2062,20 @@ def generate_pdf_simple(
             demand_unit_price_tl_per_unit=FieldValue(value=0, confidence=1.0),
             meta=InvoiceMeta(tariff_group_guess=tariff_group),
         )
-        
-        # Params
+
         params = OfferParams(
             weighted_ptf_tl_per_mwh=weighted_ptf_tl_per_mwh,
             yekdem_tl_per_mwh=yekdem_tl_per_mwh,
             agreement_multiplier=agreement_multiplier,
         )
-        
-        # kWh başı hesaplamalar
+
         current_total_tl_per_kwh = current_total_with_vat_tl / consumption_kwh if consumption_kwh > 0 else 0
         offer_total_tl_per_kwh = offer_total / consumption_kwh if consumption_kwh > 0 else 0
         saving_tl_per_kwh = current_total_tl_per_kwh - offer_total_tl_per_kwh
         annual_saving_tl = difference_incl_vat_tl * 12
-        
-        # Birim fiyat
         offer_unit_price = (weighted_ptf_tl_per_mwh / 1000 + yekdem_tl_per_mwh / 1000) * agreement_multiplier
         unit_price_savings_ratio = (current_unit_price - offer_unit_price) / current_unit_price if current_unit_price > 0 else 0
-        
+
         calculation = CalculationResult(
             current_energy_tl=current_energy_tl,
             current_distribution_tl=current_distribution_tl,
@@ -2067,25 +2108,127 @@ def generate_pdf_simple(
             meta_consumption_kwh=consumption_kwh,
             meta_vat_rate=vat_rate,
         )
-        
-        pdf_path = generate_offer_pdf(
-            extraction, calculation, params,
-            customer_name=customer_name,
-            contact_person=contact_person,
-            offer_date=offer_date,
-            offer_validity_days=offer_validity_days,
+
+        # ── PDF render (sync Playwright → dedicated executor + timeout) ──
+        loop = asyncio.get_event_loop()
+
+        def _render_pdf():
+            return generate_offer_pdf_bytes(
+                extraction, calculation, params,
+                customer_name=customer_name,
+                contact_person=contact_person,
+                offer_date=offer_date,
+                offer_validity_days=offer_validity_days,
+            )
+
+        _t_exec_start = _time.monotonic()
+        try:
+            pdf_bytes = await asyncio.wait_for(
+                loop.run_in_executor(_pdf_executor, _render_pdf),
+                timeout=_PDF_RENDER_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            _t_executor = _time.monotonic() - _t_exec_start
+            _metrics.observe_pdf_render_executor(_t_executor)
+            _t_total = _time.monotonic() - _t0
+            _metrics.inc_pdf_render_request("504")
+            _metrics.inc_pdf_render_error("timeout")
+            _metrics.observe_pdf_render_total(_t_total)
+            _overhead = max(0.0, _t_total - _t_acquire - _t_executor)
+            _metrics.observe_pdf_render_overhead(_overhead)
+            _metrics.observe_pdf_render_bytes(0)
+            logger.error(
+                f"[{request_id}] PDF render timeout ({_PDF_RENDER_TIMEOUT}s) | "
+                f"status=504 error_reason=timeout acquire_ms={_t_acquire*1000:.1f} "
+                f"executor_ms={_t_executor*1000:.1f} overhead_ms={_overhead*1000:.1f} "
+                f"total_ms={_t_total*1000:.1f} pdf_bytes=0"
+            )
+            return JSONResponse(
+                status_code=504,
+                content={"error": {"code": "render_timeout", "message": "PDF oluşturma zaman aşımına uğradı.", "request_id": request_id}},
+                headers={"X-Request-Id": request_id},
+            )
+
+        _t_executor = _time.monotonic() - _t_exec_start
+        _metrics.observe_pdf_render_executor(_t_executor)
+
+        if not pdf_bytes or len(pdf_bytes) < 10:
+            _t_total = _time.monotonic() - _t0
+            _metrics.inc_pdf_render_request("500")
+            _metrics.inc_pdf_render_error("empty_pdf")
+            _metrics.observe_pdf_render_total(_t_total)
+            _overhead = max(0.0, _t_total - _t_acquire - _t_executor)
+            _metrics.observe_pdf_render_overhead(_overhead)
+            _metrics.observe_pdf_render_bytes(0)
+            logger.error(
+                f"[{request_id}] PDF render returned empty/invalid bytes | "
+                f"status=500 error_reason=empty_pdf acquire_ms={_t_acquire*1000:.1f} "
+                f"executor_ms={_t_executor*1000:.1f} overhead_ms={_overhead*1000:.1f} "
+                f"total_ms={_t_total*1000:.1f} pdf_bytes=0"
+            )
+            return JSONResponse(
+                status_code=500,
+                content={"error": {"code": "empty_pdf", "message": "PDF oluşturulamadı (boş çıktı).", "request_id": request_id}},
+                headers={"X-Request-Id": request_id},
+            )
+
+        # Filename sanitize
+        _sanitized_period = _re.sub(r'[^a-zA-Z0-9_\-]', '_', (invoice_period or 'fatura').replace('..', '').replace('\x00', ''))
+        safe_filename = f"teklif_{_sanitized_period}.pdf"
+
+        _pdf_size = len(pdf_bytes)
+        _t_total = _time.monotonic() - _t0
+        _overhead = max(0.0, _t_total - _t_acquire - _t_executor)
+        _metrics.inc_pdf_render_request("200")
+        _metrics.observe_pdf_render_total(_t_total)
+        _metrics.observe_pdf_render_overhead(_overhead)
+        _metrics.observe_pdf_render_bytes(_pdf_size)
+
+        logger.info(
+            f"[{request_id}] PDF generated: {_pdf_size} bytes, filename={safe_filename} | "
+            f"status=200 error_reason=none acquire_ms={_t_acquire*1000:.1f} "
+            f"executor_ms={_t_executor*1000:.1f} overhead_ms={_overhead*1000:.1f} "
+            f"total_ms={_t_total*1000:.1f} pdf_bytes={_pdf_size}"
         )
-        
-        return FileResponse(
-            pdf_path,
+
+        # ── Bytes doğrudan response'a — temp dosya yok ──
+        return Response(
+            content=pdf_bytes,
             media_type="application/pdf",
-            filename=f"teklif_{invoice_period or 'fatura'}.pdf"
+            headers={
+                "Content-Disposition": f'attachment; filename="{safe_filename}"',
+                "Content-Length": str(len(pdf_bytes)),
+                "Cache-Control": "no-store, max-age=0",
+                "Pragma": "no-cache",
+                "X-Content-Type-Options": "nosniff",
+                "X-Request-Id": request_id,
+            },
         )
     except Exception as e:
         import traceback
         tb = traceback.format_exc()
-        logger.error(f"PDF generation error: {e}\n{tb}")
-        raise HTTPException(status_code=500, detail=f"PDF hatası: {str(e)} - {tb[:500]}")
+        _t_total = _time.monotonic() - _t0
+        _overhead = max(0.0, _t_total - _t_acquire - _t_executor)
+        _metrics.inc_pdf_render_request("500")
+        _metrics.inc_pdf_render_error("internal_error")
+        _metrics.observe_pdf_render_total(_t_total)
+        _metrics.observe_pdf_render_overhead(_overhead)
+        _metrics.observe_pdf_render_bytes(0)
+        logger.error(
+            f"[{request_id}] PDF generation error: {e}\n{tb} | "
+            f"status=500 error_reason=internal_error acquire_ms={_t_acquire*1000:.1f} "
+            f"executor_ms={_t_executor*1000:.1f} overhead_ms={_overhead*1000:.1f} "
+            f"total_ms={_t_total*1000:.1f} pdf_bytes=0"
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"error": {"code": "internal_error", "message": "PDF oluşturulurken bir hata oluştu. Lütfen tekrar deneyin.", "request_id": request_id}},
+            headers={"X-Request-Id": request_id},
+        )
+    finally:
+        if _acquired:
+            _metrics.pdf_render_inflight_dec()
+            _pdf_semaphore.release()
 
 
 @app.post("/generate-html-direct", response_class=HTMLResponse)

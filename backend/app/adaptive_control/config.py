@@ -28,7 +28,7 @@ CANONICAL_GUARD_SLO_QUERY = (
     "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))"
 )
 CANONICAL_PDF_SLO_QUERY = (
-    "histogram_quantile(0.95, rate(pdf_render_duration_seconds_bucket[5m]))"
+    "histogram_quantile(0.95, rate(ptf_admin_pdf_render_total_seconds_bucket[5m]))"
 )
 
 

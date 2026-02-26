@@ -4,7 +4,21 @@ Shared test configuration for backend tests.
 Hypothesis settings:
 - CI profile disables example database to prevent "Flaky" errors from stale examples
 - Default profile keeps database for local development
+
+Import path fix:
+- Production code uses two import styles: `from app.` and `from backend.app.`
+- Tests run from backend/ dir, so `from app.` works natively
+- `from backend.app.` needs the repo root on sys.path
+- We add repo root here so both styles resolve correctly
 """
+
+import sys
+from pathlib import Path
+
+# Add repo root (parent of backend/) to sys.path so `from backend.app...` works
+_repo_root = str(Path(__file__).resolve().parent.parent.parent)
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
 
 from hypothesis import settings, HealthCheck
 
@@ -15,9 +29,10 @@ settings.register_profile(
     suppress_health_check=[HealthCheck.too_slow],
 )
 
-# Default profile: keep database, suppress slow health check
+# Default profile: no database (prevents Flaky errors from stale examples)
 settings.register_profile(
     "default",
+    database=None,
     suppress_health_check=[HealthCheck.too_slow],
 )
 

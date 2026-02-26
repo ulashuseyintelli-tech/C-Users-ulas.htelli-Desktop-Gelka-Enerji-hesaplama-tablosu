@@ -47,6 +47,7 @@ Bu kurallar tüm bileşenler ve testler için geçerlidir. Bilgilendirme notu de
 | Profil min istek: Baseline/Peak | ≥ 200 | GNK-3 |
 | Profil min istek: Stress/Burst | ≥ 500 | GNK-3 |
 | Profil min istek: Write-path | ≥ 50 | R7 AC3 |
+| CB OPEN heuristic threshold | 0.25 (`LcRuntimeConfig.cb_open_threshold`) | R4 AC2, LC simülasyon parametresi; staging'de kalibre edilecek |
 | max_clock_skew (default) | 50ms (0.05s) | R5 AC4 |
 | CB divergence eşiği | `cb_open_duration_seconds × 2` | R5 AC5 |
 | alert eval_interval | `int(os.getenv("EVAL_INTERVAL_SECONDS", "60"))` | ENV fallback; `backend/app/testing/lc_config.py` |

@@ -66,13 +66,17 @@ def _render_in_child(html: str, nav_timeout_ms: int, result_queue: multiprocessi
             browser = p.chromium.launch()
             try:
                 page = browser.new_page(viewport={"width": 1280, "height": 720})
-                page.set_content(html, wait_until="networkidle", timeout=nav_timeout_ms)
+                page.set_content(html, wait_until="load", timeout=nav_timeout_ms)
                 page.emulate_media(media="print")
+                # Wait for all images to fully load/decode
+                page.wait_for_function(
+                    "() => Array.from(document.images).every(img => img.complete && img.naturalWidth > 0)",
+                    timeout=15000,
+                )
                 pdf_bytes = page.pdf(
                     print_background=True,
                     prefer_css_page_size=True,
                     scale=1.0,
-                    margin={"top": "0", "right": "0", "bottom": "0", "left": "0"},
                 )
                 result_queue.put(("ok", pdf_bytes))
             finally:

@@ -260,9 +260,9 @@ class TestCanonicalSloSignals:
         assert "5m" in config.guard_slo_query
 
     def test_canonical_pdf_slo_signal_config(self):
-        """Req 2.3: PDF canonical signal is p95 PDF render duration over 5m."""
+        """Req 2.3: PDF canonical signal is p95 PDF render total duration over 5m."""
         config = AdaptiveControlConfig()
-        assert "pdf_render_duration_seconds_bucket" in config.pdf_slo_query
+        assert "ptf_admin_pdf_render_total_seconds_bucket" in config.pdf_slo_query
         assert "0.95" in config.pdf_slo_query
         assert "5m" in config.pdf_slo_query
 

@@ -153,6 +153,92 @@ stateDiagram-v2
 | Artifact TTL | Configurable cleanup |
 | Dedup | Aynı template+payload → mevcut job döner |
 
+### 3.1 PDF Render Endpoint — Observability (PR-3)
+
+`POST /generate-pdf-simple` endpoint'i Playwright tabanlı PDF render işlemini yönetir. Backpressure, timeout ve hata yolları aşağıdaki akışla enstrümante edilmiştir.
+
+**İstek Akışı (4 Exit Path)**
+
+```
+Client
+  │
+  │ POST /generate-pdf-simple
+  ▼
+FastAPI handler
+  │── t_total timer start
+  │── semaphore acquire (timeout=2s)
+  │     │
+  │     ├─ TIMEOUT ──────────────────────────────────────► 429 + Retry-After: 5
+  │     │   observe: acquire_seconds, requests_total{429},
+  │     │            total_seconds, bytes(0)
+  │     │   NOT observed: inflight, executor, overhead
+  │     │
+  │     └─ ACQUIRED
+  │          │── inflight++ (gauge)
+  │          │── run_in_executor(pdf-render pool, max=2)
+  │          │     │
+  │          │     ├─ EXECUTOR TIMEOUT (>30s) ──────────► 504
+  │          │     │   observe: executor_seconds, total_seconds,
+  │          │     │            overhead_seconds, bytes(0),
+  │          │     │            requests_total{504}, errors_total{timeout}
+  │          │     │
+  │          │     └─ EXECUTOR OK
+  │          │          │── bytes check
+  │          │          │     │
+  │          │          │     ├─ EMPTY (<10 bytes) ─────► 500
+  │          │          │     │   observe: requests_total{500},
+  │          │          │     │            errors_total{empty_pdf},
+  │          │          │     │            total_seconds, overhead_seconds,
+  │          │          │     │            bytes(0)
+  │          │          │     │
+  │          │          │     └─ VALID PDF ─────────────► 200
+  │          │          │         observe: requests_total{200},
+  │          │          │                  total_seconds, overhead_seconds,
+  │          │          │                  bytes(actual_size)
+  │          │          │
+  │          │          └─ EXCEPTION ───────────────────► 500
+  │          │              observe: requests_total{500},
+  │          │                       errors_total{internal_error},
+  │          │                       total_seconds, overhead_seconds,
+  │          │                       bytes(0)
+  │          │
+  │          └── finally: inflight--, semaphore.release()
+```
+
+**Metrik Envanteri (8 metrik)**
+
+| Metrik | Tip | Label | Açıklama |
+|--------|-----|-------|----------|
+| `ptf_admin_pdf_render_requests_total` | Counter | `status` ∈ {200, 429, 500, 504} | HTTP response sayacı |
+| `ptf_admin_pdf_render_errors_total` | Counter | `reason` ∈ {empty_pdf, timeout, internal_error} | Gerçek hatalar (429 hariç — bilinçli rejection) |
+| `ptf_admin_pdf_render_inflight` | Gauge | — | Aktif render sayısı (acquire → finally arası) |
+| `ptf_admin_pdf_render_semaphore_acquire_seconds` | Histogram | — | Semaphore bekleme süresi (200 ve 429 dahil) |
+| `ptf_admin_pdf_render_executor_seconds` | Histogram | — | Executor-internal render süresi (CPU/IO) |
+| `ptf_admin_pdf_render_total_seconds` | Histogram | — | Uçtan uca istek süresi (entry → response) |
+| `ptf_admin_pdf_render_overhead_seconds` | Histogram | — | `max(0, total - acquire - executor)` — informational, SLO/alert yok |
+| `ptf_admin_pdf_render_bytes` | Histogram | — | PDF çıktı boyutu (200: gerçek, hata: 0) |
+
+**Tasarım Notları**
+
+- **Label boundedness:** `status` ve `reason` kapalı küme (frozenset). Geçersiz değerler sessizce reddedilir, metrik artmaz.
+- **429 path scope:** 429'da sadece `acquire_seconds`, `requests_total`, `total_seconds`, `bytes` observe edilir. `inflight`, `executor_seconds`, `overhead_seconds` observe edilmez — executor çalışmadığı için anlamlı değer üretilemez.
+- **Overhead clamp:** `overhead = max(0, total - acquire - executor)` — timer çözünürlüğü / scheduling noise nedeniyle negatif değer oluşabilir, `max(0, ...)` ile sıfıra clamp edilir.
+- **Alert/Dashboard wiring:** PR-3 metrikleri henüz alert rule veya Grafana dashboard'a bağlanmamıştır. Bu bilinçli bir ertelemedir — alert eşikleri production baseline verisi gerektirir. Dashboard panelleri ve alert kuralları baseline toplama sonrası ayrı PR'da eklenecektir.
+
+**PR-4 Açık Borç — SLO Query Alignment**
+
+`backend/app/adaptive_control/config.py` içindeki `CANONICAL_PDF_SLO_QUERY`, `pdf_render_duration_seconds_bucket` referans eder. Bu isimde bir metrik Prometheus registry'de mevcut değildir. Etkilenen dosyalar:
+
+| Dosya | Referans |
+|-------|----------|
+| `backend/app/adaptive_control/config.py` | `CANONICAL_PDF_SLO_QUERY` sabiti |
+| `backend/tests/test_adaptive_config.py` | SLO query assertion (satır 265) |
+| `.kiro/specs/slo-adaptive-control/design.md` | Config dataclass örneği |
+| `.kiro/specs/slo-adaptive-control/requirements.md` | Req 2.3 canonical sinyal tanımı |
+| `.kiro/specs/pdf-render-worker/requirements.md` | Req 5.2 metrik ismi |
+
+PR-4 kararı: SLO hedefi `ptf_admin_pdf_render_total_seconds` (e2e kullanıcı deneyimi), kapasite tuning hedefi `ptf_admin_pdf_render_executor_seconds` (CPU/IO darboğazı).
+
 ### 4. Metrics & Telemetry
 
 **Namespace:** Tüm metrikler `ptf_admin_` prefix'i kullanır.
@@ -164,6 +250,7 @@ stateDiagram-v2
 | Guard | `killswitch_state{switch_name}`, `circuit_breaker_state{dependency}` | Guard bileşenleri |
 | SLO | `slo_violation_total{slo_name}` | SLI calculator |
 | PDF | `pdf_jobs_total{status}`, `pdf_queue_depth` | PDF API + Worker |
+| PDF Render | `pdf_render_requests_total{status}`, `pdf_render_inflight`, `pdf_render_*_seconds` | Endpoint handler (PR-3) |
 | Release Gate | `release_gate_decision_total{decision}` | GateMetricStore (pure Python) |
 | Preflight | `release_preflight_verdict_total{verdict}` | PreflightMetrics (pure Python) |
 | Frontend | `frontend_events_total{event_name}` | Event ingestion API |

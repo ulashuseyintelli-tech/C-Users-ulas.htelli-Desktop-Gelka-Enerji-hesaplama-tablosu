@@ -7,6 +7,7 @@ PR-6: Pipeline Gate / Ops Contract Enforcement.
 """
 import yaml
 import pytest
+from pathlib import Path
 
 from backend.app.testing.slo_evaluator import (
     SloEvaluator,
@@ -19,8 +20,9 @@ from backend.app.testing.slo_evaluator import (
 )
 
 
-ALERTS_PATH = "monitoring/prometheus/ptf-admin-alerts.yml"
-RUNBOOK_PATH = "monitoring/runbooks/ptf-admin-runbook.md"
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+ALERTS_PATH = str(_REPO_ROOT / "monitoring" / "prometheus" / "ptf-admin-alerts.yml")
+RUNBOOK_PATH = str(_REPO_ROOT / "monitoring" / "runbooks" / "ptf-admin-runbook.md")
 
 
 def _load_alert_rules():

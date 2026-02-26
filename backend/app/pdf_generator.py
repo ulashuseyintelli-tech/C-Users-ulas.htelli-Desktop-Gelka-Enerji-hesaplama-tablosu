@@ -92,6 +92,20 @@ def format_number(value: float, decimals: int = 2) -> str:
 env.filters["currency"] = format_currency
 env.filters["percent"] = format_percent
 env.filters["number"] = format_number
+env.filters["abs"] = lambda x: abs(float(x)) if x else 0
+
+
+def _load_image_base64(filename: str) -> Optional[str]:
+    """Load an image from templates dir and return base64 string."""
+    import base64
+    img_path = TEMPLATE_DIR / filename
+    if img_path.exists():
+        try:
+            with open(img_path, "rb") as f:
+                return base64.b64encode(f.read()).decode("utf-8")
+        except Exception as e:
+            logger.warning(f"Failed to load image {filename}: {e}")
+    return None
 
 
 def generate_offer_html(
@@ -152,6 +166,13 @@ def generate_offer_html(
     else:
         greeting = "Sayın Yetkili,"
     
+    # Antetli kağıt PNG'sini base64 olarak yükle
+    letterhead_b64 = _load_image_base64("antetli_bg_300dpi.png") or _load_image_base64("antetli_bg.png")
+    if letterhead_b64:
+        logger.info(f"LETTERHEAD loaded OK, base64 length={len(letterhead_b64)}, starts={letterhead_b64[:30]}")
+    else:
+        logger.error("LETTERHEAD NOT LOADED! Check templates dir for antetli_bg_300dpi.png or antetli_bg.png")
+
     context = {
         "offer_id": offer_id or datetime.now().strftime("%Y%m%d%H%M%S"),
         "date": formatted_offer_date,
@@ -160,6 +181,9 @@ def generate_offer_html(
         "contact_person": contact_person or "",
         "greeting": greeting,
         "offer_validity_days": offer_validity_days,
+        
+        # Antetli kağıt arka planı
+        "letterhead_base64": letterhead_b64 or "",
         
         # Extraction data
         "vendor": extraction.vendor,
@@ -477,8 +501,6 @@ def _html_to_pdf_weasyprint(html_content: str) -> bytes:
 def _html_to_pdf_playwright(html_content: str) -> bytes:
     """Convert HTML to PDF using Playwright/Chromium (sync API)."""
     from .services.pdf_playwright import html_to_pdf_bytes_sync_v2
-    
-    # html_content zaten tam HTML - direkt kullan
     return html_to_pdf_bytes_sync_v2(html_content)
 
 

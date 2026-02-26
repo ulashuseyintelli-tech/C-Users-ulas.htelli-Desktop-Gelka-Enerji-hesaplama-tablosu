@@ -1,0 +1,109 @@
+﻿python : C:\Users\ulas.htelli\Desktop\Gelka Enerji hesaplama
+ tablosu\backend\app\testing\perf_budget.py:23: PytestCollec
+tionWarning: cannot collect test class 'TestTier' because it
+ has a __init__ constructor (from: tests/test_gate_telemetry
+_integration.py)
+At line:1 char:1
++ python -m pytest tests/ -q --tb=line -p no:warnings 2>&1 |
+ Out-File - ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (C:\Users\ulas. 
+   h...integration.py):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  class TestTier(str, Enum):
+C:\Users\ulas.htelli\Desktop\Gelka Enerji hesaplama tablosu\
+backend\app\testing\perf_budget.py:23: PytestCollectionWarni
+ng: cannot collect test class 'TestTier' because it has a __
+init__ constructor (from: tests/test_lc_perf_budget.py)
+  class TestTier(str, Enum):
+C:\Users\ulas.htelli\Desktop\Gelka Enerji hesaplama tablosu\
+backend\app\testing\perf_budget.py:103: PytestCollectionWarn
+ing: cannot collect test class 'TestTiming' because it has a
+ __init__ constructor (from: tests/test_lc_perf_budget.py)
+  @dataclass
+C:\Users\ulas.htelli\Desktop\Gelka Enerji hesaplama tablosu\
+backend\app\testing\perf_budget.py:23: PytestCollectionWarni
+ng: cannot collect test class 'TestTier' because it has a __
+init__ constructor (from: tests/test_lc_tier_runner.py)
+  class TestTier(str, Enum):
+C:\Users\ulas.htelli\Desktop\Gelka Enerji hesaplama tablosu\
+backend\app\testing\perf_budget.py:23: PytestCollectionWarni
+ng: cannot collect test class 'TestTier' because it has a __
+init__ constructor (from: tests/test_release_e2e.py)
+  class TestTier(str, Enum):
+C:\Users\ulas.htelli\Desktop\Gelka Enerji hesaplama tablosu\
+backend\app\testing\perf_budget.py:103: PytestCollectionWarn
+ing: cannot collect test class 'TestTiming' because it has a
+ __init__ constructor (from: tests/test_release_e2e.py)
+  @dataclass
+C:\Users\ulas.htelli\Desktop\Gelka Enerji hesaplama tablosu\
+backend\app\testing\perf_budget.py:23: PytestCollectionWarni
+ng: cannot collect test class 'TestTier' because it has a __
+init__ constructor (from: tests/test_release_gate.py)
+  class TestTier(str, Enum):
+C:\Users\ulas.htelli\Desktop\Gelka Enerji hesaplama tablosu\
+backend\app\testing\perf_budget.py:23: PytestCollectionWarni
+ng: cannot collect test class 'TestTier' because it has a __
+init__ constructor (from: tests/test_release_policy.py)
+  class TestTier(str, Enum):
+C:\Users\ulas.htelli\Desktop\Gelka Enerji hesaplama tablosu\
+backend\app\testing\perf_budget.py:103: PytestCollectionWarn
+ing: cannot collect test class 'TestTiming' because it has a
+ __init__ constructor (from: tests/test_release_policy.py)
+  @dataclass
+C:\Users\ulas.htelli\Desktop\Gelka Enerji hesaplama tablosu\
+backend\app\testing\perf_budget.py:23: PytestCollectionWarni
+ng: cannot collect test class 'TestTier' because it has a __
+init__ constructor (from: tests/test_release_preflight_enfor
+cement.py)
+  class TestTier(str, Enum):
+C:\Users\ulas.htelli\Desktop\Gelka Enerji hesaplama tablosu\
+backend\app\testing\perf_budget.py:23: PytestCollectionWarni
+ng: cannot collect test class 'TestTier' because it has a __
+init__ constructor (from: tests/test_release_report.py)
+  class TestTier(str, Enum):
+C:\Users\ulas.htelli\Desktop\Gelka Enerji hesaplama tablosu\
+backend\app\testing\perf_budget.py:103: PytestCollectionWarn
+ing: cannot collect test class 'TestTiming' because it has a
+ __init__ constructor (from: tests/test_release_report.py)
+  @dataclass
+........................................................................ [  2%]
+........................................................................ [  5%]
+........................................................................ [  7%]
+........................................................................ [ 10%]
+........................................................................ [ 13%]
+........................................................................ [ 15%]
+........................................................................ [ 18%]
+........................................................................ [ 21%]
+........................................................................ [ 23%]
+........................................................................ [ 26%]
+........................................................................ [ 29%]
+........................................................................ [ 31%]
+........................................................................ [ 34%]
+........................................................................ [ 37%]
+........................................................................ [ 39%]
+........................................................................ [ 42%]
+........................................................................ [ 45%]
+........................................................................ [ 47%]
+........................................................................ [ 50%]
+........................................................................ [ 53%]
+........................................................................ [ 55%]
+........................................................................ [ 58%]
+........................................................................ [ 60%]
+........................................................................ [ 63%]
+..........s............................................................. [ 66%]
+........................................................................ [ 68%]
+........................................................................ [ 71%]
+........................................................................ [ 74%]
+........................................................................ [ 76%]
+........................................................................ [ 79%]
+........................................................................ [ 82%]
+........................................................................ [ 84%]
+........................................................................ [ 87%]
+........................................................................ [ 90%]
+........................................................................ [ 92%]
+........................................................................ [ 95%]
+........................................................................ [ 98%]
+....................................................                     [100%]
+2715 passed, 1 skipped in 229.67s (0:03:49)

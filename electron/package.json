@@ -26,7 +26,8 @@
       "output": "release"
     },
     "files": [
-      "main.js"
+      "main.js",
+      "preload.js"
     ],
     "extraResources": [
       {
@@ -43,7 +44,7 @@
         "to": "backend/gelka_enerji.db"
       },
       {
-        "from": "../backend/.env",
+        "from": "../backend/.env.production",
         "to": "backend/.env"
       }
     ],

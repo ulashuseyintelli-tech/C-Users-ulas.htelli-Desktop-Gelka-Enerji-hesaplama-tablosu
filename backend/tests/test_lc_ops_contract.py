@@ -11,6 +11,7 @@ import re
 
 import pytest
 import yaml
+from pathlib import Path
 from hypothesis import given, settings, HealthCheck
 from hypothesis import strategies as st
 
@@ -23,7 +24,7 @@ from backend.app.guards.circuit_breaker import Dependency
 # Helpers
 # ---------------------------------------------------------------------------
 
-ALERTS_PATH = "monitoring/prometheus/ptf-admin-alerts.yml"
+ALERTS_PATH = str(Path(__file__).resolve().parent.parent.parent / "monitoring" / "prometheus" / "ptf-admin-alerts.yml")
 
 
 def _load_alert_data():
@@ -67,11 +68,15 @@ class TestLabelNamespaceInvariants:
         missing = self.REQUIRED_LABELS - labels.keys()
         assert not missing, f"Alert '{rule['alert']}' missing labels: {missing}"
 
+    VALID_SERVICES = {"ptf-admin", "release-preflight", "release-gate"}
+
     @given(rule_idx=st.sampled_from(list(range(len(ALL_RULES)))))
     @settings(max_examples=50, suppress_health_check=[HealthCheck.too_slow])
     def test_pbt_service_label_is_ptf_admin(self, rule_idx: int):
         rule = ALL_RULES[rule_idx]
-        assert rule["labels"]["service"] == "ptf-admin"
+        assert rule["labels"]["service"] in self.VALID_SERVICES, (
+            f"Alert '{rule['alert']}' has unexpected service label: {rule['labels']['service']}"
+        )
 
     @given(rule_idx=st.sampled_from(list(range(len(ALL_RULES)))))
     @settings(max_examples=50, suppress_health_check=[HealthCheck.too_slow])

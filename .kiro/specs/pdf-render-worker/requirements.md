@@ -117,7 +117,7 @@ PDF Render Worker, HTML template'lerden PDF üretimini API request path'inden iz
 #### Kabul Kriterleri
 
 1. THE PTFMetrics SHALL `ptf_admin_pdf_jobs_total{status}` sayacını her job durum değişikliğinde artırmak (status: queued, running, succeeded, failed, expired)
-2. THE PTFMetrics SHALL `ptf_admin_pdf_render_duration_seconds` histogram metriğini her başarılı render sonrasında kaydetmek
+2. THE PTFMetrics SHALL `ptf_admin_pdf_render_total_seconds` histogram metriğini her istek sonrasında kaydetmek (e2e süre; SLO hedefi). Ayrıca `ptf_admin_pdf_render_executor_seconds` executor-internal süreyi kaydeder (kapasite tuning; SLO dışı)
 3. THE PTFMetrics SHALL `ptf_admin_pdf_failures_total{error_code}` sayacını her başarısız job'da hata koduna göre artırmak
 4. THE PTFMetrics SHALL `ptf_admin_pdf_queue_depth` gauge metriğini kuyruk derinliğini yansıtacak şekilde güncellemek
 5. THE PTFMetrics SHALL mevcut `ptf_admin_*` namespace'ini kullanmak; yeni namespace oluşturmamak

@@ -27,13 +27,17 @@ ALLOWED_LABELS = frozenset({"endpoint", "method", "status_class"})
 # ── Helpers ──────────────────────────────────────────────────────────────
 
 def _extract_api_request_labels(prom_output: str) -> list[set[str]]:
-    """Parse /metrics output and extract label names from ptf_admin_api_request_total lines."""
+    """Parse /metrics output and extract label names from ptf_admin_api_request_total lines.
+
+    Uses regex to find top-level label keys (key="...") rather than brace-splitting,
+    because label *values* may contain curly braces (e.g. endpoint="/prices/{period}").
+    """
     label_sets: list[set[str]] = []
+    # Pattern: match key="value" pairs where value is everything between quotes
+    label_kv_re = re.compile(r'(\w+)="[^"]*"')
     for line in prom_output.split("\n"):
         if line.startswith("ptf_admin_api_request_total{"):
-            # Extract label keys from {key="val",key2="val2",...}
-            brace_content = line.split("{", 1)[1].split("}", 1)[0]
-            keys = set(re.findall(r'(\w+)=', brace_content))
+            keys = set(label_kv_re.findall(line))
             label_sets.append(keys)
     return label_sets
 

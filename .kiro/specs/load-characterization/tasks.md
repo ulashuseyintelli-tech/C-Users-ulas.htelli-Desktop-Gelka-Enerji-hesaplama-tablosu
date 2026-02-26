@@ -8,8 +8,8 @@ Mevcut FaultInjector, DependencyWrapper ve AlertValidator altyapısı üzerine i
 
 ## Tasks
 
-- [ ] 1. Load Harness — Async yük üreteci [R1]
-  - [ ] 1.1 Implement `backend/app/testing/load_harness.py` — `ProfileType` enum, `LoadProfile` dataclass, `LoadResult` dataclass, `DEFAULT_PROFILES` dict ve `LoadHarness` sınıfı [R1]
+- [x] 1. Load Harness — Async yük üreteci [R1]
+  - [x] 1.1 Implement `backend/app/testing/load_harness.py` — `ProfileType` enum, `LoadProfile` dataclass, `LoadResult` dataclass, `DEFAULT_PROFILES` dict ve `LoadHarness` sınıfı [R1]
     - `LoadHarness.run_profile()`: profil türüne göre yük üretir (burst → döngülü, diğerleri → tek pencere)
     - `LoadHarness._run_window()`: saniye bazlı batch task oluşturma, p95 hesaplama
     - `LoadHarness._timed_call()`: tek istek zamanlama, CircuitOpenError ayrımı
@@ -31,8 +31,8 @@ Mevcut FaultInjector, DependencyWrapper ve AlertValidator altyapısı üzerine i
     - **Property 3: Ölçekleme Faktörü Metamorfik Özelliği**
     - **Validates: Requirements 1.4, 1.7**
 
-- [ ] 2. Metrics Capture — Metrik yakalama ve delta hesaplama [R2]
-  - [ ] 2.1 Implement `backend/app/testing/metrics_capture.py` — `MetricSnapshot` dataclass, `MetricDelta` dataclass ve `MetricsCapture` sınıfı [R2]
+- [x] 2. Metrics Capture — Metrik yakalama ve delta hesaplama [R2]
+  - [x] 2.1 Implement `backend/app/testing/metrics_capture.py` — `MetricSnapshot` dataclass, `MetricDelta` dataclass ve `MetricsCapture` sınıfı [R2]
     - `MetricsCapture.__init__()`: izole CollectorRegistry + PTFMetrics oluşturma (LC-4)
     - `MetricsCapture.take_snapshot()`: prometheus_client collector'larından metrik okuma
     - `MetricsCapture.compute_delta()`: before/after farkı + retry_amplification_factor hesaplama
@@ -50,8 +50,8 @@ Mevcut FaultInjector, DependencyWrapper ve AlertValidator altyapısı üzerine i
     - **Property 5: MetricsCapture İzolasyonu**
     - **Validates: Requirements 2.5, 3.2**
 
-- [ ] 3. Scenario Runner — Orkestrasyon bileşeni [R3]
-  - [ ] 3.1 Implement `backend/app/testing/scenario_runner.py` — `InjectionConfig` dataclass, `ScenarioResult` dataclass ve `ScenarioRunner` sınıfı [R3]
+- [x] 3. Scenario Runner — Orkestrasyon bileşeni [R3]
+  - [x] 3.1 Implement `backend/app/testing/scenario_runner.py` — `InjectionConfig` dataclass, `ScenarioResult` dataclass ve `ScenarioRunner` sınıfı [R3]
     - `ScenarioRunner.run_scenario()`: izole bileşen oluşturma → enjeksiyon → snapshot → yük → snapshot → delta → temizlik
     - `ScenarioRunner.run_multi_instance_scenario()`: N ayrı CBRegistry ile paralel çalıştırma (LC-3)
     - `ScenarioRunner._configure_injection()`: failure_type → enjeksiyon mekanizması eşleme
@@ -64,14 +64,14 @@ Mevcut FaultInjector, DependencyWrapper ve AlertValidator altyapısı üzerine i
     - **Property 6: Senaryo Temizlik İnvariantı**
     - **Validates: Requirements 3.4**
 
-- [ ] 4. Checkpoint — Temel altyapı doğrulaması
+- [x] 4. Checkpoint — Temel altyapı doğrulaması
   - GNK-1 (diagnostic payload), GNK-2 (determinism scope), GNK-3 (min request counts) doğrulaması
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 5. Failure Matrix testleri [R4]
-  - [ ] 5.1 Implement `backend/tests/test_lc_failure_matrix.py` — Hata enjeksiyon matrisi entegrasyon testleri [R4]
+  - [x] 5.1 Implement `backend/tests/test_lc_failure_matrix.py` — Hata enjeksiyon matrisi entegrasyon testleri [R4]
     - FM-1: %10 Timeout → retry artışı, CB CLOSED kalır [R4 AC1]
-    - FM-2: %40 Timeout → CB OPEN'a geçer [R4 AC2]
+    - FM-2: %40 Timeout → CB OPEN'a geçer [R4 AC2] (CB heuristic threshold=0.25, `LcRuntimeConfig.cb_open_threshold`)
     - FM-3: %30 5xx → CB OPEN eşiğine ulaşır [R4 AC3]
     - FM-4: %100 ConnectionError → hızlı CB OPEN [R4 AC4]
     - FM-5: %100 Latency 2× → gecikme artışı, CB CLOSED kalır [R4 AC5]
@@ -85,7 +85,7 @@ Mevcut FaultInjector, DependencyWrapper ve AlertValidator altyapısı üzerine i
     - **Validates: Requirements 4.4**
 
 - [ ] 6. Multi-Instance CB sapma testleri [R5]
-  - [ ] 6.1 Implement `backend/tests/test_lc_multi_instance.py` — Çoklu-instance CB sapma testleri [R5]
+  - [x] 6.1 Implement `backend/tests/test_lc_multi_instance.py` — Çoklu-instance CB sapma testleri [R5]
     - 2+ ayrı CircuitBreakerRegistry instance'ı ile %40 hata enjeksiyonu [R5 AC1]
     - CB durum geçiş zamanlarını kaydetme (monotonic timestamp) [R5 AC2]
     - divergence_window hesaplama: `|t1 - t2|` [R5 AC3]

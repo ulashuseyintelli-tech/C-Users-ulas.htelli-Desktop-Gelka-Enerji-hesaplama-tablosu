@@ -55,6 +55,15 @@ def retry_amp_tolerance(expected: float) -> float:
     return max(1e-6, 1e-4 * abs(expected))
 
 
+# CB heuristic: if actual_failure_rate >= this threshold AND fault expects CB,
+# then cb_opened=True.  Default 0.25 so that:
+#   - FM-1 (%10 injection, actual ≈ 0.10) → safely below → CB CLOSED
+#   - FM-2 (%40 injection, actual ≈ 0.35-0.40) → safely above → CB OPEN
+#   - FM-3 (%30 injection, actual ≈ 0.25-0.35) → threshold zone
+# Production CB has its own thresholds; this is the LC *simulation* heuristic only.
+CB_OPEN_THRESHOLD: Final[float] = 0.25
+
+
 @dataclass(frozen=True)
 class LcRuntimeConfig:
     """
@@ -62,3 +71,4 @@ class LcRuntimeConfig:
     """
     seed: int = DEFAULT_SEED
     eval_interval_seconds: int = EVAL_INTERVAL_SECONDS
+    cb_open_threshold: float = CB_OPEN_THRESHOLD

@@ -43,18 +43,43 @@ def html_to_pdf_bytes_sync_v2(html: str) -> bytes:
     
     from playwright.sync_api import sync_playwright
     
+    # Debug: dump rendered HTML to file for inspection
+    try:
+        from pathlib import Path
+        debug_path = Path(__file__).parent.parent.parent / "debug_rendered.html"
+        debug_path.write_text(html[:5000], encoding="utf-8")  # first 5k chars
+        logger.info(f"DEBUG: HTML dumped to {debug_path} (first 5000 chars)")
+        logger.info(f"DEBUG: HTML total length = {len(html)}")
+        # Check if letterhead_base64 is in the HTML
+        if "data:image/png;base64," in html:
+            idx = html.index("data:image/png;base64,")
+            # Find the end of the base64 string (next quote)
+            end_idx = html.index('"', idx + 22)
+            b64_len = end_idx - idx - 22
+            logger.info(f"DEBUG: Found base64 image in HTML, length={b64_len}")
+        else:
+            logger.warning("DEBUG: NO base64 image found in HTML!")
+    except Exception as e:
+        logger.warning(f"DEBUG dump failed: {e}")
+    
     with sync_playwright() as p:
         browser = p.chromium.launch()
         try:
             page = browser.new_page(viewport={"width": 1280, "height": 720})
-            page.set_content(html, wait_until="networkidle")
+            page.set_content(html, wait_until="load")
             page.emulate_media(media="print")
+            
+            # Wait for all images to fully load/decode
+            page.wait_for_function(
+                "() => Array.from(document.images).every(img => img.complete && img.naturalWidth > 0)",
+                timeout=15000,
+            )
+            logger.info("DEBUG: All images loaded and decoded")
             
             pdf_bytes = page.pdf(
                 print_background=True,
                 prefer_css_page_size=True,
                 scale=1.0,
-                margin={"top": "0", "right": "0", "bottom": "0", "left": "0"},
             )
             return pdf_bytes
         finally:

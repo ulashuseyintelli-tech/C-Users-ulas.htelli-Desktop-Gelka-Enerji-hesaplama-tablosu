@@ -80,7 +80,7 @@ class TestProofMatrixGate:
 
     def test_requirements_md_exists(self):
         """requirements.md must exist for the concurrency-pbt spec."""
-        req_path = pathlib.Path(".kiro/specs/concurrency-pbt/requirements.md")
+        req_path = pathlib.Path(__file__).resolve().parent.parent.parent / ".kiro/specs/concurrency-pbt/requirements.md"
         assert req_path.exists(), f"Missing: {req_path}"
 
     def test_all_c_requirements_covered(self):

@@ -150,8 +150,33 @@ export async function healthCheck(): Promise<{ status: string }> {
   return response.data;
 }
 
-export async function generateOfferPdf(
-  extraction: FullProcessResponse['extraction'],
+// ── Electron ortam tespiti ──────────────────────────────────────────────────
+declare global {
+  interface Window {
+    electronAPI?: {
+      isElectron: boolean;
+      downloadPdf: (url: string, formData: Record<string, string>, fileName: string) => Promise<{
+        ok: boolean;
+        filePath?: string;
+        canceled?: boolean;
+        error?: string;
+        code?: string;
+        request_id?: string;
+        retry_after?: number;
+        statusCode?: number;
+      }>;
+    };
+  }
+}
+
+const isElectron = !!window.electronAPI?.isElectron;
+
+/**
+ * PDF form verilerini hazırla (ortak logic).
+ * Hem web hem Electron aynı veriyi kullanır.
+ */
+export function buildPdfFormFields(
+  extraction: FullProcessResponse['extraction'] & Record<string, any>,
   calculation: CalculateResponse,
   params: {
     weighted_ptf_tl_per_mwh: number;
@@ -163,71 +188,151 @@ export async function generateOfferPdf(
   offerDate?: string,
   offerValidityDays?: number,
   tariffGroup?: string
-): Promise<Blob> {
-  const formData = new FormData();
-  
-  // Params
-  formData.append('weighted_ptf_tl_per_mwh', params.weighted_ptf_tl_per_mwh.toString());
-  formData.append('yekdem_tl_per_mwh', params.yekdem_tl_per_mwh.toString());
-  formData.append('agreement_multiplier', params.agreement_multiplier.toString());
-  
-  // Extraction data
-  formData.append('consumption_kwh', (extraction.consumption_kwh?.value || 0).toString());
-  formData.append('current_unit_price', (extraction.current_active_unit_price_tl_per_kwh?.value || 0).toString());
-  formData.append('distribution_unit_price', (extraction.distribution_unit_price_tl_per_kwh?.value || 0).toString());
-  formData.append('invoice_total', (calculation.current_total_with_vat_tl || 0).toString());
-  formData.append('vendor', extraction.vendor || 'unknown');
-  formData.append('invoice_period', extraction.invoice_period || '');
-  
-  // Tarife grubu
-  if (tariffGroup) {
-    formData.append('tariff_group', tariffGroup);
+): Record<string, string> {
+  const fields: Record<string, string> = {
+    weighted_ptf_tl_per_mwh: params.weighted_ptf_tl_per_mwh.toString(),
+    yekdem_tl_per_mwh: params.yekdem_tl_per_mwh.toString(),
+    agreement_multiplier: params.agreement_multiplier.toString(),
+    consumption_kwh: (extraction.consumption_kwh?.value || 0).toString(),
+    current_unit_price: (extraction.current_active_unit_price_tl_per_kwh?.value || 0).toString(),
+    distribution_unit_price: (extraction.distribution_unit_price_tl_per_kwh?.value || 0).toString(),
+    invoice_total: (calculation.current_total_with_vat_tl || 0).toString(),
+    vendor: extraction.vendor || 'unknown',
+    invoice_period: extraction.invoice_period || '',
+    current_energy_tl: calculation.current_energy_tl.toString(),
+    current_distribution_tl: calculation.current_distribution_tl.toString(),
+    current_btv_tl: calculation.current_btv_tl.toString(),
+    current_vat_tl: calculation.current_vat_tl.toString(),
+    current_vat_matrah_tl: calculation.current_vat_matrah_tl.toString(),
+    current_total_with_vat_tl: calculation.current_total_with_vat_tl.toString(),
+    offer_energy_tl: calculation.offer_energy_tl.toString(),
+    offer_distribution_tl: calculation.offer_distribution_tl.toString(),
+    offer_btv_tl: calculation.offer_btv_tl.toString(),
+    offer_vat_tl: calculation.offer_vat_tl.toString(),
+    offer_vat_matrah_tl: calculation.offer_vat_matrah_tl.toString(),
+    offer_total: calculation.offer_total_with_vat_tl.toString(),
+    difference_incl_vat_tl: calculation.difference_incl_vat_tl.toString(),
+    savings_ratio: calculation.savings_ratio.toString(),
+  };
+  if (calculation.meta_vat_rate !== undefined) fields.vat_rate = calculation.meta_vat_rate.toString();
+  if (tariffGroup) fields.tariff_group = tariffGroup;
+  if (customerName) fields.customer_name = customerName;
+  if (contactPerson) fields.contact_person = contactPerson;
+  if (offerDate) fields.offer_date = offerDate;
+  if (offerValidityDays) fields.offer_validity_days = offerValidityDays.toString();
+  return fields;
+}
+
+/**
+ * PDF indir — ortama göre doğru yöntemi seçer.
+ *
+ * Electron: IPC → main process → net.request + fs.writeFile (native download)
+ * Web:      Hidden <form> POST submit (tarayıcı native download, blob yok)
+ */
+export async function downloadPdf(
+  extraction: FullProcessResponse['extraction'] & Record<string, any>,
+  calculation: CalculateResponse,
+  params: {
+    weighted_ptf_tl_per_mwh: number;
+    yekdem_tl_per_mwh: number;
+    agreement_multiplier: number;
+  },
+  fileName: string,
+  customerName?: string,
+  contactPerson?: string,
+  offerDate?: string,
+  offerValidityDays?: number,
+  tariffGroup?: string
+): Promise<void> {
+  const fields = buildPdfFormFields(
+    extraction, calculation, params,
+    customerName, contactPerson, offerDate, offerValidityDays, tariffGroup
+  );
+
+  const endpointUrl = `${API_BASE}/generate-pdf-simple`;
+
+  if (isElectron) {
+    // ── Electron: IPC ile main process'e gönder ──
+    const result = await window.electronAPI!.downloadPdf(endpointUrl, fields, fileName);
+    if (result.canceled) return;
+    if (!result.ok) {
+      // 429: retry_after bilgisini kullanıcıya göster
+      if (result.retry_after) {
+        throw new Error(`Sunucu meşgul. Lütfen ${result.retry_after} saniye bekleyin.`);
+      }
+      throw new Error(result.error || 'PDF indirilemedi.');
+    }
+    return;
   }
-  
-  // Calculation data - Mevcut fatura
-  formData.append('current_energy_tl', calculation.current_energy_tl.toString());
-  formData.append('current_distribution_tl', calculation.current_distribution_tl.toString());
-  formData.append('current_btv_tl', calculation.current_btv_tl.toString());
-  formData.append('current_vat_tl', calculation.current_vat_tl.toString());
-  formData.append('current_vat_matrah_tl', calculation.current_vat_matrah_tl.toString());
-  formData.append('current_total_with_vat_tl', calculation.current_total_with_vat_tl.toString());
-  
-  // Calculation data - Teklif
-  formData.append('offer_energy_tl', calculation.offer_energy_tl.toString());
-  formData.append('offer_distribution_tl', calculation.offer_distribution_tl.toString());
-  formData.append('offer_btv_tl', calculation.offer_btv_tl.toString());
-  formData.append('offer_vat_tl', calculation.offer_vat_tl.toString());
-  formData.append('offer_vat_matrah_tl', calculation.offer_vat_matrah_tl.toString());
-  formData.append('offer_total', calculation.offer_total_with_vat_tl.toString());
-  
-  // Fark ve tasarruf
-  formData.append('difference_incl_vat_tl', calculation.difference_incl_vat_tl.toString());
-  formData.append('savings_ratio', calculation.savings_ratio.toString());
-  
-  // KDV oranı
-  if (calculation.meta_vat_rate !== undefined) {
-    formData.append('vat_rate', calculation.meta_vat_rate.toString());
+
+  // ── Web: fetch + blob (popup'sız, hata yönetimli) ──
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 60_000); // 60s timeout
+
+  try {
+    const formData = new FormData();
+    for (const [key, value] of Object.entries(fields)) {
+      formData.append(key, value);
+    }
+
+    const response = await fetch(endpointUrl, {
+      method: 'POST',
+      body: formData,
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    const contentType = response.headers.get('content-type') || '';
+
+    // 429: sunucu meşgul
+    if (response.status === 429) {
+      const retryAfter = response.headers.get('retry-after') || '5';
+      throw new Error(`Sunucu meşgul. Lütfen ${retryAfter} saniye bekleyin.`);
+    }
+
+    // JSON error response (4xx/5xx)
+    if (contentType.includes('application/json')) {
+      const errorData = await response.json();
+      const msg = errorData?.error?.message || errorData?.detail || 'PDF oluşturulamadı.';
+      throw new Error(msg);
+    }
+
+    // HTTP error without JSON body
+    if (!response.ok) {
+      throw new Error(`Sunucu hatası (${response.status}). Lütfen tekrar deneyin.`);
+    }
+
+    // PDF response — blob download
+    if (!contentType.includes('application/pdf')) {
+      throw new Error(`Beklenmeyen yanıt tipi: ${contentType}`);
+    }
+
+    const blob = await response.blob();
+    if (blob.size === 0) {
+      throw new Error('Sunucudan boş PDF yanıtı alındı.');
+    }
+
+    // Native download via <a> click
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    // Cleanup
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 1000);
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError') {
+      throw new Error('PDF indirme zaman aşımına uğradı (60s). Lütfen tekrar deneyin.');
+    }
+    throw err;
   }
-  
-  // Müşteri bilgileri
-  if (customerName) {
-    formData.append('customer_name', customerName);
-  }
-  if (contactPerson) {
-    formData.append('contact_person', contactPerson);
-  }
-  if (offerDate) {
-    formData.append('offer_date', offerDate);
-  }
-  if (offerValidityDays) {
-    formData.append('offer_validity_days', offerValidityDays.toString());
-  }
-  
-  const response = await api.post('/generate-pdf-simple', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-    responseType: 'blob',
-  });
-  return response.data;
 }
 
 

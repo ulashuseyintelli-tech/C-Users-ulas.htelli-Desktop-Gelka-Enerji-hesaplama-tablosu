@@ -70,6 +70,27 @@ def drive_failures(
         cb.record_failure()
 
 
+def drive_until_open(
+    registry: CircuitBreakerRegistry,
+    dependency: str,
+    max_attempts: int = 100,
+) -> int:
+    """
+    Drive failures until CB transitions to OPEN.
+    Returns monotonic timestamp (ms) of the transition moment.
+    Raises RuntimeError if CB doesn't open within max_attempts.
+    """
+    cb = registry.get(dependency)
+    for i in range(max_attempts):
+        cb.record_failure()
+        snap = cb.snapshot()
+        if snap["state_value"] == CircuitBreakerState.OPEN.value:
+            return int(time.monotonic() * 1000)
+    raise RuntimeError(
+        f"CB for {dependency} did not open after {max_attempts} failures"
+    )
+
+
 def drive_successes(
     registry: CircuitBreakerRegistry,
     dependency: str,
@@ -79,3 +100,56 @@ def drive_successes(
     cb = registry.get(dependency)
     for _ in range(count):
         cb.record_success()
+
+
+# ── Divergence analysis (R5 AC3-AC5) ────────────────────────────────────
+
+def compensated_divergence_ms(
+    t1_ms: int,
+    t2_ms: int,
+    max_clock_skew_ms: int = 50,
+) -> int:
+    """
+    R5 AC4: Clock skew compensated divergence.
+    compensated = max(0, |t1 - t2| - max_clock_skew)
+    """
+    raw = abs(t1_ms - t2_ms)
+    return max(0, raw - max_clock_skew_ms)
+
+
+def evaluate_divergence(
+    t1_ms: int,
+    t2_ms: int,
+    cb_open_duration_seconds: float,
+    max_clock_skew_ms: int = 50,
+) -> Optional["TuningRecommendation"]:
+    """
+    R5 AC5: Bidirectional threshold evaluation.
+
+    If compensated_divergence > cb_open_duration × 2 (in ms) → TuningRecommendation.
+    Otherwise → None.
+
+    Returns:
+        TuningRecommendation if threshold exceeded, None otherwise.
+    """
+    from .stress_report import TuningRecommendation
+
+    comp = compensated_divergence_ms(t1_ms, t2_ms, max_clock_skew_ms)
+    threshold_ms = int(cb_open_duration_seconds * 2 * 1000)
+
+    if comp > threshold_ms:
+        return TuningRecommendation(
+            kind="cb_open_duration",
+            reason=(
+                f"CB OPEN divergence {comp}ms exceeds threshold "
+                f"{threshold_ms}ms (cb_open_duration={cb_open_duration_seconds}s × 2). "
+                f"Consider increasing cb_open_duration or synchronizing instance clocks."
+            ),
+            details={
+                "compensated_divergence_ms": comp,
+                "threshold_ms": threshold_ms,
+                "max_clock_skew_ms": max_clock_skew_ms,
+                "cb_open_duration_seconds": cb_open_duration_seconds,
+            },
+        )
+    return None

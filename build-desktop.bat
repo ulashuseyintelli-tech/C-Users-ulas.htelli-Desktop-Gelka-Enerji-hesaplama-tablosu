@@ -21,7 +21,6 @@ cd backend
 pip install pyinstaller >nul 2>&1
 pyinstaller --onefile --name gelka-backend ^
     --add-data "app;app" ^
-    --add-data ".env;." ^
     --hidden-import uvicorn.logging ^
     --hidden-import uvicorn.protocols.http ^
     --hidden-import uvicorn.protocols.http.auto ^

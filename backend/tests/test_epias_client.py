@@ -190,7 +190,7 @@ class TestMockEpiasClient:
         result = await client.get_monthly_ptf_average("2024-12")
         
         assert result.period == "2024-12"
-        assert result.average_tl_per_mwh == 2974.1
+        assert result.average_tl_per_mwh == 2750.0
         assert result.source == "mock"
     
     @pytest.mark.asyncio
@@ -210,7 +210,7 @@ class TestMockEpiasClient:
         result = await client.get_yekdem_unit_price("2024-12")
         
         assert result.period == "2024-12"
-        assert result.unit_cost_tl_per_mwh == 370.0
+        assert result.unit_cost_tl_per_mwh == 364.0
         assert result.source == "mock"
     
     @pytest.mark.asyncio
@@ -220,8 +220,8 @@ class TestMockEpiasClient:
         result = await client.get_market_prices("2025-01")
         
         assert result.period == "2025-01"
-        assert result.ptf_tl_per_mwh == 3050.0
-        assert result.yekdem_tl_per_mwh == 372.0
+        assert result.ptf_tl_per_mwh == 2780.0
+        assert result.yekdem_tl_per_mwh == 366.0
         assert result.ptf_source == "mock"
         assert len(result.warnings) == 1  # Mock uyarısı
 

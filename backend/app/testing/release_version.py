@@ -36,7 +36,7 @@ _SPEC_FILES = sorted([
 ])
 
 
-def spec_hash(base_dir: str | Path = ".") -> str:
+def spec_hash(base_dir: str | Path | None = None) -> str:
     """
     SHA-256 hash of the three release governance modules.
 
@@ -46,7 +46,10 @@ def spec_hash(base_dir: str | Path = ".") -> str:
     Returns 64-char lowercase hex string.
     """
     h = hashlib.sha256()
-    base = Path(base_dir)
+    if base_dir is None:
+        base = Path(__file__).resolve().parent.parent.parent.parent
+    else:
+        base = Path(base_dir)
     for rel_path in _SPEC_FILES:
         content = (base / rel_path).read_bytes()
         h.update(content)

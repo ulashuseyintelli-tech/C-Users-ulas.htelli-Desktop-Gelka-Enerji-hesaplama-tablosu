@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { Upload, FileText, Zap, TrendingDown, AlertCircle, CheckCircle, Loader2, RefreshCw, Download, Settings } from 'lucide-react';
-import { fullProcess, generateOfferPdf, FullProcessResponse, syncEpiasPrices } from './api';
+import { fullProcess, downloadPdf, FullProcessResponse, syncEpiasPrices } from './api';
 import AdminPanel from './AdminPanel';
 
 // EPDK Dağıtım Tarifeleri (Şubat 2026)
@@ -481,7 +481,7 @@ function App() {
       : manualValues.tariff_group;
     
     // Manuel modda veya OCR modda extraction oluştur
-    const extraction = manualMode ? {
+    const extraction: any = manualMode ? {
       vendor: manualValues.vendor || 'Manuel Giriş',
       invoice_period: manualValues.invoice_period || '-',
       consumption_kwh: { value: manualValues.consumption_kwh, confidence: 1.0 },
@@ -491,8 +491,8 @@ function App() {
     } : {
       ...result?.extraction,
       meta: { 
-        ...result?.extraction?.meta,
-        tariff_group_guess: selectedTariffLabel || result?.extraction?.meta?.tariff_group_guess || 'Sanayi' 
+        ...(result?.extraction as any)?.meta,
+        tariff_group_guess: selectedTariffLabel || (result?.extraction as any)?.meta?.tariff_group_guess || 'Sanayi' 
       },
     };
     
@@ -500,26 +500,21 @@ function App() {
     
     setPdfLoading(true);
     try {
-      // Seçili tarife grubunun tam label'ını al
       const tariffLabel = distributionTariffKey 
         ? DISTRIBUTION_TARIFFS.find(t => t.key === distributionTariffKey)?.label 
         : manualValues.tariff_group || 'Sanayi';
       
-      // DEBUG: PDF'e gönderilen değerleri logla
-      console.log('PDF Generation Debug:', {
-        customerName: customerInfo.company_name,
-        contactPerson: customerInfo.contact_person,
-        tariffLabel,
-        distributionTariffKey,
-        vendor: extraction.vendor,
-        offer_energy_tl: liveCalculation.offer_energy_tl,
-        offer_total_with_vat_tl: liveCalculation.offer_total_with_vat_tl,
-      });
+      const period = manualMode ? manualValues.invoice_period : result?.extraction?.invoice_period;
+      const companySlug = customerInfo.company_name
+        ? customerInfo.company_name.trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_çÇğĞıİöÖşŞüÜ]/g, '')
+        : '';
+      const fileName = companySlug
+        ? `teklif_${companySlug}_${period || 'fatura'}.pdf`
+        : `teklif_${period || 'fatura'}.pdf`;
       
-      const pdfBlob = await generateOfferPdf(
+      await downloadPdf(
         extraction,
         {
-          // liveCalculation'dan güncel değerleri gönder
           current_energy_tl: liveCalculation.current_energy_tl,
           current_distribution_tl: liveCalculation.current_distribution_tl,
           current_btv_tl: liveCalculation.current_btv_tl,
@@ -543,30 +538,16 @@ function App() {
           yekdem_tl_per_mwh: liveCalculation.include_yekdem ? yekdemPrice : 0,
           agreement_multiplier: multiplier,
         },
-        customerInfo.company_name || undefined,  // customer_name
-        customerInfo.contact_person || undefined,  // contact_person
-        customerInfo.offer_date || undefined,  // offer_date
-        customerInfo.offer_validity_days || 15,  // offer_validity_days
-        tariffLabel || 'Sanayi'  // tariff_group
+        fileName,
+        customerInfo.company_name || undefined,
+        customerInfo.contact_person || undefined,
+        customerInfo.offer_date || undefined,
+        customerInfo.offer_validity_days || 15,
+        tariffLabel || 'Sanayi'
       );
-      
-      // Download the PDF
-      const url = window.URL.createObjectURL(pdfBlob);
-      const link = document.createElement('a');
-      link.href = url;
-      const period = manualMode ? manualValues.invoice_period : result?.extraction?.invoice_period;
-      const companySlug = customerInfo.company_name
-        ? customerInfo.company_name.trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_çÇğĞıİöÖşŞüÜ]/g, '')
-        : '';
-      link.download = companySlug
-        ? `teklif_${companySlug}_${period || 'fatura'}.pdf`
-        : `teklif_${period || 'fatura'}.pdf`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
     } catch (err: any) {
-      const errorMsg = err.response?.data?.detail || err.message || 'PDF oluşturulurken hata oluştu.';
+      console.error('PDF Download Error:', err);
+      const errorMsg = err.message || 'PDF oluşturulurken hata oluştu.';
       setError(typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg));
     } finally {
       setPdfLoading(false);

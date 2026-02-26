@@ -247,6 +247,51 @@ class PTFMetrics:
             registry=self._registry,
         )
 
+        # ── PDF Render Endpoint metrics (Feature: PR-3 Observability) ─────
+        self._pdf_render_requests_total = Counter(
+            "ptf_admin_pdf_render_requests_total",
+            "PDF render endpoint HTTP responses",
+            labelnames=["status"],
+            registry=self._registry,
+        )
+        self._pdf_render_errors_total = Counter(
+            "ptf_admin_pdf_render_errors_total",
+            "PDF render real errors (429 excluded — intentional rejection)",
+            labelnames=["reason"],
+            registry=self._registry,
+        )
+        self._pdf_render_inflight = Gauge(
+            "ptf_admin_pdf_render_inflight",
+            "Currently rendering PDF requests (acquire success, not yet released)",
+            registry=self._registry,
+        )
+        self._pdf_render_semaphore_acquire_seconds = Histogram(
+            "ptf_admin_pdf_render_semaphore_acquire_seconds",
+            "Semaphore acquire wait time (observed on both success and 429 timeout)",
+            registry=self._registry,
+        )
+        self._pdf_render_executor_seconds = Histogram(
+            "ptf_admin_pdf_render_executor_seconds",
+            "Executor-internal render duration (CPU/IO time)",
+            registry=self._registry,
+        )
+        self._pdf_render_total_seconds = Histogram(
+            "ptf_admin_pdf_render_total_seconds",
+            "End-to-end request duration (entry to response)",
+            registry=self._registry,
+        )
+        self._pdf_render_overhead_seconds = Histogram(
+            "ptf_admin_pdf_render_overhead_seconds",
+            "Overhead = total - acquire - executor (informational, no SLO)",
+            registry=self._registry,
+        )
+        self._pdf_render_bytes = Histogram(
+            "ptf_admin_pdf_render_bytes",
+            "PDF output size in bytes (200: actual size, errors: 0)",
+            buckets=[1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000],
+            registry=self._registry,
+        )
+
     # ── upsert_total ──────────────────────────────────────────────────────
 
     def inc_upsert(self, status: str) -> None:
@@ -492,6 +537,57 @@ class PTFMetrics:
     def set_pdf_queue_depth(self, depth: int) -> None:
         """Set current PDF queue depth gauge."""
         self._pdf_queue_depth.set(depth)
+
+    # ── PDF Render Endpoint metrics (Feature: PR-3 Observability) ─────────
+    # Namespace: ptf_admin_pdf_render_*
+    # Closed-set label enforcement via frozensets below.
+
+    _VALID_PDF_RENDER_STATUSES = frozenset({"200", "429", "500", "504"})
+    _VALID_PDF_RENDER_REASONS = frozenset({"empty_pdf", "timeout", "internal_error"})
+
+    def inc_pdf_render_request(self, status: str) -> None:
+        """Increment pdf_render_requests_total. status ∈ {200,429,500,504}."""
+        s = str(status)
+        if s not in self._VALID_PDF_RENDER_STATUSES:
+            logger.warning(f"[METRICS] Invalid pdf_render_requests_total status: {s}")
+            return
+        self._pdf_render_requests_total.labels(status=s).inc()
+
+    def inc_pdf_render_error(self, reason: str) -> None:
+        """Increment pdf_render_errors_total. reason ∈ {empty_pdf, timeout, internal_error}."""
+        if reason not in self._VALID_PDF_RENDER_REASONS:
+            logger.warning(f"[METRICS] Invalid pdf_render_errors_total reason: {reason}")
+            return
+        self._pdf_render_errors_total.labels(reason=reason).inc()
+
+    def pdf_render_inflight_inc(self) -> None:
+        """Increment inflight gauge after successful semaphore acquire."""
+        self._pdf_render_inflight.inc()
+
+    def pdf_render_inflight_dec(self) -> None:
+        """Decrement inflight gauge in finally block."""
+        self._pdf_render_inflight.dec()
+
+    def observe_pdf_render_acquire(self, duration_seconds: float) -> None:
+        """Record semaphore acquire duration (both success and 429 timeout paths)."""
+        self._pdf_render_semaphore_acquire_seconds.observe(duration_seconds)
+
+    def observe_pdf_render_executor(self, duration_seconds: float) -> None:
+        """Record executor render duration."""
+        self._pdf_render_executor_seconds.observe(duration_seconds)
+
+    def observe_pdf_render_total(self, duration_seconds: float) -> None:
+        """Record total request duration (entry to response)."""
+        self._pdf_render_total_seconds.observe(duration_seconds)
+
+    def observe_pdf_render_overhead(self, duration_seconds: float) -> None:
+        """Record overhead = total - acquire - executor. Informational only, no SLO."""
+        self._pdf_render_overhead_seconds.observe(duration_seconds)
+
+    def observe_pdf_render_bytes(self, size_bytes: int) -> None:
+        """Record PDF output size in bytes (all paths: 200→actual, error→0)."""
+        self._pdf_render_bytes.observe(size_bytes)
+
 
     # ── Snapshot (test/debug only) ────────────────────────────────────────
 

@@ -6,6 +6,7 @@ Also validates 0-flaky invariant.
 """
 import subprocess
 import time
+from pathlib import Path
 import pytest
 
 from backend.app.testing.perf_budget import (
@@ -27,9 +28,11 @@ def _run_tier(tier: TestTier) -> tuple[float, int, bool]:
     if not files:
         return 0.0, 0, True
 
+    # Run from repo root so backend/tests/ paths resolve correctly
+    repo_root = str(Path(__file__).resolve().parent.parent.parent)
     cmd = ["python", "-m", "pytest"] + files + ["-q", "--tb=line", "--no-header", "-p", "no:warnings"]
     start = time.perf_counter()
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, cwd=repo_root)
     elapsed = time.perf_counter() - start
 
     # Parse test count from output like "27 passed"
@@ -98,12 +101,13 @@ class TestZeroFlaky:
     """0-flaky invariant: all tiers pass consistently."""
 
     def test_all_tiers_pass(self):
+        repo_root = str(Path(__file__).resolve().parent.parent.parent)
         for tier in [TestTier.SMOKE, TestTier.CORE, TestTier.CONCURRENCY]:
             files = files_for_tier(tier)
             if not files:
                 continue
             cmd = ["python", "-m", "pytest"] + files + ["-q", "--tb=line", "-p", "no:warnings"]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, cwd=repo_root)
             assert result.returncode == 0, (
                 f"Tier {tier.value} had failures:\n{result.stdout[-500:]}"
             )

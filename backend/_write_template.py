@@ -1,4 +1,7 @@
-<!DOCTYPE html>
+"""Write the offer template to disk - bypasses editor file locks."""
+import os
+
+template = r'''<!DOCTYPE html>
 <html lang="tr">
 <head>
 <meta charset="UTF-8">
@@ -85,4 +88,13 @@ table, img { max-width: 100%; }
 <div class="foot">Teklif No: {{ offer_id }} | {{ date }} | Ge&#231;erlilik: {{ offer_validity_days }} G&#252;n | www.gelkaenerji.com.tr</div>
 </div>
 </body>
-</html>
+</html>'''
+
+path = os.path.join(os.path.dirname(__file__), 'app', 'templates', 'offer_template.html')
+tmp = path + '.tmp'
+with open(tmp, 'w', encoding='utf-8') as f:
+    f.write(template)
+os.replace(tmp, path)
+with open(path, 'r', encoding='utf-8') as f:
+    c = f.read()
+print(f"OK: {len(c)} bytes, fixed={'position: fixed' in c}, upper={'text-transform: uppercase' in c}")

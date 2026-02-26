@@ -452,7 +452,7 @@ class AdaptiveControlConfig:
 
     # ── Canonical SLO Signals (v1 bağlayıcı) ──
     guard_slo_query: str = "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))"
-    pdf_slo_query: str = "histogram_quantile(0.95, rate(pdf_render_duration_seconds_bucket[5m]))"
+    pdf_slo_query: str = "histogram_quantile(0.95, rate(ptf_admin_pdf_render_total_seconds_bucket[5m]))"
 
     def validate(self) -> list[str]:
         """Yapılandırma doğrulaması. Hata listesi döndürür (boş = geçerli)."""
