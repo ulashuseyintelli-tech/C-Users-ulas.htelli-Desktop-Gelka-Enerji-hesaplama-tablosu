@@ -756,8 +756,12 @@ def compare_validators(
 Sadece `validation_totals/` fixture'ları shadow'a girer (ortak alanlar burada).
 `validation/` fixture'ları (ETTN/period/reactive) shadow'a girmez — eski validator bu alanları bilmez.
 
-Özel durum: `missing_totals_skips.json` — totals/lines yok, eski validator'a besleyecek veri yok.
-Bu fixture shadow'da "both valid, both empty codes" olarak assert edilir (skip semantiği her iki tarafta da aynı).
+Özel durum: `missing_totals_skips.json` — totals/lines yok.
+- Yeni validator: skip → valid=True
+- Eski validator: `total_kwh = 0` (lines boş) → `ZERO_CONSUMPTION` → valid=False
+- Shadow sonucu: **valid_match=False** — bu beklenen divergence, alarm değil.
+- Sebebi: eski validator "veri yoksa hata", yeni validator "veri yoksa skip" semantiği.
+- Bu fixture shadow test'te `valid_match=False` olarak assert edilir ve `expected_divergence=True` flag'i ile işaretlenir.
 
 ### 12.5 Test Planı
 
@@ -770,7 +774,7 @@ Bu fixture shadow'da "both valid, both empty codes" olarak assert edilir (skip s
 | 3 | `total_mismatch.json` — her ikisi fail | valid_match=True, TOTAL_MISMATCH ∈ codes_common |
 | 4 | `zero_consumption.json` — her ikisi fail | valid_match=True, ZERO_CONSUMPTION ∈ codes_common |
 | 5 | `line_crosscheck_fail.json` — her ikisi fail | valid_match=True, LINE_CROSSCHECK_FAIL ∈ codes_common |
-| 6 | `missing_totals_skips.json` — her ikisi valid (skip) | valid_match=True, codes=∅ |
+| 6 | `missing_totals_skips.json` — eski fail (ZERO_CONSUMPTION), yeni valid (skip) | valid_match=False, expected_divergence=True |
 | 7 | `ShadowCompareResult.to_dict()` round-trip | JSON-serializable |
 | 8 | Mismatch counter: valid_match=False durumunda SHADOW_METRIC_NAME increment | test-only counter |
 
@@ -798,9 +802,395 @@ backend/tests/test_invoice_validator_shadow.py  # shadow compare testleri
 
 ### 12.9 Faz D Kapanış Kriterleri
 
-- [ ] `shadow.py`: `ShadowCompareResult`, `build_canonical_invoice()`, `extract_old_codes()`, `compare_validators()`
-- [ ] `test_invoice_validator_shadow.py`: ≥ 8 test
-- [ ] Tüm `validation_totals/` fixture'ları shadow'dan geçirilmiş
-- [ ] Port edilen 4 kural: valid_match=True ve codes_common'da ortak code var
-- [ ] Mismatch counter test-only çalışıyor
-- [ ] Mevcut test suite regresyon yok
+- [x] `shadow.py`: `ShadowCompareResult`, `build_canonical_invoice()`, `extract_old_codes()`, `compare_validators()`
+- [x] `test_invoice_validator_shadow.py`: 8 test (D2.1–D2.8)
+- [x] Tüm `validation_totals/` fixture'ları shadow'dan geçirilmiş
+- [x] Port edilen 4 kural: valid_match=True ve codes_common'da ortak code var
+- [x] Mismatch counter test-only çalışıyor (1 expected divergence)
+- [x] Mevcut test suite regresyon yok (126 passed, 1 xfailed, 0 failed)
+
+### 12.10 Known Divergences (Gate D)
+
+| Pattern | Old Validator | New Validator | Karar |
+|---------|--------------|---------------|-------|
+| `missing_totals_skips` | `lines` boş/yok → `total_kwh=0` → ZERO_CONSUMPTION | `lines` yok/boş → skip (hata üretmez) | **B-minimal**: Yeni davranış doğru. Eski validator "veri yok" ile "0 tüketim" ayrımı yapmıyordu — bu bir tasarım hatası. Faz E'de whitelist'e alınır. |
+
+Semantik karar (kilitli, 2026-02-28):
+- `lines` key yok → skip
+- `lines` key var, boş list `[]` → skip (explicit empty ≠ sıfır tüketim)
+- `lines` var, elemanlar var, `sum(qty_kwh) <= 0` → ZERO_CONSUMPTION
+- Ek enum üyesi gerekmez; mevcut davranış korunur.
+
+---
+
+## 13. Phase E — Shadow Telemetry (Prod Entegrasyonu, Karar Vermez)
+
+### 13.1 Amaç
+
+Yeni validator'ı prod invoice işleme akışında shadow olarak çalıştırmak:
+- Ana karar path'i değişmez (eski validator authoritative kalır)
+- Mismatch telemetry üretilir (drift tespiti)
+- Whitelist'li divergence budget ile gürültü bastırılır
+
+| Faz | Authoritative | Shadow | Karar etkisi |
+|-----|--------------|--------|-------------|
+| E (bu faz) | Eski validator | Yeni validator | Sıfır — sadece observe |
+| F (gelecek) | Feature flag ile geçiş | — | Flag açıksa yeni authoritative |
+
+### 13.2 Entegrasyon Noktası
+
+`shadow_validate_hook`: invoice işleme tamamlandıktan sonra çağrılan post-validation hook.
+
+```python
+def shadow_validate_hook(
+    invoice_dict: dict,
+    old_errors: list[str],
+    *,
+    invoice_id: str | None = None,
+) -> ShadowCompareResult | None:
+    """Post-validation shadow hook.
+    
+    Kurallar:
+    - Ana işlem bittikten sonra çalışır
+    - Exception atmaz (try/except ile sarılır, hata loglanır)
+    - Karar değiştirmez
+    - Sampling'e tabi
+    - None döner → sampling dışı kaldı veya hata oluştu
+    """
+```
+
+Neden middleware değil: middleware tüm request'leri kapsar, shadow hook sadece invoice validation
+sonrası çalışır. Daha dar scope = daha az risk.
+
+### 13.3 Sampling
+
+#### Config
+
+```python
+# backend/app/invoice/validation/shadow_config.py
+
+SHADOW_SAMPLE_RATE: float  # 0.0–1.0, default 0.01 (%1)
+# Env override: INVOICE_SHADOW_SAMPLE_RATE
+```
+
+#### Deterministic Sampling
+
+```python
+def should_sample(invoice_id: str, rate: float) -> bool:
+    """Deterministic sampling: aynı invoice_id her zaman aynı sonucu verir.
+    
+    hash(invoice_id) % 10000 < rate * 10000
+    """
+```
+
+Neden deterministic: aynı invoice tekrar işlenirse (retry, reprocess) sampling kararı değişmez.
+Debug/reproduce kolaylığı.
+
+`invoice_id` yoksa (`None`): random fallback (`random.random() < rate`).
+
+### 13.4 Whitelist & Divergence Budget
+
+#### Whitelist Yapısı
+
+```python
+# Config'te yaşar (env override destekli)
+SHADOW_DIVERGENCE_WHITELIST: set[str]
+# Default: {"missing_totals_skips"}
+# Env: INVOICE_SHADOW_WHITELIST="missing_totals_skips,future_pattern"
+```
+
+Whitelist match mantığı: `ShadowCompareResult.codes_only_old` veya `codes_only_new` içindeki
+code pattern'leri whitelist'teki rule id'lerle eşleştirilir.
+
+`missing_totals_skips` pattern: `valid_match=False` ve `codes_only_old == {"ZERO_CONSUMPTION"}`
+ve `codes_only_new == ∅` → whitelist match.
+
+#### Mismatch Sayımı
+
+```
+shadow_mismatch_total           = tüm valid_match=False durumları
+shadow_mismatch_whitelisted     = whitelist'e uyan mismatch'ler
+shadow_mismatch_actionable      = total - whitelisted
+```
+
+#### Metric İsimleri
+
+| Metrik | Tip | Açıklama |
+|--------|-----|----------|
+| `invoice_validation_shadow_mismatch_total` | Counter | Tüm mismatch (zaten reserve) |
+| `invoice_validation_shadow_whitelisted_total` | Counter | Whitelist'e uyan mismatch |
+| `invoice_validation_shadow_actionable_total` | Counter | Aksiyon gerektiren mismatch |
+| `invoice_validation_shadow_sampled_total` | Counter | Toplam sample edilen invoice |
+
+### 13.5 Alert Kuralları
+
+Mutlak sayı değil, oran bazlı:
+
+```
+actionable_mismatch_rate = actionable_total / max(1, sampled_total)
+```
+
+Alert koşulu (başlangıç, low severity):
+```
+actionable_mismatch_rate > 0.001   AND   actionable_total >= 3
+```
+
+- Pencere: 1h rolling
+- Whitelist dışı mismatch yoksa alert yok
+- İlk hafta "informational" severity, sonra "warning"a yükseltilir
+
+Neden `>= 3` alt sınır: tekil spike'ları filtrelemek. 1000 sample'da 1 mismatch = 0.001 = eşik.
+Ama 3'ten az ise istatistiksel olarak anlamsız.
+
+### 13.6 Log Payload (Debug)
+
+Sampling gerçekleştiğinde ve mismatch actionable ise loglanır:
+
+```json
+{
+  "event": "shadow_validation_mismatch",
+  "invoice_id": "hash_or_id",
+  "old_valid": false,
+  "new_valid": true,
+  "old_codes": ["ZERO_CONSUMPTION"],
+  "new_codes": [],
+  "codes_only_old": ["ZERO_CONSUMPTION"],
+  "codes_only_new": [],
+  "whitelisted": false,
+  "divergence_pattern": "unknown"
+}
+```
+
+PII yok; yalnızca validation code'ları ve structural metadata.
+
+### 13.7 Dosya Yapısı
+
+```
+backend/app/invoice/validation/shadow_config.py   # ShadowConfig, should_sample, whitelist
+backend/app/invoice/validation/shadow.py           # (mevcut) + shadow_validate_hook eklenir
+backend/tests/test_invoice_validator_shadow_e.py   # Faz E integration testleri
+```
+
+### 13.8 Non-scope (Faz E)
+
+- Feature flag ile karar değiştirme (Faz F)
+- Supplier mapping / normalizasyon
+- Grafana dashboard (ayrı observability task)
+- Prometheus alert rule dosyası (ayrı ops task)
+- Batch/cron shadow runner (sadece request-time hook)
+
+### 13.9 Faz E Kapanış Kriterleri
+
+- [x] `shadow_config.py`: `ShadowConfig` dataclass, `should_sample()`, whitelist logic
+- [x] `shadow_validate_hook()`: post-validation hook, exception-safe, sampling-aware
+- [x] Whitelist match: `missing_totals_skips` pattern suppress edilir
+- [x] 4 metrik counter: total, whitelisted, actionable, sampled
+- [x] Integration test: hook çağrılır, sampling çalışır, whitelist suppress eder
+- [x] Alert logic: oran bazlı, `>0.001 AND >=3` koşulu (tasarım kilitli; Prometheus rule dosyası ops scope)
+- [x] Mevcut test suite regresyon yok (42 passed, 0 failed)
+
+Gate E kapatıldı: 2026-02-28. Prod wiring (`extract_canonical` hook noktası) Faz F scope.
+
+---
+
+## 14. Phase F — Feature-Flag Enforcement (Decision Path)
+
+### 14.1 Amaç
+
+Shadow validator'ın çıktısını opsiyonel olarak decision path'e bağlamak:
+- Config-driven mode switch (off / shadow / enforce_soft / enforce_hard)
+- Geri dönüş (rollback) garantisi: tek config flip ile shadow'a dönüş
+- Drift budget'a göre kademeli rollout
+
+| Faz | Authoritative | Yeni Validator | Karar Etkisi |
+|-----|--------------|----------------|-------------|
+| E (tamamlandı) | Eski validator | Shadow (observe) | Sıfır |
+| F (bu faz) | Mode'a bağlı | enforce_soft: WARN / enforce_hard: BLOCK | Config-driven |
+
+### 14.2 Validation Mode
+
+```python
+# backend/app/invoice/validation/enforcement_config.py
+
+class ValidationMode(str, Enum):
+    OFF = "off"              # Yeni validator hiç çalışmaz
+    SHADOW = "shadow"        # Faz E davranışı (karar yok, telemetry var)
+    ENFORCE_SOFT = "enforce_soft"   # valid=false → WARN (işlem devam eder)
+    ENFORCE_HARD = "enforce_hard"   # valid=false + blocker code → BLOCK (işlem durur)
+
+# Env: INVOICE_VALIDATION_MODE (default: "shadow")
+```
+
+Default `shadow` — Faz E davranışı korunur. Faz F kodu deploy edilse bile mode değişmeden
+hiçbir şey değişmez.
+
+### 14.3 Enforcement Policy — Code Severity Mapping
+
+Her `ValidationErrorCode` bir enforcement severity'ye map edilir:
+
+```python
+class CodeSeverity(str, Enum):
+    BLOCKER = "blocker"    # enforce_hard'da işlemi durdurur
+    ADVISORY = "advisory"  # loglanır, işlem devam eder
+
+_DEFAULT_BLOCKER_CODES: frozenset[str] = frozenset({
+    "INVALID_ETTN",
+    "INCONSISTENT_PERIODS",
+    "REACTIVE_PENALTY_MISMATCH",
+    "TOTAL_MISMATCH",
+    "PAYABLE_TOTAL_MISMATCH",
+})
+
+# Non-blockers (advisory): ZERO_CONSUMPTION, LINE_CROSSCHECK_FAIL,
+# MISSING_FIELD, INVALID_FORMAT, INVALID_DATETIME, NEGATIVE_VALUE
+```
+
+Config override: `INVOICE_VALIDATION_BLOCKER_CODES` env var (comma-separated).
+Bu sayede iş kuralı değişirse kod değişikliği gerekmez.
+
+### 14.4 EnforcementDecision
+
+```python
+@dataclass(frozen=True)
+class EnforcementDecision:
+    action: Literal["pass", "warn", "block"]
+    mode: ValidationMode
+    errors: list[InvoiceValidationError]   # yeni validator'dan gelen hatalar
+    blocker_codes: list[str]               # sadece blocker olan code'lar (block durumunda)
+    shadow_result: ShadowCompareResult | None  # shadow compare sonucu (telemetry)
+
+    def to_dict(self) -> dict: ...
+```
+
+Karar mantığı:
+```
+mode=off         → action="pass", errors=[], shadow_result=None
+mode=shadow      → action="pass", errors=[], shadow_result=compare_result (Faz E davranışı)
+mode=enforce_soft→ validate() çalışır; valid=false → action="warn"; valid=true → action="pass"
+mode=enforce_hard→ validate() çalışır; valid=false VE blocker code var → action="block"
+                   valid=false ama sadece advisory → action="warn"
+                   valid=true → action="pass"
+```
+
+### 14.5 Entegrasyon Noktası
+
+Hook noktası: `extract_canonical()` içinde, `invoice.validate()` çağrısından sonra (satır ~375).
+Wiring Faz F içinde yapılır, default config (`shadow`) no-op davranışı korur.
+
+```python
+# canonical_extractor.py — extract_canonical() içinde
+invoice.validate()  # eski validator (mevcut)
+
+# --- Faz F wiring (default shadow = no-op karar) ---
+from app.invoice.validation.enforcement import enforce_validation
+from app.invoice.validation.enforcement import canonical_to_validator_dict
+
+invoice_dict = canonical_to_validator_dict(invoice)  # CanonicalInvoice → validator dict
+decision = enforce_validation(invoice_dict, invoice.errors, invoice_id=invoice.ettn)
+
+if decision.action == "block":
+    raise ValidationBlockedError(decision)
+elif decision.action == "warn":
+    invoice.warnings.append(f"ENFORCEMENT_WARN: {[e.code.value for e in decision.errors]}")
+# action == "pass" → hiçbir şey yapma (shadow veya off)
+```
+
+#### 14.5.1 CanonicalInvoice → validator dict adaptörü
+
+Faz D'de `build_canonical_invoice` (dict → CanonicalInvoice) var. Faz F'de ters yön gerekiyor:
+
+```python
+def canonical_to_validator_dict(canonical: CanonicalInvoice) -> dict:
+    """CanonicalInvoice → yeni validator'ın beklediği invoice dict formatı.
+    
+    Mapping:
+      canonical.ettn           → dict["ettn"]
+      canonical.lines[i]       → dict["lines"][i] (label, qty_kwh, unit_price, amount)
+      canonical.totals         → dict["totals"] (total, payable)
+      canonical.taxes.total    → dict["taxes_total"]
+      canonical.vat.amount     → dict["vat_amount"]
+      canonical.period         → (periods alanı oluşturulmaz — eski validator periods bilmez)
+    """
+```
+
+Not: `periods` alanı CanonicalInvoice'da yapılandırılmış olarak yok (sadece `period: str`).
+Bu nedenle yeni validator'ın ETTN/periods/reactive kuralları bu adaptör üzerinden tetiklenmez —
+sadece totals/lines kuralları çalışır. Bu kabul edilebilir: enforcement'ın ilk hedefi
+zaten totals/lines kuralları (blocker list'teki TOTAL_MISMATCH, PAYABLE_TOTAL_MISMATCH).
+
+#### 14.5.2 ValidationBlockedError
+
+```python
+class ValidationBlockedError(Exception):
+    """Raised when enforce_hard blocks an invoice."""
+    def __init__(self, decision: EnforcementDecision):
+        self.decision = decision
+        super().__init__(f"Validation blocked: {[c for c in decision.blocker_codes]}")
+```
+
+Bu exception `extract_canonical` caller'larında (`extract_and_validate`, worker) yakalanır.
+Worker'da `except ValidationBlockedError` → `InvoiceStatus.FAILED` + error_message.
+
+#### 14.5.3 Neden bu noktada
+
+- `extract_canonical` tek extraction+validation noktası
+- `extract_and_validate` sadece wrapper, `extract_canonical` çağırıyor
+- Worker'daki `validate_extraction` farklı concern (extraction-level), dokunulmaz
+- Default `shadow` modda wiring hiçbir davranış değişikliği yaratmaz — risk sıfır
+
+### 14.6 Dosya Yapısı
+
+```
+backend/app/invoice/validation/enforcement_config.py  # ValidationMode, CodeSeverity, blocker mapping, config
+backend/app/invoice/validation/enforcement.py          # enforce_validation(), EnforcementDecision
+backend/tests/test_invoice_validator_enforcement_f.py  # Faz F testleri
+```
+
+### 14.7 Telemetry
+
+| Metrik | Tip | Açıklama |
+|--------|-----|----------|
+| `invoice_validation_enforced_total` | Counter | enforce_soft veya enforce_hard'da validate edilen toplam |
+| `invoice_validation_blocked_total` | Counter | action="block" sayısı |
+| `invoice_validation_softwarn_total` | Counter | action="warn" sayısı |
+| `invoice_validation_mode` | Gauge (label: mode) | Aktif mode (dashboard için) |
+
+Metric constant'ları `types.py`'ye eklenir. Counter pattern Faz E ile aynı (test-only dict).
+
+### 14.8 Rollback Garantisi
+
+Rollback = `INVOICE_VALIDATION_MODE=shadow` (veya `off`).
+Tek config değişikliği, restart gerekmez (eğer config hot-reload destekleniyorsa; yoksa restart).
+Test: mode flip testi — `enforce_hard` → `shadow` → aynı invoice'da action="pass" döner.
+
+### 14.9 Rollout Plan (Operasyonel — Kod Dışı)
+
+| Aşama | Mode | Scope | Baraj |
+|-------|------|-------|-------|
+| F-alpha | enforce_soft | Tüm trafik | actionable_mismatch_rate < 0.001, 1 hafta |
+| F-beta | enforce_hard | Internal/admin | 0 incident, 1 hafta |
+| F-gamma | enforce_hard | %10 trafik (sampling) | 0 incident, 1 hafta |
+| F-GA | enforce_hard | Genel | — |
+
+Not: Tenant/supplier allowlist şu an repoda tenant modeli olmadığı için scope dışı.
+Tenant bazlı rollout gerekirse ayrı task (F-next veya Faz G) olarak açılır.
+
+### 14.10 Non-scope (Faz F)
+
+- Tenant/supplier bazlı allowlist (tenant modeli yok)
+- Grafana dashboard JSON (ayrı ops task)
+- Prometheus alert rule dosyası (ayrı ops task)
+- `validate_extraction` (worker extraction-level) entegrasyonu
+- Hot-reload config (nice-to-have, restart yeterli)
+
+### 14.11 Faz F Kapanış Kriterleri
+
+- [ ] `enforcement_config.py`: `ValidationMode` enum, `CodeSeverity`, blocker mapping, `load_enforcement_config()`
+- [ ] `enforcement.py`: `EnforcementDecision` dataclass, `enforce_validation()` fonksiyonu
+- [ ] Mode switch: off/shadow/enforce_soft/enforce_hard tümü çalışıyor
+- [ ] enforce_soft: valid=false → action="warn", işlem devam
+- [ ] enforce_hard: blocker code → action="block"; sadece advisory → action="warn"
+- [ ] Rollback: mode flip testi (enforce_hard → shadow → action="pass")
+- [ ] 4 metrik counter: enforced, blocked, softwarn, mode gauge
+- [ ] Integration test suite (Faz F)
+- [ ] Mevcut test suite regresyon yok (Faz A–E testleri dahil)

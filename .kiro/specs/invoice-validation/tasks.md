@@ -106,25 +106,129 @@
 ## Phase D: Shadow Compare (4.3)
 
 ## Task D1: Shadow compare module
-- [ ] D1. Create `backend/app/invoice/validation/shadow.py`
-  - [ ] D1.1 `ShadowCompareResult` frozen dataclass with `to_dict()`
-  - [ ] D1.2 `build_canonical_invoice(invoice_dict: dict) -> CanonicalInvoice` — maps dict to dataclass, all lines get `LineCode.ACTIVE_ENERGY`
-  - [ ] D1.3 `extract_old_codes(errors: list[str]) -> set[str]` — prefix parse via `e.split(":")[0].strip()`, validate against known prefix map
-  - [ ] D1.4 `compare_validators(invoice_dict: dict) -> ShadowCompareResult` — builds CanonicalInvoice, runs both validators, computes valid_match + set operations
+- [x] D1. Create `backend/app/invoice/validation/shadow.py`
+  - [x] D1.1 `ShadowCompareResult` frozen dataclass with `to_dict()`
+  - [x] D1.2 `build_canonical_invoice(invoice_dict: dict) -> CanonicalInvoice` — maps dict to dataclass, all lines get `LineCode.ACTIVE_ENERGY`
+  - [x] D1.3 `extract_old_codes(errors: list[str]) -> set[str]` — prefix parse via `e.split(":")[0].strip()`, validate against known prefix map
+  - [x] D1.4 `compare_validators(invoice_dict: dict) -> ShadowCompareResult` — builds CanonicalInvoice, runs both validators, computes valid_match + set operations
 
 ## Task D2: Shadow compare tests
-- [ ] D2. Create `backend/tests/test_invoice_validator_shadow.py`
-  - [ ] D2.1 Test: `totals_ok.json` — both valid → valid_match=True, codes_common=∅
-  - [ ] D2.2 Test: `payable_total_mismatch.json` — both fail → valid_match=True, PAYABLE_TOTAL_MISMATCH ∈ codes_common
-  - [ ] D2.3 Test: `total_mismatch.json` — both fail → valid_match=True, TOTAL_MISMATCH ∈ codes_common
-  - [ ] D2.4 Test: `zero_consumption.json` — both fail → valid_match=True, ZERO_CONSUMPTION ∈ codes_common
-  - [ ] D2.5 Test: `line_crosscheck_fail.json` — both fail → valid_match=True, LINE_CROSSCHECK_FAIL ∈ codes_common
-  - [ ] D2.6 Test: `missing_totals_skips.json` — both valid (skip) → valid_match=True, codes=∅
-  - [ ] D2.7 Test: `ShadowCompareResult.to_dict()` round-trip (JSON-serializable)
-  - [ ] D2.8 Test: mismatch counter — valid_match=False → SHADOW_METRIC_NAME increment
+- [x] D2. Create `backend/tests/test_invoice_validator_shadow.py`
+  - [x] D2.1 Test: `totals_ok.json` — both valid → valid_match=True, codes_common=∅
+  - [x] D2.2 Test: `payable_total_mismatch.json` — both fail → valid_match=True, PAYABLE_TOTAL_MISMATCH ∈ codes_common
+  - [x] D2.3 Test: `total_mismatch.json` — both fail → valid_match=True, TOTAL_MISMATCH ∈ codes_common
+  - [x] D2.4 Test: `zero_consumption.json` — both fail → valid_match=True, ZERO_CONSUMPTION ∈ codes_common
+  - [x] D2.5 Test: `line_crosscheck_fail.json` — both fail → valid_match=True, LINE_CROSSCHECK_FAIL ∈ codes_common
+  - [x] D2.6 Test: `missing_totals_skips.json` — old fail (ZERO_CONSUMPTION), new valid (skip) → valid_match=False, expected_divergence=True
+  - [x] D2.7 Test: `ShadowCompareResult.to_dict()` round-trip (JSON-serializable)
+  - [x] D2.8 Test: mismatch counter — 1 expected divergence (missing_totals_skips only)
 
 ## Task D3: Wire exports + regression checkpoint
-- [ ] D3. Integration and verification
-  - [ ] D3.1 Add exports to `__init__.py`: `ShadowCompareResult`, `compare_validators`
-  - [ ] D3.2 Run full invoice validation test suite (A/B + C + D) — 0 failures
-  - [ ] D3.3 Regression check — no regressions in project suite
+- [x] D3. Integration and verification
+  - [x] D3.1 Add exports to `__init__.py`: `ShadowCompareResult`, `compare_validators` ✅
+  - [x] D3.2 Run full invoice validation test suite (A/B + C + D): 29 passed ✅
+  - [x] D3.3 Regression check: 126 passed, 1 xfailed, 0 failed ✅
+
+---
+
+## Phase E: Shadow Telemetry — Prod Entegrasyonu (4.4)
+
+## Task E1: Shadow config module
+- [x] E1. Create `backend/app/invoice/validation/shadow_config.py`
+  - [x] E1.1 `ShadowConfig` frozen dataclass: `sample_rate: float` (default 0.01), `whitelist: frozenset[str]` (default `{"missing_totals_skips"}`), env override support via `INVOICE_SHADOW_SAMPLE_RATE` and `INVOICE_SHADOW_WHITELIST`
+  - [x] E1.2 `should_sample(invoice_id: str | None, rate: float) -> bool` — deterministic: `hash(invoice_id) % 10000 < rate * 10000`; fallback to `random.random() < rate` when `invoice_id` is None
+  - [x] E1.3 `is_whitelisted(result: ShadowCompareResult, whitelist: frozenset[str]) -> bool` — pattern match: `missing_totals_skips` = `valid_match=False AND codes_only_old == {"ZERO_CONSUMPTION"} AND codes_only_new == ∅`
+  - [x] E1.4 `load_config() -> ShadowConfig` — reads env vars, returns frozen config instance
+  - Note: Uses SHA-256 (not built-in hash) for cross-process deterministic sampling
+
+## Task E2: Shadow validate hook
+- [x] E2. Add `shadow_validate_hook()` to `backend/app/invoice/validation/shadow.py`
+  - [x] E2.1 `shadow_validate_hook(invoice_dict, old_errors, *, invoice_id=None) -> ShadowCompareResult | None` — sampling gate → compare_validators → return result or None
+  - [x] E2.2 Exception safety: entire body wrapped in try/except, logs error, returns None on failure
+  - [x] E2.3 Wire exports in `__init__.py`: `shadow_validate_hook`
+
+## Task E3: Metric counters
+- [x] E3. Add shadow telemetry counters
+  - [x] E3.1 Define 4 metric name constants in `types.py`: `SHADOW_SAMPLED_TOTAL`, `SHADOW_WHITELISTED_TOTAL`, `SHADOW_ACTIONABLE_TOTAL` (existing `SHADOW_METRIC_NAME` = mismatch total)
+  - [x] E3.2 `record_shadow_metrics(result: ShadowCompareResult, whitelisted: bool)` function in `shadow.py` — increments appropriate counters (test-only counter dict for now; prod metric emission is ops task)
+
+## Task E4: Integration tests
+- [x] E4. Create `backend/tests/test_invoice_validator_shadow_e.py`
+  - [x] E4.1 Test: `should_sample` deterministic — same invoice_id + rate always returns same bool
+  - [x] E4.2 Test: `should_sample` rate=0.0 → always False, rate=1.0 → always True
+  - [x] E4.3 Test: `is_whitelisted` — missing_totals_skips pattern → True; payable_total_mismatch → False
+  - [x] E4.4 Test: `shadow_validate_hook` with rate=1.0 — returns ShadowCompareResult for totals_ok fixture
+  - [x] E4.5 Test: `shadow_validate_hook` with rate=0.0 — returns None (not sampled)
+  - [x] E4.6 Test: `shadow_validate_hook` exception safety — invalid input → returns None, no exception raised
+  - [x] E4.7 Test: `record_shadow_metrics` — actionable mismatch increments actionable counter; whitelisted increments whitelisted counter
+  - [x] E4.8 Test: full pipeline — hook → whitelist check → metric record → verify counters for all 6 validation_totals fixtures
+
+## Task E5: Regression checkpoint (Faz E)
+- [x] E5. Run full test suite, confirm 0 failures
+  - [x] E5.1 Faz A/B tests: 14 passed (unchanged) ✅
+  - [x] E5.2 Faz C tests: 7 passed (unchanged) ✅
+  - [x] E5.3 Faz D tests: 8 passed (unchanged) ✅
+  - [x] E5.4 Faz E tests: 13 passed (new) ✅
+  - [x] E5.5 Full invoice validation suite: 42 passed, 0 failed ✅
+
+---
+
+## Phase F: Feature-Flag Enforcement (Decision Path)
+
+## Task F1: Enforcement config module
+- [ ] F1. Create `backend/app/invoice/validation/enforcement_config.py`
+  - [ ] F1.1 `ValidationMode(str, Enum)`: `OFF`, `SHADOW`, `ENFORCE_SOFT`, `ENFORCE_HARD` — default `SHADOW`
+  - [ ] F1.2 `CodeSeverity(str, Enum)`: `BLOCKER`, `ADVISORY`
+  - [ ] F1.3 `_DEFAULT_BLOCKER_CODES` frozenset: INVALID_ETTN, INCONSISTENT_PERIODS, REACTIVE_PENALTY_MISMATCH, TOTAL_MISMATCH, PAYABLE_TOTAL_MISMATCH
+  - [ ] F1.4 `EnforcementConfig` frozen dataclass: `mode`, `blocker_codes` — env override via `INVOICE_VALIDATION_MODE` and `INVOICE_VALIDATION_BLOCKER_CODES`
+  - [ ] F1.5 `load_enforcement_config() -> EnforcementConfig` — reads env vars, safe fallbacks
+
+## Task F2: Enforcement decision engine
+- [ ] F2. Create `backend/app/invoice/validation/enforcement.py`
+  - [ ] F2.1 `EnforcementDecision` frozen dataclass: `action` (pass/warn/block), `mode`, `errors`, `blocker_codes`, `shadow_result`
+  - [ ] F2.2 `enforce_validation(invoice_dict, old_errors, *, invoice_id=None, config=None) -> EnforcementDecision`
+  - [ ] F2.3 Mode logic: off→pass, shadow→Faz E hook+pass, enforce_soft→validate+warn/pass, enforce_hard→validate+block/warn/pass
+  - [ ] F2.4 Blocker filtering: only codes in `blocker_codes` set trigger `action="block"` in enforce_hard
+
+## Task F3: Metric counters (Faz F)
+- [ ] F3. Add enforcement telemetry counters
+  - [ ] F3.1 Add 4 metric constants to `types.py`: `ENFORCE_TOTAL`, `ENFORCE_BLOCKED_TOTAL`, `ENFORCE_SOFTWARN_TOTAL`, `ENFORCE_MODE_GAUGE`
+  - [ ] F3.2 `record_enforcement_metrics(decision: EnforcementDecision)` in `enforcement.py` — test-only counter dict (same pattern as Faz E)
+
+## Task F4: Wire enforcement into canonical_extractor
+- [ ] F4. Wire `enforce_validation` into `extract_canonical()` (post `invoice.validate()`)
+  - [ ] F4.1 `canonical_to_validator_dict(canonical: CanonicalInvoice) -> dict` adaptör in `enforcement.py`
+  - [ ] F4.2 `ValidationBlockedError(Exception)` in `enforcement.py`
+  - [ ] F4.3 Add enforcement call in `extract_canonical()` after `invoice.validate()`: call `enforce_validation`, handle warn (append to warnings) and block (raise `ValidationBlockedError`)
+  - [ ] F4.4 Default mode=shadow → no behavioral change (existing tests must pass unchanged)
+
+## Task F5: Wire exports + __init__.py
+- [ ] F5. Update `__init__.py` with new exports
+  - [ ] F5.1 Export: `ValidationMode`, `CodeSeverity`, `EnforcementConfig`, `EnforcementDecision`, `enforce_validation`, `load_enforcement_config`
+  - [ ] F5.2 Export: metric constants + `record_enforcement_metrics`, `get_enforcement_counters`, `reset_enforcement_counters`
+  - [ ] F5.3 Export: `canonical_to_validator_dict`, `ValidationBlockedError`
+
+## Task F6: Integration tests (Faz F)
+- [ ] F6. Create `backend/tests/test_invoice_validator_enforcement_f.py`
+  - [ ] F6.1 Test: mode=off → action="pass", no validation runs
+  - [ ] F6.2 Test: mode=shadow → action="pass", shadow_result is not None (Faz E behavior)
+  - [ ] F6.3 Test: mode=enforce_soft, valid invoice → action="pass"
+  - [ ] F6.4 Test: mode=enforce_soft, invalid invoice → action="warn"
+  - [ ] F6.5 Test: mode=enforce_hard, blocker code present → action="block"
+  - [ ] F6.6 Test: mode=enforce_hard, only advisory codes → action="warn" (not block)
+  - [ ] F6.7 Test: mode=enforce_hard, valid invoice → action="pass"
+  - [ ] F6.8 Test: rollback — enforce_hard → shadow flip → same invoice → action="pass"
+  - [ ] F6.9 Test: custom blocker_codes override via config
+  - [ ] F6.10 Test: metric counters — enforced/blocked/softwarn increments correct
+  - [ ] F6.11 Test: EnforcementDecision.to_dict() round-trip
+  - [ ] F6.12 Test: canonical_to_validator_dict maps CanonicalInvoice fields correctly
+
+## Task F7: Regression checkpoint (Faz F)
+- [ ] F7. Run full test suite, confirm 0 failures
+  - [ ] F7.1 Faz A/B tests: 14 passed (unchanged)
+  - [ ] F7.2 Faz C tests: 7 passed (unchanged)
+  - [ ] F7.3 Faz D tests: 8 passed (unchanged)
+  - [ ] F7.4 Faz E tests: 13 passed (unchanged)
+  - [ ] F7.5 Faz F tests: new (target ~12 tests)
+  - [ ] F7.6 Full invoice validation suite: ~54 passed, 0 failed
+  - [ ] F7.7 Existing canonical_extractor tests: unchanged (default shadow = no-op)
