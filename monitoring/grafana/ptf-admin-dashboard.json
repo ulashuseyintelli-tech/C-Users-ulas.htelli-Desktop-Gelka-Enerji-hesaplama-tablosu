@@ -503,11 +503,142 @@
       ]
     },
     {
+      "id": 700,
+      "title": "Ops Guard Status",
+      "type": "row",
+      "collapsed": true,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 66 },
+      "panels": [
+        {
+          "id": 22,
+          "title": "OPS | Kill-Switch State",
+          "description": "ptf_admin_killswitch_state gauge — 1=aktif, 0=pasif. Herhangi bir switch aktifse trafik bilinçli olarak engelleniyor.",
+          "type": "stat",
+          "gridPos": { "h": 8, "w": 6, "x": 0, "y": 67 },
+          "datasource": { "uid": "$datasource", "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "ptf_admin_killswitch_state{job=~\"$job\"}",
+              "legendFormat": "{{switch_name}}",
+              "refId": "A",
+              "datasource": { "uid": "$datasource", "type": "prometheus" }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "red", "value": 1 }
+                ]
+              },
+              "noValue": "0 (all off)"
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+            "textMode": "auto",
+            "colorMode": "background",
+            "graphMode": "none"
+          }
+        },
+        {
+          "id": 23,
+          "title": "OPS | Circuit Breaker State",
+          "description": "ptf_admin_circuit_breaker_state gauge — 0=closed, 1=half-open, 2=open. Dependency bazında CB durumu.",
+          "type": "stat",
+          "gridPos": { "h": 8, "w": 6, "x": 6, "y": 67 },
+          "datasource": { "uid": "$datasource", "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "ptf_admin_circuit_breaker_state{job=~\"$job\"}",
+              "legendFormat": "{{dependency}}",
+              "refId": "A",
+              "datasource": { "uid": "$datasource", "type": "prometheus" }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "orange", "value": 1 },
+                  { "color": "red", "value": 2 }
+                ]
+              },
+              "noValue": "0 (closed)"
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+            "textMode": "auto",
+            "colorMode": "background",
+            "graphMode": "none"
+          }
+        },
+        {
+          "id": 24,
+          "title": "OPS | Rate Limit Decision Distribution",
+          "description": "ptf_admin_rate_limit_total by decision — allowed vs denied request dağılımı.",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 6, "x": 12, "y": 67 },
+          "datasource": { "uid": "$datasource", "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "sum(rate(ptf_admin_rate_limit_total{job=~\"$job\"}[5m])) by (decision)",
+              "legendFormat": "{{decision}}",
+              "refId": "A",
+              "datasource": { "uid": "$datasource", "type": "prometheus" }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 20, "pointSize": 5, "showPoints": "auto" }
+            },
+            "overrides": [
+              { "matcher": { "id": "byRegexp", "options": "allowed" }, "properties": [{ "id": "color", "value": { "fixedColor": "#73BF69", "mode": "fixed" } }] },
+              { "matcher": { "id": "byRegexp", "options": "rejected" }, "properties": [{ "id": "color", "value": { "fixedColor": "#F2495C", "mode": "fixed" } }] }
+            ]
+          }
+        },
+        {
+          "id": 25,
+          "title": "OPS | Top Rate-Limited Endpoints",
+          "description": "ptf_admin_rate_limit_total{decision=rejected} by endpoint — en çok rate limit yiyen endpoint'ler (bounded).",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 6, "x": 18, "y": 67 },
+          "datasource": { "uid": "$datasource", "type": "prometheus" },
+          "targets": [
+            {
+              "expr": "topk(10, sum(rate(ptf_admin_rate_limit_total{decision=\"rejected\", job=~\"$job\"}[5m])) by (endpoint))",
+              "legendFormat": "{{endpoint}}",
+              "refId": "A",
+              "datasource": { "uid": "$datasource", "type": "prometheus" }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 15, "pointSize": 5, "showPoints": "auto" }
+            },
+            "overrides": []
+          }
+        }
+      ]
+    },
+    {
       "id": 600,
       "title": "Guard Decision Layer",
       "type": "row",
       "collapsed": true,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 66 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 76 },
       "panels": [
         {
           "id": 17,

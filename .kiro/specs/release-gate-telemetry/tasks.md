@@ -41,19 +41,19 @@ ReleaseGate enforcement hook'una gözlemlenebilirlik katmanı eklenir: GateMetri
     - save_to_dir / load_from_dir başarılı senaryo
     - _Requirements: 1.1, 1.2, 1.3, 2.1, 2.2, 3.1, 3.2_
 
-  - [ ]* 1.5 Property test: Karar sayacı doğru artırılır (Property 1)
+  - [ ]* 1.5 Property test: Karar sayacı doğru artırılır (Property 1) {SOFT:NICE}
     - **Property 1: Karar sayacı doğru artırılır**
     - **Validates: Requirements 1.1, 1.4, 1.5, 6.2**
 
-  - [ ]* 1.6 Property test: Etiket kardinalitesi sınırlıdır (Property 4)
+  - [ ]* 1.6 Property test: Etiket kardinalitesi sınırlıdır (Property 4) {SOFT:SAFETY}
     - **Property 4: Etiket kardinalitesi sınırlıdır (bounded label invariant)**
     - **Validates: Requirements 1.2, 1.3, 2.2, 9.1, 9.2, 9.3**
 
-  - [ ]* 1.7 Property test: JSON persistence round-trip (Property 6)
+  - [ ]* 1.7 Property test: JSON persistence round-trip (Property 6) {SOFT:NICE}
     - **Property 6: JSON persistence round-trip**
     - **Validates: Requirements 5.3**
 
-  - [ ]* 1.8 Property test: Prometheus export determinizmi (Property 7)
+  - [ ]* 1.8 Property test: Prometheus export determinizmi (Property 7) {SOFT:NICE}
     - **Property 7: Prometheus export determinizmi**
     - **Validates: Requirements 5.4**
 
@@ -67,15 +67,15 @@ ReleaseGate enforcement hook'una gözlemlenebilirlik katmanı eklenir: GateMetri
     - Mevcut karar mantığı DEĞİŞMEZ — yalnızca sayaç artırma çağrıları eklenir
     - _Requirements: 4.1, 4.2, 6.1, 6.2, 6.3, 6.4, 6.5_
 
-  - [ ]* 2.2 Property test: Sözleşme ihlali sayacı (Property 2)
+  - [ ]* 2.2 Property test: Sözleşme ihlali sayacı (Property 2) {SOFT:NICE}
     - **Property 2: Sözleşme ihlali sayacı yalnızca CONTRACT_BREACH path'inde artar**
     - **Validates: Requirements 2.1, 2.3, 6.3**
 
-  - [ ]* 2.3 Property test: Audit yazım hatası sayacı (Property 3)
+  - [ ]* 2.3 Property test: Audit yazım hatası sayacı (Property 3) {SOFT:NICE}
     - **Property 3: Audit yazım hatası sayacı doğru artırılır**
     - **Validates: Requirements 3.1, 3.2, 6.4**
 
-  - [ ]* 2.4 Property test: Fail-open metrik emisyonu (Property 5)
+  - [ ]* 2.4 Property test: Fail-open metrik emisyonu (Property 5) {SOFT:SAFETY}
     - **Property 5: Metrik emisyonu fail-open — gate kararı değişmez**
     - **Validates: Requirements 4.1, 4.2, 6.5**
 
@@ -92,7 +92,7 @@ ReleaseGate enforcement hook'una gözlemlenebilirlik katmanı eklenir: GateMetri
     - Mevcut alert grupları DEĞİŞTİRİLMEZ
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5_
 
-  - [ ]* 4.2 Alert kuralları unit testleri yaz
+  - [ ]* 4.2 Alert kuralları unit testleri yaz {SOFT:NICE}
     - YAML yapı doğrulama: grup adı, kural sayısı
     - Her kural için expr, severity, annotations alanlarının varlığı
     - runbook_url formatı kontrolü

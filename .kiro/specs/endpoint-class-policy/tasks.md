@@ -40,19 +40,19 @@ Guard Decision Layer'a endpoint risk sınıfı katmanı eklenir. Tenant mode + r
     - Normalization: raw path → normalized key üzerinden match
     - _Requirements: E2.1, E3.1, E3.4, E3.5, E3.6, E3.7, E3.8_
 
-  - [ ]* 1.5 Property test: RiskClass cardinality bounded (EP-5)
+  - [ ]* 1.5 Property test: RiskClass cardinality bounded (EP-5) {SOFT:NICE}
     - **Property EP-5: RiskClass Cardinality Bounded**
     - **Validates: Requirements E2.1, E2.3, E3.5, E7.1**
 
-  - [ ]* 1.6 Property test: Bilinmeyen endpoint → LOW fallback (EP-6)
+  - [ ]* 1.6 Property test: Bilinmeyen endpoint → LOW fallback (EP-6) {SOFT:NICE}
     - **Property EP-6: Bilinmeyen Endpoint → LOW Fallback**
     - **Validates: Requirements E2.2, E3.3**
 
-  - [ ]* 1.7 Property test: Precedence determinizmi (EP-8)
+  - [ ]* 1.7 Property test: Precedence determinizmi (EP-8) {SOFT:SAFETY}
     - **Property EP-8: Precedence Determinizmi**
     - **Validates: Requirements E3.7, E3.8**
 
-  - [ ]* 1.8 Property test: Exact match precedence (EP-9)
+  - [ ]* 1.8 Property test: Exact match precedence (EP-9) {SOFT:NICE}
     - **Property EP-9: Exact Match Precedence**
     - **Validates: Requirements E3.7**
 
@@ -139,7 +139,7 @@ Guard Decision Layer'a endpoint risk sınıfı katmanı eklenir. Tenant mode + r
     - E6: OpsGuard deny bypass unchanged — rate limit 429 (1 test)
     - _Requirements: E6.1, E6.3, E6.4, E6.5_
 
-  - [ ]* 5.3 Property test: Mevcut P1 korunur — Global OFF (EP-7)
+  - [ ]* 5.3 Property test: Mevcut P1 korunur — Global OFF (EP-7) {SOFT:SAFETY}
     - **Property EP-7: Mevcut P1 Korunur (Global OFF)**
     - **Validates: Requirements E1.2, E8.1**
 

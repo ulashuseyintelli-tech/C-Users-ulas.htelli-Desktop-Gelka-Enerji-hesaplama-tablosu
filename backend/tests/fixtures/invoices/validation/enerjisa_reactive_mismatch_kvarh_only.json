@@ -1,0 +1,26 @@
+{
+  "meta": {
+    "supplier": "enerjisa",
+    "scenario": "reactive_mismatch_kvarh_only",
+    "currency": "TRY",
+    "timezone": "Europe/Istanbul"
+  },
+  "invoice": {
+    "ettn": "550e8400-e29b-41d4-a716-446655440000",
+    "periods": [
+      {"code": "T1", "start": "2026-01-01", "end": "2026-01-31", "kwh": 1200, "amount": 360.00},
+      {"code": "T2", "start": "2026-01-01", "end": "2026-01-31", "kwh": 800, "amount": 200.00},
+      {"code": "T3", "start": "2026-01-01", "end": "2026-01-31", "kwh": 400, "amount": 80.00}
+    ],
+    "reactive": {
+      "penalty_amount": 0,
+      "penalty_kvarh": 300.0
+    }
+  },
+  "expected": {
+    "valid": false,
+    "errors": [
+      {"code": "REACTIVE_PENALTY_MISMATCH", "field": "reactive"}
+    ]
+  }
+}

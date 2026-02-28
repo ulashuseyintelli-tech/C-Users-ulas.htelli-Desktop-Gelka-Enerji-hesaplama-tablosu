@@ -115,6 +115,72 @@ class GuardDecisionMiddleware(BaseHTTPMiddleware):
         allowlist = parse_tenant_allowlist(config.decision_layer_tenant_allowlist_json)
         metric_tenant = sanitize_metric_tenant(tenant_id, allowlist)
 
+        # ── Drift guard step (DR1.1, DR1.4, DR2.1-DR2.6, DR8.1-DR8.3) ────
+        # Kill-switch check FIRST (return early, 0 call guarantee)
+        if not config.drift_guard_killswitch and config.drift_guard_enabled:
+            try:
+                from .drift_guard import (
+                    DriftReasonCode, evaluate_drift, HashDriftInputProvider,
+                    build_baseline,
+                )
+                from .guard_decision import resolve_effective_mode
+
+                # Mode resolution — tek kaynak (DR8.1)
+                _drift_effective = resolve_effective_mode(tenant_mode, risk_class)
+                if _drift_effective != TenantMode.OFF:
+                    _drift_is_shadow = (_drift_effective == TenantMode.SHADOW)
+                    _drift_mode_label = "shadow" if _drift_is_shadow else "enforce"
+                    _risk_class_str = risk_class.value if hasattr(risk_class, 'value') else str(risk_class)
+
+                    # Build baseline (v0: in-memory, per-request is cheap — no IO)
+                    _drift_baseline = build_baseline(
+                        config_hash=config.config_hash,
+                    )
+
+                    drift_provider = HashDriftInputProvider()
+                    try:
+                        drift_input = drift_provider.get_input(
+                            request, endpoint, method, tenant_id,
+                            config_hash=config.config_hash,
+                            risk_class=_risk_class_str,
+                        )
+                        drift_decision = evaluate_drift(drift_input, _drift_baseline)
+                        if drift_decision.is_drift:
+                            reason_code = drift_decision.reason_code.value if drift_decision.reason_code else DriftReasonCode.THRESHOLD_EXCEEDED.value
+                            try:
+                                from ..ptf_metrics import get_ptf_metrics
+                                get_ptf_metrics().inc_drift_evaluation(_drift_mode_label, "drift_detected")
+                            except Exception:
+                                pass
+                            if not _drift_is_shadow:
+                                return self._build_block_response(
+                                    error_code="OPS_GUARD_DRIFT",
+                                    reason_codes=[reason_code],
+                                )
+                            logger.info(f"[GUARD-DECISION] SHADOW drift: {reason_code} {method} {endpoint}")
+                        else:
+                            try:
+                                from ..ptf_metrics import get_ptf_metrics
+                                get_ptf_metrics().inc_drift_evaluation(_drift_mode_label, "no_drift")
+                            except Exception:
+                                pass
+                    except Exception as exc:
+                        logger.warning(f"[GUARD-DECISION] Drift provider/evaluator error: {exc}")
+                        try:
+                            from ..ptf_metrics import get_ptf_metrics
+                            get_ptf_metrics().inc_drift_evaluation(_drift_mode_label, "provider_error")
+                        except Exception:
+                            pass
+                        # Fail-open/fail-closed dispatch (DR4.3)
+                        if not _drift_is_shadow and not config.drift_guard_fail_open:
+                            return self._build_block_response(
+                                error_code="OPS_GUARD_DRIFT",
+                                reason_codes=[DriftReasonCode.PROVIDER_ERROR.value],
+                            )
+                        logger.info(f"[GUARD-DECISION] Drift error (fail-open): {exc}")
+            except ImportError:
+                pass  # drift_guard module not available — skip silently
+
         # Build snapshot — fail-open on error (returns None)
         # SnapshotFactory resolves effective_mode internally via resolve_effective_mode()
         snapshot = SnapshotFactory.build(

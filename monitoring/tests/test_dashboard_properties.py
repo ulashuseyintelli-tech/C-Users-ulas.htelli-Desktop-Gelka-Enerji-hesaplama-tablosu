@@ -48,6 +48,7 @@ ROW_MIN_PANELS = {
     "Lookup / History": 3,
     "Frontend Telemetry": 2,
     "Dependency Health": 4,
+    "Ops Guard Status": 4,
     "Guard Decision Layer": 5,
 }
 

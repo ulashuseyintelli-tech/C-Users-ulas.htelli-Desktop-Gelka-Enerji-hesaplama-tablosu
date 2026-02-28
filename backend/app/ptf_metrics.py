@@ -247,6 +247,14 @@ class PTFMetrics:
             registry=self._registry,
         )
 
+        # ── Drift Guard metrics (Feature: drift-guard, Task 3.2) ─────────
+        self._drift_evaluation_total = Counter(
+            "ptf_admin_drift_evaluation_total",
+            "Drift guard evaluation outcomes",
+            labelnames=["mode", "outcome"],
+            registry=self._registry,
+        )
+
         # ── PDF Render Endpoint metrics (Feature: PR-3 Observability) ─────
         self._pdf_render_requests_total = Counter(
             "ptf_admin_pdf_render_requests_total",
@@ -537,6 +545,21 @@ class PTFMetrics:
     def set_pdf_queue_depth(self, depth: int) -> None:
         """Set current PDF queue depth gauge."""
         self._pdf_queue_depth.set(depth)
+
+    # ── Drift Guard metrics (Feature: drift-guard, Task 3.3) ─────────────
+
+    _VALID_DRIFT_OUTCOMES = frozenset({"no_drift", "drift_detected", "provider_error"})
+    _VALID_DRIFT_MODES = frozenset({"shadow", "enforce"})
+
+    def inc_drift_evaluation(self, mode: str, outcome: str) -> None:
+        """Increment drift_evaluation_total. Bounded: 2 mode × 3 outcome = 6 series."""
+        if mode not in self._VALID_DRIFT_MODES:
+            logger.warning(f"[METRICS] Invalid drift_evaluation mode: {mode}")
+            return
+        if outcome not in self._VALID_DRIFT_OUTCOMES:
+            logger.warning(f"[METRICS] Invalid drift_evaluation outcome: {outcome}")
+            return
+        self._drift_evaluation_total.labels(mode=mode, outcome=outcome).inc()
 
     # ── PDF Render Endpoint metrics (Feature: PR-3 Observability) ─────────
     # Namespace: ptf_admin_pdf_render_*

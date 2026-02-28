@@ -143,7 +143,7 @@ function App() {
   
   // Dağıtım birim fiyatını belirle (öncelik: manuel > tarife seçimi > backend)
   const getDistributionUnitPrice = useCallback(() => {
-    if (distributionTariffKey === 'custom' && customDistributionPrice > 0) {
+    if (distributionTariffKey === 'custom') {
       return customDistributionPrice;
     }
     if (distributionTariffKey && distributionTariffKey !== 'custom') {
@@ -908,8 +908,8 @@ function App() {
                       type="number"
                       className="w-full mt-1 px-2 py-1.5 text-sm border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 focus:border-primary-500 outline-none"
                       placeholder="1.836166"
-                      value={customDistributionPrice || ''}
-                      onChange={(e) => setCustomDistributionPrice(parseFloat(e.target.value) || 0)}
+                      value={customDistributionPrice}
+                      onChange={(e) => setCustomDistributionPrice(e.target.value === '' ? 0 : parseFloat(e.target.value) || 0)}
                       step="0.000001"
                       min="0"
                     />

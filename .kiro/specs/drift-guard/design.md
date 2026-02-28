@@ -72,11 +72,25 @@ class DriftInput:
     endpoint: str
     method: str
     tenant_id: str
-    request_signature: str  # request'in normalize edilmiş temsili
+    request_signature: str  # endpoint + method + risk_class hash
+    config_hash: str         # GuardConfig.config_hash snapshot
     timestamp_ms: int
 ```
 
-### 3. DriftDecision Dataclass (`drift_guard.py`)
+### 3. DriftBaseline Dataclass (`drift_guard.py`) — v0 ekleme
+
+```python
+@dataclass(frozen=True)
+class DriftBaseline:
+    """Startup'ta hesaplanan immutable baseline. Process lifetime boyunca sabit."""
+    config_hash: str                          # Startup anındaki GuardConfig hash
+    known_endpoint_signatures: frozenset[str] # Bilinen endpoint+method+risk_class hash'leri
+    created_at_ms: int
+```
+
+Baseline startup'ta bir kez hesaplanır, hot-reload yok (v0). Yenileme sadece process restart ile.
+
+### 4. DriftDecision Dataclass (`drift_guard.py`)
 
 ```python
 @dataclass(frozen=True)
@@ -88,69 +102,92 @@ class DriftDecision:
     would_enforce: bool = False  # shadow modda "enforce olsaydı block olurdu"
 ```
 
-### 4. DriftInputProvider Protocol (`drift_guard.py`)
+### 5. DriftInputProvider Protocol (`drift_guard.py`)
 
 ```python
 class DriftInputProvider(Protocol):
-    def get_input(self, request: Request, endpoint: str, method: str, tenant_id: str) -> DriftInput:
+    def get_input(self, request: Request, endpoint: str, method: str, tenant_id: str, config: GuardConfig) -> DriftInput:
         """Request'ten drift input üretir. Exception → DRIFT:PROVIDER_ERROR."""
         ...
 ```
 
-Stub implementasyon: `StubDriftInputProvider` — her zaman geçerli `DriftInput` döner (no-drift baseline).
+İki implementasyon:
+- `StubDriftInputProvider` — her zaman geçerli `DriftInput` döner (no-drift baseline, mevcut)
+- `HashDriftInputProvider` — v0: config_hash + endpoint_signature hash hesaplar (deterministik, IO-free)
 
-### 5. evaluate_drift Fonksiyonu (`drift_guard.py`)
+### 6. evaluate_drift Fonksiyonu (`drift_guard.py`) — v0 güncelleme
 
 ```python
-def evaluate_drift(drift_input: DriftInput) -> DriftDecision:
+def evaluate_drift(drift_input: DriftInput, baseline: DriftBaseline) -> DriftDecision:
     """
-    Pure function: DriftInput → DriftDecision.
-    Stub: her zaman is_drift=False döner.
-    Gerçek implementasyon ileride threshold-based olacak.
+    Pure function: DriftInput × DriftBaseline → DriftDecision.
+    v0 politika:
+      - config_hash mismatch → DRIFT:THRESHOLD_EXCEEDED
+      - bilinmeyen endpoint signature → DRIFT:INPUT_ANOMALY
+      - else → no drift
     """
 ```
 
-### 6. GuardConfig Güncellemesi
+### 7. GuardConfig Güncellemesi
 
 ```python
 class GuardConfig(BaseSettings):
     # ... mevcut alanlar ...
     drift_guard_enabled: bool = False          # Varsayılan OFF
     drift_guard_killswitch: bool = False       # Kill-switch (ON → 0 call)
+    drift_guard_fail_open: bool = True         # v0: fail-open (shadow+enforce)
+    drift_guard_provider_timeout_ms: int = 100 # Provider call timeout
 ```
 
-### 7. Middleware Drift Step Wiring
+### 8. Mode Resolution — Tek Kaynak (v0 refactor)
+
+Drift step'teki ad-hoc `_drift_is_shadow` hesaplaması kaldırılır. Yerine:
+
+```python
+# guard_decision_middleware.py — drift step içinde
+from .guard_decision import resolve_effective_mode
+
+effective = resolve_effective_mode(tenant_mode, risk_class)
+# effective == OFF → drift bypass
+# effective == SHADOW → log + proceed
+# effective == ENFORCE → block (drift detected ise)
+```
+
+Bu, snapshot build'deki mode resolution ile birebir aynı fonksiyonu kullanır. Tek kaynak.
+
+### 9. Middleware Drift Step Wiring (v0 güncelleme)
 
 ```python
 # guard_decision_middleware.py — _evaluate_decision() içinde
 # Tenant mode OFF check'inden SONRA, snapshot build'den ÖNCE:
 
+from .guard_decision import resolve_effective_mode
+
 # ── Drift guard step ──────────────────────────────────────────
-drift_reason_codes: list[str] = []
-drift_would_enforce = False
-
 if not config.drift_guard_killswitch and config.drift_guard_enabled:
-    try:
-        drift_input = drift_provider.get_input(request, endpoint, method, tenant_id)
-        drift_decision = evaluate_drift(drift_input)
-        if drift_decision.is_drift:
-            drift_reason_codes.append(drift_decision.reason_code.value)
-            drift_would_enforce = True
-            _emit_drift_metric(current_mode, "drift_detected")
-    except Exception as exc:
-        drift_reason_codes.append(DriftReasonCode.PROVIDER_ERROR.value)
-        drift_would_enforce = True
-        _emit_drift_metric(current_mode, "provider_error")
-
-    # Mode dispatch
-    if drift_reason_codes:
-        if not is_shadow:  # enforce
-            return _build_block_response("OPS_GUARD_DRIFT", drift_reason_codes)
-        # shadow: log + proceed
-        logger.info(f"[GUARD-DECISION] SHADOW drift: {drift_reason_codes}")
+    effective = resolve_effective_mode(tenant_mode, risk_class)
+    if effective != TenantMode.OFF:
+        _drift_is_shadow = (effective == TenantMode.SHADOW)
+        _drift_mode_label = "shadow" if _drift_is_shadow else "enforce"
+        try:
+            drift_input = drift_provider.get_input(request, endpoint, method, tenant_id, config)
+            drift_decision = evaluate_drift(drift_input, drift_baseline)
+            if drift_decision.is_drift:
+                reason_code = drift_decision.reason_code.value
+                _emit_drift_metric(_drift_mode_label, "drift_detected")
+                if not _drift_is_shadow:
+                    return _build_block_response("OPS_GUARD_DRIFT", [reason_code])
+                logger.info(f"[GUARD-DECISION] SHADOW drift: {reason_code}")
+            else:
+                _emit_drift_metric(_drift_mode_label, "no_drift")
+        except Exception as exc:
+            _emit_drift_metric(_drift_mode_label, "provider_error")
+            if not _drift_is_shadow and not config.drift_guard_fail_open:
+                return _build_block_response("OPS_GUARD_DRIFT", [DriftReasonCode.PROVIDER_ERROR.value])
+            logger.info(f"[GUARD-DECISION] Drift provider error (fail-open): {exc}")
 ```
 
-### 8. Metrik Güncellemesi
+### 10. Metrik Güncellemesi
 
 ```python
 # ptf_metrics.py
@@ -182,26 +219,33 @@ Bu tablo 4'lü spy testi ile doğrulanır (Task 4.11).
 
 ## Hata Yönetimi
 
-| Hata Durumu | Shadow | Enforce | Kill-switch ON |
-|---|---|---|---|
-| Provider exception | proceed + DRIFT:PROVIDER_ERROR | 503 block | N/A (provider çağrılmaz) |
-| Evaluator exception | proceed + DRIFT:PROVIDER_ERROR | 503 block | N/A (evaluator çağrılmaz) |
-| Drift detected | proceed + log + wouldEnforce | 503 block | N/A |
-| No drift | proceed | proceed | proceed |
+| Hata Durumu | Shadow | Enforce (fail-open=true) | Enforce (fail-open=false) | Kill-switch ON |
+|---|---|---|---|---|
+| Provider exception | proceed + DRIFT:PROVIDER_ERROR | proceed + DRIFT:PROVIDER_ERROR | 503 block | N/A (provider çağrılmaz) |
+| Provider timeout | proceed + DRIFT:PROVIDER_ERROR | proceed + DRIFT:PROVIDER_ERROR | 503 block | N/A |
+| Evaluator exception | proceed + DRIFT:PROVIDER_ERROR | proceed + DRIFT:PROVIDER_ERROR | 503 block | N/A |
+| Drift detected | proceed + log + wouldEnforce | 503 block | 503 block | N/A |
+| No drift | proceed | proceed | proceed | proceed |
+
+**v0 varsayılan:** `drift_guard_fail_open=true` → Shadow ve Enforce'ta fail-open. Prod deneyimiyle `fail_open=false` geçişi config ile yapılır.
 
 ## Test Stratejisi
 
 ### Unit Test Odağı
 
 - Kill-switch 4'lü spy: provider/evaluator/metrics/telemetry hepsi 0 call
-- Provider failure: shadow → proceed + reason, enforce → 503
+- Provider failure: shadow → proceed + reason, enforce → fail-open (varsayılan) veya 503 (fail_open=false)
+- Provider timeout: timeout_ms aşılınca DRIFT:PROVIDER_ERROR
 - Disabled: provider çağrılmaz
 - Mode dispatch: shadow log + proceed, enforce 503
+- Mode resolution tek kaynak: drift step resolve_effective_mode kullanır
 - Reason code kapalı küme: sadece DRIFT:* prefix
 - wouldEnforce semantiği: shadow+drift → true, disabled → false, kill-switch → false
+- Baseline: config_hash mismatch → THRESHOLD_EXCEEDED, bilinmeyen endpoint → INPUT_ANOMALY
 
-### Property-Based Testing (opsiyonel)
+### Property-Based Testing
 
 - DP-1: Kill-switch ON → 0 side-effect (provider/eval/metric/telemetry)
 - DP-2: Reason code prefix invariant: tüm drift reason'lar DRIFT: ile başlar
 - DP-3: Monotonic safety: drift guard hiçbir koşulda mevcut guard kararını "daha agresif" yapamaz
+- DP-4: Mode consistency: drift step ve snapshot build aynı effective_mode'u hesaplar (resolve_effective_mode tek kaynak)

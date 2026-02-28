@@ -1,0 +1,39 @@
+﻿# Task Dashboard Snapshot - 2026-02-28T19:15+03:00
+
+## Toplam
+Hard (ProdReady-blocking):      17
+Deferred (top-level):           11
+Soft-Safety (recommended):      8
+Soft-Nice (non-blocking):       29
+Done (top-level):               235
+
+## Per-Spec (top=done/deferred/todo  sub=done/deferred/hard  safety  nice)
+audit-history: top=9/0/0 sub=16/0/0 safety=0 nice=0
+ci-enforcement: top=5/0/0 sub=6/0/0 safety=0 nice=0
+concurrency-pbt: top=8/0/0 sub=7/0/0 safety=0 nice=0
+dependency-wrappers: top=18/0/0 sub=34/0/0 safety=0 nice=0
+deploy-integration: top=10/0/0 sub=17/0/0 safety=0 nice=0
+drift-guard: top=10/0/0 sub=29/0/0 safety=0 nice=0
+endpoint-class-policy: top=7/0/0 sub=33/0/0 safety=2 nice=3
+fault-injection: top=12/0/0 sub=19/0/0 safety=0 nice=0
+internal-adoption: top=5/0/0 sub=6/0/0 safety=0 nice=0
+invoice-analysis-system: top=8/7/0 sub=44/0/17 safety=0 nice=0
+load-characterization: top=10/4/0 sub=8/16/0 safety=0 nice=0
+observability-pack: top=8/0/0 sub=17/0/0 safety=0 nice=0
+ops-guard: top=10/0/0 sub=30/0/0 safety=2 nice=3
+pdf-render-worker: top=10/0/0 sub=22/0/0 safety=2 nice=4
+preflight-guardrails: top=9/0/0 sub=16/0/0 safety=0 nice=0
+preflight-telemetry: top=5/0/0 sub=10/0/0 safety=0 nice=0
+ptf-admin-frontend: top=13/0/0 sub=26/0/0 safety=0 nice=0
+ptf-admin-management: top=11/0/0 sub=26/0/0 safety=0 nice=0
+release-e2e-pipeline: top=6/0/0 sub=8/0/0 safety=0 nice=0
+release-gate-telemetry: top=4/0/0 sub=9/0/0 safety=2 nice=6
+release-governance: top=6/0/0 sub=20/0/0 safety=0 nice=0
+release-governance-pack: top=4/0/0 sub=5/0/0 safety=0 nice=0
+runtime-guard-decision: top=15/0/0 sub=31/0/0 safety=0 nice=0
+slo-adaptive-control: top=13/0/0 sub=53/0/0 safety=0 nice=1
+telemetry-unification: top=9/0/0 sub=11/0/0 safety=0 nice=10
+tenant-enable: top=10/0/0 sub=17/0/0 safety=0 nice=2
+
+## Lint Guard
+lint-task-markers.ps1: PASS (0 fail, 17 warn R6 invoice-analysis-system deferred scope)

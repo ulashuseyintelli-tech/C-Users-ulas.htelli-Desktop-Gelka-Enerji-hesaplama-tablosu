@@ -320,7 +320,7 @@ Diğer property'ler (`*` ile işaretli) MVP hızlandırma için atlanabilir.
     - DoD: HOLD path → counter + gauge güncelleniyor; telemetry-insufficient → decision counter artmıyor, health counter artıyor; disabled-by-default → enable gauge = 0
     - _Requirements: 11.1, 11.2, 11.3, 8.5_
 
-  - [ ]* 9.2b `backend/app/adaptive_control/metrics.py` — Extended observability (dashboard/advanced)
+  - [ ]* 9.2b `backend/app/adaptive_control/metrics.py` — Extended observability (dashboard/advanced) {SOFT:NICE}
     - Histogramlar: adaptive_control_loop_duration_seconds
     - Ek counter'lar: adaptive_control_signal_total, adaptive_guard_mode_transition_total, adaptive_pdf_jobs_rejected_total, adaptive_oscillation_detected_total, adaptive_control_failsafe
     - Ek gauge'lar: adaptive_control_state, adaptive_cooldown_active, adaptive_error_budget_remaining_pct

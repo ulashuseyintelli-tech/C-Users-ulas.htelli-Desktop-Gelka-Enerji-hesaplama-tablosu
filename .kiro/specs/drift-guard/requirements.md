@@ -44,9 +44,31 @@ Bir ops mühendisi olarak, drift provider hata verdiğinde mode'a göre tutarlı
 #### Kabul Kriterleri
 - DR4.1: Shadow mode + provider exception → request devam eder + `DRIFT:PROVIDER_ERROR` reason code
 - DR4.2: Shadow mode + provider exception → drift metriği increment edilir
-- DR4.3: Enforce mode + provider exception → 503 block + `DRIFT:PROVIDER_ERROR` reason code
-- DR4.4: Enforce mode + provider exception → `call_next` çağrılmaz
+- DR4.3: Enforce mode + provider exception → fail-open (request devam eder) + `DRIFT:PROVIDER_ERROR` reason code (varsayılan; `drift_guard_fail_open=false` iken 503 block)
+- DR4.4: Enforce mode + provider exception + `drift_guard_fail_open=false` → `call_next` çağrılmaz
 - DR4.5: Disabled mode + provider exception → provider çağrılmaz (exception oluşmaz)
+- DR4.6: Provider call `drift_guard_provider_timeout_ms` (varsayılan 100ms) ile timeout'a tabi
+- DR4.7: Provider timeout → `DRIFT:PROVIDER_ERROR` reason code ile aynı fail semantiği
+
+### US-7: Drift Baseline
+Bir ops mühendisi olarak, drift detection'ın "neye göre drift" sorusuna deterministik cevap vermesini istiyorum.
+
+#### Kabul Kriterleri
+- DR7.1: `DriftBaseline` startup'ta hesaplanır ve process lifetime boyunca immutable tutulur
+- DR7.2: Baseline `config_hash` (GuardConfig snapshot hash) içerir
+- DR7.3: Baseline `endpoint_signatures` (bilinen endpoint + method + risk_class hash'leri) içerir
+- DR7.4: `evaluate_drift(input, baseline)` pure function: input vs baseline karşılaştırması yapar
+- DR7.5: `config_hash` mismatch → `DRIFT:THRESHOLD_EXCEEDED`
+- DR7.6: Bilinmeyen endpoint signature → `DRIFT:INPUT_ANOMALY`
+- DR7.7: Baseline yenileme sadece process restart ile olur (hot-reload yok, v0)
+
+### US-8: Mode Resolution Tek Kaynak
+Bir ops mühendisi olarak, drift guard'ın mode kararının snapshot build ile aynı kaynaktan gelmesini istiyorum.
+
+#### Kabul Kriterleri
+- DR8.1: Drift step `resolve_effective_mode(tenant_mode, risk_class)` kullanır (snapshot ile aynı fonksiyon)
+- DR8.2: Drift step'te ad-hoc mode hesaplaması yapılmaz
+- DR8.3: `effective_mode == OFF` → drift guard bypass (provider çağrılmaz)
 
 ### US-5: Observability
 Bir ops mühendisi olarak, drift guard'ın metrik ve telemetry çıktısının sadece drift gerçekten evaluate edildiğinde üretilmesini istiyorum.
@@ -57,6 +79,7 @@ Bir ops mühendisi olarak, drift guard'ın metrik ve telemetry çıktısının s
 - DR5.3: Kill-switch ON veya disabled modda drift metrikleri ve telemetry üretilmez
 - DR5.4: `ptf_admin_drift_evaluation_total{mode, outcome}` counter eklenir (outcome: `no_drift|drift_detected|provider_error`)
 - DR5.5: Bounded cardinality: 2 mode × 3 outcome = 6 zaman serisi
+- DR5.6: Provider timeout → outcome=`provider_error` olarak sayılır
 
 ### US-6: wouldEnforce Semantiği
 Bir ops mühendisi olarak, `wouldEnforce` alanının drift bağlamında doğru set edilmesini istiyorum.

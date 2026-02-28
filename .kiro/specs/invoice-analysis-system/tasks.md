@@ -109,7 +109,7 @@ Bu plan, elektrik faturalarını analiz eden ve alternatif enerji teklifi hesapl
     - _Requirements: 4.6_
   - [x] 12.5 Full test suite: 423 tests passing
 
-- [ ] 4. Validator Güncellemesi
+- [d] 4. Validator Güncellemesi — **Deferred: Prod Hardening (veri kalitesi / yanlış pozitif riski — ETTN format, çok zamanlı tutarlılık, reaktif ceza)**
   - [ ] 4.1 Yeni alanlar için validasyon kuralları
     - ETTN format kontrolü (UUID)
     - Çok zamanlı tutarlılık (T1+T2+T3 = Toplam)
@@ -120,10 +120,9 @@ Bu plan, elektrik faturalarını analiz eden ve alternatif enerji teklifi hesapl
     - Yeni tedarikçiler için tolerans değerleri
     - _Requirements: 4.6_
 
-- [ ] 5. Checkpoint - Backend Güncellemeleri
-  - Ensure all tests pass, ask the user if questions arise.
+- [d] 5. Checkpoint - Backend Güncellemeleri — **Deferred (depends on Task 4)**
 
-- [ ] 6. Property Tests Güncelleme
+- [d] 6. Property Tests Güncelleme — **Deferred: Prod Hardening (depends on Task 4)**
   - [ ] 6.1 Yeni modeller için property tests
     - **Property 16: Çok Zamanlı Tutarlılık**
     - **Property 17: Reaktif Ceza Kontrolü**
@@ -134,7 +133,7 @@ Bu plan, elektrik faturalarını analiz eden ve alternatif enerji teklifi hesapl
     - Yeni model yapısına uyum
     - _Requirements: 5.2, 5.3_
 
-- [ ] 7. API Endpoint Güncellemeleri
+- [d] 7. API Endpoint Güncellemeleri — **Deferred: Prod Hardening (müşteri yüzünde tedarikçi listesi + response model)**
   - [ ] 7.1 GET /suppliers endpoint
     - Desteklenen tedarikçi listesi
     - _Requirements: 7.6_
@@ -143,7 +142,7 @@ Bu plan, elektrik faturalarını analiz eden ve alternatif enerji teklifi hesapl
     - Yeni alanların API response'a eklenmesi
     - _Requirements: 6.2, 6.4_
 
-- [ ] 8. Fatura Test Senaryoları
+- [d] 8. Fatura Test Senaryoları — **Deferred: Prod Hardening (tedarikçi bazlı regression koruması)**
   - [ ] 8.1 Enerjisa fatura testi
   - [ ] 8.2 CK Boğaziçi fatura testi
   - [ ] 8.3 Uludağ fatura testi
@@ -151,10 +150,7 @@ Bu plan, elektrik faturalarını analiz eden ve alternatif enerji teklifi hesapl
   - [ ] 8.5 Reaktif cezalı fatura testi
   - _Requirements: 2.1, 2.2, 6.1-6.5_
 
-- [ ] 9. Final Checkpoint
-  - Ensure all tests pass, ask the user if questions arise.
-  - Tüm tedarikçiler için fatura tanıma doğrulaması
-  - Yeni alanların doğru çıkarıldığını kontrol et
+- [d] 9. Final Checkpoint — **Deferred (depends on Task 4-8)**
 
 - [x] 13. Sprint 8.5 - Actionability
   - [x] 13.1 ActionHint data model
@@ -240,7 +236,7 @@ Bu plan, elektrik faturalarını analiz eden ve alternatif enerji teklifi hesapl
     - Zero rate edge case golden test
     - _Requirements: 4.9_
 
-- [ ] 15. Sprint 8.7 - Feedback Loop
+- [d] 15. Sprint 8.7 - Feedback Loop — **Deferred: Phase 2 (separate sprint, requires feedback data from production)**
   - [ ] 15.1 Data Models (incident_metrics.py)
     - FeedbackAction enum (VERIFIED_OCR, VERIFIED_LOGIC, ACCEPTED_ROUNDING, ESCALATED, NO_ACTION_REQUIRED)
     - IncidentFeedback dataclass
@@ -301,6 +297,54 @@ Bu plan, elektrik faturalarını analiz eden ve alternatif enerji teklifi hesapl
 
 ---
 
+## Prod Hardening Sprint Planı
+
+Hedef: ProdReady Gate #1-3 kapatma. 2 faz, risk-azaltan sıra.
+
+### Faz A — Doğruluk Çekirdeği (Gün 1)
+
+| Sıra | Task | Gate | Deliverable | Acceptance Criteria |
+|------|------|------|-------------|---------------------|
+| A1 | 4.1 Validasyon kuralları | #1 | `ValidationErrorCode` enum (kapalı küme) + ETTN UUID parse + T1+T2+T3 tutarlılık + reaktif ceza kontrol | ETTN regex match, T1+T2+T3=Toplam (tolerans %1), endüktif %33 / kapasitif %20 eşik |
+| A2 | 4.2 Tedarikçi tolerans | #1 | Supplier profile → tolerans parametreleri | Her supplier için yuvarlama toleransı + alan isim varyantları tanımlı |
+| A3 | 7.2 Response model | #3 | Yeni alanlar API response'a eklendi, versiyon notu | Breaking change yok, eski client'lar çalışır, yeni alanlar nullable |
+| — | Milestone: Checkpoint 5 | — | Mevcut 490 test hâlâ yeşil | Regression guard |
+
+### Faz B — Prod Koruması (Gün 2)
+
+| Sıra | Task | Gate | Deliverable | Acceptance Criteria |
+|------|------|------|-------------|---------------------|
+| B1 | 8.4 Çok zamanlı fatura testi | #2 | T1-T2-T3 fixture + golden test | T1+T2+T3=Toplam doğrulanır, tutarsızlık flag üretir |
+| B2 | 8.5 Reaktif cezalı fatura testi | #2 | Reaktif ceza fixture + golden test | Endüktif/kapasitif eşik aşımı doğru tespit edilir |
+| B3 | 8.1 Enerjisa fatura testi | #2 | Gerçek fatura fixture + golden test | Extraction + validation + calculator doğru |
+| B4 | 8.2 CK Boğaziçi fatura testi | #2 | Gerçek fatura fixture + golden test | Extraction + validation + calculator doğru |
+| B5 | 8.3 Uludağ fatura testi | #2 | Gerçek fatura fixture + golden test | Extraction + validation + calculator doğru |
+| B6 | 7.1 GET /suppliers endpoint | #3 | Desteklenen tedarikçi listesi API'si | JSON response, supplier listesi doğru |
+| B7 | 6.1-6.2 Property tests | Supporting | PBT: ETTN format + T1+T2+T3 tutarlılık + error code kapalı küme | Hypothesis 200 example, tümü yeşil |
+| — | Milestone: Checkpoint 9 | — | 3 gate kapanır → ProdReady = YES | Final regression + gate checklist |
+
+### Fixture Convention
+
+```
+tests/fixtures/invoices/{supplier}_{scenario}.json
+```
+
+Örnekler: `enerjisa_standard.json`, `uludag_multitime.json`, `ckbogazici_reactive_penalty.json`
+
+### Risk Notu
+
+En büyük risk 8.4 + 8.5: çok zamanlı + reaktif cezalı faturalar. Bunlar yeşil olmadan prod'a çıkma — "yanlış teklif" riski burada patlar.
+
+### Prod Çıkış Checklist
+
+- [ ] ValidationErrorCode enum kapalı küme ve dokümante
+- [ ] 5 supplier test senaryosu yeşil
+- [ ] /suppliers endpoint + response model stable (versiyon notu)
+- [ ] Mevcut 490+ test hâlâ yeşil
+- [ ] Final checkpoint raporu: "neden prod-ready"
+
+---
+
 ## Notes
 
 - Extraction prompt v3 kullanılıyor (genişletilmiş tedarikçi ve alan desteği)
@@ -346,3 +390,36 @@ Bu plan, elektrik faturalarını analiz eden ve alternatif enerji teklifi hesapl
 - **Sprint 9 - Preventive Fixes** (Beklemede):
   - Sprint 8.7'den gelen feedback verisi olmadan başlanmayacak
   - Kanıta dayalı karar için istatistik gerekli
+
+## Spec Status
+
+```
+Status:              CORE_DONE_NOT_PROD_READY
+Owner:               —
+Done:                8 top-level tasks (1, 2, 3, 10, 11, 12, 13, 14)
+Deferred:            7 top-level tasks
+  Prod Hardening:    5 tasks (4, 6, 7, 8 + checkpoint 5, 9)
+  Phase 2:           1 task (15: feedback loop — prod data bağımlı)
+Sub-task hard TODO:  17 (deferred scope altında — prod hardening devreye alınırsa yapılacak iş)
+Sub-task soft TODO:  0
+Test count:          490 passing
+
+ProdReady Gate (bu üçü yoksa prod'a çıkma):
+  ❌ 1. Validator: ETTN format + çok zamanlı tutarlılık + reaktif ceza validasyonu
+  ❌ 2. Supplier tests: En az 5 tedarikçi gerçek fatura senaryosu
+  ❌ 3. API contract: /suppliers endpoint + response model versiyonlanmış
+  Risk: Bu gate'ler olmadan prod = yanlış teklif / yanlış kıyas riski
+
+ExitCriteria_Core:
+  ✅ 1. Extraction + calculator + mismatch detection çalışıyor
+  ✅ 2. Actionability (action hints) çalışıyor
+  ✅ 3. System health dashboard çalışıyor
+
+ExitCriteria_ProdReady:
+  1. Task 4 (Validator): ETTN format + çok zamanlı tutarlılık + reaktif ceza validasyonu
+  2. Task 8 (Supplier tests): En az 5 tedarikçi için regression test
+  3. Task 7.2 (Response model): Yeni alanların API response'a eklenmesi
+
+ExitCriteria_Closeout:
+  1. Task 15 (Feedback Loop): Prod'dan feedback data toplandıktan sonra
+```

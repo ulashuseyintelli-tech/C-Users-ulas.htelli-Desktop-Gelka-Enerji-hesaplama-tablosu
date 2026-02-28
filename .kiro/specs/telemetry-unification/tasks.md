@@ -24,12 +24,12 @@ Mevcut `PTFMetrics` sınıfını `prometheus_client` tiplerine migrate et, `/met
     - `generate_metrics()` — `generate_latest(self._registry)` çağır
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 3.2_
 
-  - [ ]* 1.2 Property test: Snapshot round-trip correctness — **Deferred (nice-to-have). Not required for MVP / functional observability.**
+  - [ ]* 1.2 Property test: Snapshot round-trip correctness — **Deferred (nice-to-have). Not required for MVP / functional observability.** {SOFT:NICE}
     - **Property 2: Snapshot round-trip correctness**
     - `@given(random_metric_increments())` — rastgele artışlar sonrası snapshot değerleri doğru
     - **Validates: Requirements 2.5**
 
-  - [ ]* 1.3 Property test: Reset clears all metrics — **Deferred (nice-to-have). Not required for MVP / functional observability.**
+  - [ ]* 1.3 Property test: Reset clears all metrics — **Deferred (nice-to-have). Not required for MVP / functional observability.** {SOFT:NICE}
     - **Property 3: Reset clears all metrics**
     - `@given(random_metric_increments())` — reset sonrası tüm değerler sıfır
     - **Validates: Requirements 2.6**
@@ -54,12 +54,12 @@ Mevcut `PTFMetrics` sınıfını `prometheus_client` tiplerine migrate et, `/met
   - [x] 3.3 History endpoint'ine metrik entegrasyonu — `GET /admin/market-prices/history` handler'ına `inc_history_query()` ve `time_history_query()` çağrıları ekle
     - _Requirements: 3.1, 3.2_
 
-  - [ ]* 3.4 Property test: Prometheus output validity and completeness — **Deferred (nice-to-have). Not required for MVP / functional observability.**
+  - [ ]* 3.4 Property test: Prometheus output validity and completeness — **Deferred (nice-to-have). Not required for MVP / functional observability.** {SOFT:NICE}
     - **Property 1: Prometheus output validity and completeness**
     - `@given(random_metric_increments())` — /metrics çıktısı valid format ve tüm ptf_admin_ metrikleri içerir
     - **Validates: Requirements 1.1, 1.4**
 
-  - [ ]* 3.5 Property test: HTTP request metrics tracking — **Deferred (nice-to-have). Not required for MVP / functional observability.**
+  - [ ]* 3.5 Property test: HTTP request metrics tracking — **Deferred (nice-to-have). Not required for MVP / functional observability.** {SOFT:NICE}
     - **Property 4: HTTP request metrics tracking**
     - `@given(random_http_requests())` — middleware doğru label'larla sayaç artırır
     - **Validates: Requirements 3.3, 3.4**
@@ -85,17 +85,17 @@ Mevcut `PTFMetrics` sınıfını `prometheus_client` tiplerine migrate et, `/met
     - Response: `{ status, accepted_count, rejected_count }`
     - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.7, 6.8, 6.9, 6.10, 6.11, 6.12_
 
-  - [ ]* 5.3 Property test: Event ingestion increments counters — **Deferred (nice-to-have). Not required for MVP / functional observability.**
+  - [ ]* 5.3 Property test: Event ingestion increments counters — **Deferred (nice-to-have). Not required for MVP / functional observability.** {SOFT:NICE}
     - **Property 7: Event ingestion increments counters for valid events**
     - `@given(random_valid_event_batches())` — tüm valid event'ler için counter artırılır
     - **Validates: Requirements 6.1, 6.2, 6.6**
 
-  - [ ]* 5.4 Property test: Partial batch acceptance — **Deferred (nice-to-have). Not required for MVP / functional observability.**
+  - [ ]* 5.4 Property test: Partial batch acceptance — **Deferred (nice-to-have). Not required for MVP / functional observability.** {SOFT:NICE}
     - **Property 8: Partial batch acceptance**
     - `@given(random_mixed_event_batches())` — valid/invalid ayrımı doğru
     - **Validates: Requirements 6.5**
 
-  - [ ]* 5.5 Property test: Frontend event Prometheus counter — **Deferred (nice-to-have). Not required for MVP / functional observability.**
+  - [ ]* 5.5 Property test: Frontend event Prometheus counter — **Deferred (nice-to-have). Not required for MVP / functional observability.** {SOFT:NICE}
     - **Property 9: Frontend event Prometheus counter**
     - `@given(random_valid_event_batches())` — Prometheus counter doğru artırılır
     - **Validates: Requirements 6.7**
@@ -111,12 +111,12 @@ Mevcut `PTFMetrics` sınıfını `prometheus_client` tiplerine migrate et, `/met
     - **Flush failure**: batch discard edilir, retry yapılmaz
     - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7_
 
-  - [ ]* 7.2 Property test: Event construction correctness (fast-check) — **Deferred (nice-to-have). Not required for MVP / functional observability.**
+  - [ ]* 7.2 Property test: Event construction correctness (fast-check) — **Deferred (nice-to-have). Not required for MVP / functional observability.** {SOFT:NICE}
     - **Property 5: Event construction correctness**
     - Rastgele event name ve properties ile oluşturulan event'in doğru yapıda olduğunu doğrula
     - **Validates: Requirements 4.2**
 
-  - [ ]* 7.3 Property test: Event batching behavior (fast-check) — **Deferred (nice-to-have). Not required for MVP / functional observability.**
+  - [ ]* 7.3 Property test: Event batching behavior (fast-check) — **Deferred (nice-to-have). Not required for MVP / functional observability.** {SOFT:NICE}
     - **Property 6: Event batching behavior**
     - N rapid trackEvent çağrısı sonrası tek POST gönderildiğini doğrula
     - **Validates: Requirements 4.5**
@@ -134,7 +134,7 @@ Mevcut `PTFMetrics` sınıfını `prometheus_client` tiplerine migrate et, `/met
   - [x] 8.4 `frontend/src/market-prices/PriceFilters.tsx` — `ptf_admin.filter_change` event'i ekle
     - _Requirements: 5.8_
 
-  - [ ]* 8.5 Unit tests: Hook telemetri entegrasyonları — **Deferred (nice-to-have). Not required for MVP / functional observability.**
+  - [ ]* 8.5 Unit tests: Hook telemetri entegrasyonları — **Deferred (nice-to-have). Not required for MVP / functional observability.** {SOFT:NICE}
     - Mock `trackEvent` ve her hook'ta doğru event name/properties ile çağrıldığını doğrula
     - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8_
 

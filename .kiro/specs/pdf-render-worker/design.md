@@ -150,16 +150,24 @@ class PdfArtifactStore:
 
 ### 4. Güvenlik Bileşenleri
 
+> **Design Drift Notu (2026-02-27):** `pdf_security.py` ayrı modül olarak oluşturulmadı. Güvenlik kontrolleri `pdf_api.py` içine inline edildi:
+> - Template allowlist: `PDF_TEMPLATE_ALLOWLIST` env var → `_get_template_allowlist()` (pdf_api.py)
+> - Payload size limit: `PDF_MAX_PAYLOAD_BYTES` env var (varsayılan 256KB)
+> - URL allowlist: **N/A.** Render path `page.set_content(html)` kullanıyor, URL navigation yok. SSRF riski geçerli değil.
+> - HTML sanitization: **N/A.** Payload server-side template pipeline ile üretiliyor; raw HTML injection vektörü yok.
+> - Sandbox: Playwright varsayılan sandbox modunda çalışıyor (`chromium.launch()` — `--no-sandbox` argümanı geçilmiyor).
+
 ```python
+# Orijinal tasarım (implement edilmedi — inline güvenlik kontrolleri kullanıldı):
 # backend/app/services/pdf_security.py
 
 class PdfSecurityConfig:
     template_allowlist: set[str]
-    url_allowlist: list[str]  # regex patterns
+    url_allowlist: list[str]  # regex patterns — N/A (no URL navigation)
 
-def validate_template(name: str, allowlist: set[str]) -> bool: ...
-def validate_url(url: str, allowlist: list[str]) -> bool: ...
-def sanitize_html_variables(variables: dict) -> dict: ...  # HTML escape
+def validate_template(name: str, allowlist: set[str]) -> bool: ...  # → pdf_api.py inline
+def validate_url(url: str, allowlist: list[str]) -> bool: ...       # → N/A
+def sanitize_html_variables(variables: dict) -> dict: ...            # → N/A
 ```
 
 ### 5. API Endpoint'leri
@@ -181,15 +189,21 @@ async def download_pdf(job_id: str) -> Response: ...
 
 ### 6. Fail-Safe Politikası
 
+> **Design Drift Notu (2026-02-27):** `pdf_failsafe.py` modülü oluşturulmadı. MVP'de yalnızca strict modu implement edildi:
+> - Store/enqueue unavailable → HTTP 503 + `PDF_RENDER_UNAVAILABLE` (pdf_api.py inline)
+> - `degrade` modu (HTML fallback + `X-Pdf-Fallback: html` header) MVP scope'unda değil; istemci tarafı kendi fallback'ini yönetiyor.
+> - Gerekirse gelecekte ayrı PR ile `FailSafePolicy` enum ve configurable policy eklenebilir.
+
 ```python
+# Orijinal tasarım (degrade modu implement edilmedi — strict-only):
 # backend/app/services/pdf_failsafe.py
 
 class FailSafePolicy(str, Enum):
-    STRICT = "strict"    # 503 döndür
-    DEGRADE = "degrade"  # HTML fallback
+    STRICT = "strict"    # 503 döndür — ✅ implement edildi (pdf_api.py inline)
+    DEGRADE = "degrade"  # HTML fallback — ❌ deferred
 
-def check_worker_health(redis_conn: Redis) -> bool: ...
-def handle_unavailable(policy: FailSafePolicy, html: str | None) -> Response: ...
+def check_worker_health(redis_conn: Redis) -> bool: ...        # → pdf_api.py: _get_store() None check
+def handle_unavailable(policy: FailSafePolicy, html: str | None) -> Response: ...  # → deferred
 ```
 
 ## Veri Modelleri
@@ -269,12 +283,13 @@ class PdfRenderConfig(BaseModel):
 **Validates: Requirements 6.1, 6.2, 6.3**
 
 ### Property 5: Allowlist Doğrulaması
-*Her hangi bir* template adı veya URL için, allowlist'te olmayan değerler reddedilmeli, allowlist'te olan değerler kabul edilmelidir. Boş allowlist durumunda tüm değerler reddedilmelidir.
-**Validates: Requirements 8.1, 8.2**
+*Her hangi bir* template adı ~~veya URL~~ için, allowlist'te olmayan değerler reddedilmeli, allowlist'te olan değerler kabul edilmelidir. Boş allowlist durumunda tüm değerler reddedilmelidir.
+**Validates: Requirements 8.1** ~~8.2~~ *(8.2 N/A — URL navigation yok)*
 
 ### Property 6: HTML Sanitizasyon
-*Her hangi bir* kullanıcı girdisi için, `sanitize_html_variables()` fonksiyonu HTML özel karakterlerini (`<`, `>`, `&`, `"`, `'`) escape etmelidir. Sanitize edilmiş çıktı, orijinal girdi ile aynı metin içeriğini korumalı ancak HTML tag'leri içermemelidir.
-**Validates: Requirements 8.3**
+> **N/A — Design Drift (2026-02-27).** Server-side template rendering kullanılıyor; kullanıcı girdisi doğrudan HTML'e enjekte edilmiyor. Bu property test gerekli değil.
+~~*Her hangi bir* kullanıcı girdisi için, `sanitize_html_variables()` fonksiyonu HTML özel karakterlerini (`<`, `>`, `&`, `"`, `'`) escape etmelidir. Sanitize edilmiş çıktı, orijinal girdi ile aynı metin içeriğini korumalı ancak HTML tag'leri içermemelidir.~~
+~~**Validates: Requirements 8.3**~~
 
 ### Property 7: Metrik Kayıt Tutarlılığı
 *Her hangi bir* job durum geçişi dizisi için, `ptf_admin_pdf_jobs_total` sayacının toplam değeri, oluşturulan toplam job sayısı ile tutarlı olmalıdır. Her başarısız job için `ptf_admin_pdf_failures_total` sayacı da artırılmış olmalıdır.

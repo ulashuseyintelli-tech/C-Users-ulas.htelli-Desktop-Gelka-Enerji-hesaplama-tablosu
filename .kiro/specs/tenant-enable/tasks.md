@@ -14,7 +14,7 @@ Mevcut Guard Decision Layer'a tenant bazlı override yeteneği eklenir. Config a
     - `_FALLBACK_DEFAULTS` dict'ine yeni alanların default değerlerini ekle
     - _Requirements: 3.1, 3.2, 3.3, 3.4_
 
-  - [ ]* 1.2 GuardConfig tenant alanları için unit test yaz
+  - [ ]* 1.2 GuardConfig tenant alanları için unit test yaz {SOFT:NICE}
     - Geçerli default_mode değerleri kabul edilir
     - Geçersiz default_mode değeri validator hatası üretir
     - Boş JSON string'ler kabul edilir
@@ -101,7 +101,7 @@ Mevcut Guard Decision Layer'a tenant bazlı override yeteneği eklenir. Config a
     - Metrik emisyonunda `sanitize_metric_tenant` kullan
     - _Requirements: 6.1, 6.2, 6.3, 6.4, 8.1_
 
-  - [ ]* 7.2 Middleware tenant mode entegrasyonu için unit test yaz
+  - [ ]* 7.2 Middleware tenant mode entegrasyonu için unit test yaz {SOFT:NICE}
     - tenant_mode=off → passthrough
     - tenant_mode=shadow → BLOCK verdict'te log+metrik, request geçer
     - tenant_mode=enforce → BLOCK verdict'te 503

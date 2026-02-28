@@ -105,8 +105,10 @@ PDF Render Worker, HTML template'lerden PDF üretimini API request path'inden iz
 #### Kabul Kriterleri
 
 1. THE PdfRenderWorker SHALL render isteğindeki template adını Template_Allowlist'e karşı doğrulamak; listede olmayan template'leri `TEMPLATE_ERROR` hata koduyla reddetmek
-2. WHEN Playwright bir URL'ye navigate etmesi gerektiğinde, THE PdfRenderWorker SHALL URL'yi URL_Allowlist'e karşı doğrulamak; listede olmayan URL'leri reddetmek
-3. THE PdfRenderWorker SHALL kullanıcı girdilerini HTML injection'a karşı sanitize etmek; template'e enjekte edilen değişkenleri escape etmek
+2. ~~WHEN Playwright bir URL'ye navigate etmesi gerektiğinde, THE PdfRenderWorker SHALL URL'yi URL_Allowlist'e karşı doğrulamak; listede olmayan URL'leri reddetmek~~
+   > **N/A — Design Drift (2026-02-27).** Render path URL navigation yapmıyor; `_render_in_child()` → `page.set_content(html, ...)` ile doğrudan HTML string render ediyor. Playwright hiçbir zaman harici URL'ye navigate etmiyor. SSRF riski bu mimari için geçerli değil. Evidence: `pdf_render_worker.py::_render_in_child` Line 68.
+3. ~~THE PdfRenderWorker SHALL kullanıcı girdilerini HTML injection'a karşı sanitize etmek; template'e enjekte edilen değişkenleri escape etmek~~
+   > **N/A — Design Drift (2026-02-27).** Payload, server-side template pipeline tarafından üretiliyor; kullanıcı girdisi doğrudan HTML'e enjekte edilmiyor. API katmanında `PDF_MAX_PAYLOAD_BYTES` size limit ve `PDF_TEMPLATE_ALLOWLIST` template kısıtlaması mevcut. Raw HTML injection vektörü yok. Evidence: `pdf_api.py::create_pdf_job()` — payload dict olarak alınıyor, template_name allowlist'e karşı doğrulanıyor; `pdf_render_worker.py::render_pdf_job()` — `html_renderer(template_name, payload)` callable ile HTML üretiliyor veya payload'dan `html` key'i okunuyor (internal use).
 4. THE PdfRenderWorker SHALL Playwright browser'ı `--no-sandbox` olmadan çalıştırmak; sandbox modunu aktif tutmak
 5. THE API SHALL PDF download endpoint'ini yetkilendirme kontrolü ile korumak; yalnızca job'u oluşturan kullanıcı veya admin erişebilmek
 
@@ -129,8 +131,10 @@ PDF Render Worker, HTML template'lerden PDF üretimini API request path'inden iz
 #### Kabul Kriterleri
 
 1. WHEN PdfRenderWorker erişilemez durumda olduğunda (Redis bağlantısı yok veya worker process down), THE API SHALL HTTP 503 yanıtı döndürmek ve `error_code: PDF_RENDER_UNAVAILABLE` mesajı içermek
-2. WHEN fail-safe politikası `degrade` modunda yapılandırıldığında ve worker erişilemez olduğunda, THE API SHALL PDF yerine render edilmiş HTML içeriğini döndürmek ve yanıta `X-Pdf-Fallback: html` header'ı eklemek
-3. THE API SHALL fail-safe politikasını yapılandırılabilir yapmak: `strict` (sadece 503) veya `degrade` (HTML fallback)
+2. ~~WHEN fail-safe politikası `degrade` modunda yapılandırıldığında ve worker erişilemez olduğunda, THE API SHALL PDF yerine render edilmiş HTML içeriğini döndürmek ve yanıta `X-Pdf-Fallback: html` header'ı eklemek~~
+   > **Deferred — Strict-Only (2026-02-27).** MVP'de yalnızca `strict` modu implement edildi (503 döner). `degrade` modu (HTML fallback) MVP scope'unda değil; istemci tarafı zaten kendi HTML fallback'ini yönetiyor. Gerekirse gelecekte ayrı PR ile eklenebilir. Evidence: `pdf_api.py` — store/enqueue unavailable → 503; `FailSafePolicy` enum ve `pdf_failsafe.py` modülü oluşturulmadı.
+3. ~~THE API SHALL fail-safe politikasını yapılandırılabilir yapmak: `strict` (sadece 503) veya `degrade` (HTML fallback)~~
+   > **Deferred — Strict-Only (2026-02-27).** Yukarıdaki 10.2 ile aynı gerekçe. Yapılandırılabilir fail-safe politikası MVP scope'unda değil.
 4. WHEN worker tekrar erişilebilir duruma geldiğinde, THE API SHALL otomatik olarak normal PDF render moduna dönmek
 
 ### Gereksinim 11: API Endpoint'leri

@@ -1,0 +1,21 @@
+{
+  "meta": {
+    "supplier": "enerjisa",
+    "scenario": "missing_periods",
+    "currency": "TRY",
+    "timezone": "Europe/Istanbul"
+  },
+  "invoice": {
+    "ettn": "550e8400-e29b-41d4-a716-446655440000",
+    "reactive": {
+      "penalty_amount": 0,
+      "penalty_kvarh": 0
+    }
+  },
+  "expected": {
+    "valid": false,
+    "errors": [
+      {"code": "MISSING_FIELD", "field": "periods"}
+    ]
+  }
+}

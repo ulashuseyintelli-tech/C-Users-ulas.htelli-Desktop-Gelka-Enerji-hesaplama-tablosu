@@ -710,6 +710,229 @@ Rollout timestamp ile `store_start_time_seconds` karşılaştırması:
 
 ---
 
+# Ops Guard — Operasyonel Prosedürler
+
+Bu bölüm, ops-guard bileşenlerinin (kill-switch, rate limiter, circuit breaker) operasyonel yönetimi için adım adım prosedürleri içerir. Alert triage sonrası müdahale için referans olarak kullanılır.
+
+---
+
+### Kill-Switch Yönetimi
+
+### Kill-Switch Açma (Acil Engelleme)
+
+**Ne zaman:** Bulk import hasarı, abuse tespiti veya planlı bakım sırasında belirli işlevleri anında durdurmak gerektiğinde.
+
+**Adımlar:**
+
+1. Mevcut durumu kontrol et:
+   ```bash
+   curl -s -H "X-Admin-Key: $ADMIN_KEY" https://<host>/admin/ops/kill-switches | jq .
+   ```
+
+2. Global import kill-switch aç:
+   ```bash
+   curl -s -X PUT -H "X-Admin-Key: $ADMIN_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{"enabled": true, "reason": "Incident #1234 — bulk import durduruldu"}' \
+     https://<host>/admin/ops/kill-switches/global_import
+   ```
+
+3. Degrade mode aç (tüm write path kapatılır, sadece read):
+   ```bash
+   curl -s -X PUT -H "X-Admin-Key: $ADMIN_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{"enabled": true, "reason": "DB maintenance — read-only mode"}' \
+     https://<host>/admin/ops/kill-switches/degrade_mode
+   ```
+
+4. Tenant bazlı engelleme:
+   ```bash
+   curl -s -X PUT -H "X-Admin-Key: $ADMIN_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{"enabled": true, "reason": "Tenant abuse tespiti"}' \
+     https://<host>/admin/ops/kill-switches/tenant:TENANT_ID
+   ```
+
+5. Doğrulama:
+   - `ptf_admin_killswitch_state{switch_name}` gauge → 1 olmalı
+   - Audit loglarında `[KILLSWITCH]` entry doğrula
+   - Grafana → Ops Guard Status → Kill-Switch State panelinde kırmızı
+
+### Kill-Switch Kapatma (Normal Operasyona Dönüş)
+
+1. Switch'i deaktive et:
+   ```bash
+   curl -s -X PUT -H "X-Admin-Key: $ADMIN_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{"enabled": false, "reason": "Incident #1234 resolved"}' \
+     https://<host>/admin/ops/kill-switches/global_import
+   ```
+
+2. Doğrulama:
+   - `ptf_admin_killswitch_state{switch_name}` gauge → 0
+   - Trafik akışını izle — 503'ler durmalı
+   - PTFAdminKillSwitchActivated alert'i resolve olmalı
+
+### Kill-Switch Failure Semantiği
+
+| Endpoint Sınıfı | Hata Davranışı | Gerekçe |
+|---|---|---|
+| High-risk (import/apply, bulk write) | Fail-closed (503) | Kontrolsüz bulk write veriyi bozabilir |
+| Diğer (GET, tekil upsert, lookup) | Fail-open (istek geçer) | Read/tekil write durdurulmamalı |
+
+Fail-open durumda `ptf_admin_killswitch_fallback_open_total` counter artar → PTFAdminGuardInternalError alert'i tetiklenir.
+
+---
+
+### Rate Limit Tuning
+
+### Mevcut Limitleri Görüntüleme
+
+```bash
+curl -s -H "X-Admin-Key: $ADMIN_KEY" https://<host>/admin/ops/status | jq .
+```
+
+### Limit Değerlerini Değiştirme
+
+Rate limit eşikleri env var ile konfigüre edilir. Değişiklik redeploy gerektirir.
+
+| Env Var | Default | Açıklama |
+|---------|---------|----------|
+| `OPS_GUARD_RATE_LIMIT_IMPORT_PER_MINUTE` | 10 | Bulk import endpoint limiti |
+| `OPS_GUARD_RATE_LIMIT_HEAVY_READ_PER_MINUTE` | 120 | Heavy read endpoint limiti |
+| `OPS_GUARD_RATE_LIMIT_DEFAULT_PER_MINUTE` | 60 | Diğer endpoint'ler |
+
+**Adımlar:**
+
+1. Mevcut deny rate'i kontrol et:
+   ```promql
+   sum(rate(ptf_admin_rate_limit_total{decision="rejected"}[5m])) by (endpoint)
+   ```
+
+2. Hangi endpoint'lerin etkilendiğini belirle:
+   ```promql
+   topk(10, sum(rate(ptf_admin_rate_limit_total{decision="rejected"}[15m])) by (endpoint))
+   ```
+
+3. Env var'ı güncelle ve redeploy et:
+   ```bash
+   # Örnek: import limitini 10 → 20'ye çıkar
+   kubectl set env deployment/ptf-admin OPS_GUARD_RATE_LIMIT_IMPORT_PER_MINUTE=20
+   ```
+
+4. Doğrulama:
+   - `ptf_admin_rate_limit_total{decision="rejected"}` rate düşmeli
+   - PTFAdminRateLimitSpike alert'i resolve olmalı
+
+### Rate Limit Fail-Closed Politikası
+
+Rate limiter iç hatası durumunda istek reddedilir (fail-closed). Bu güvenlik öncelikli bir karardır. Eğer rate limiter hatası nedeniyle meşru trafik engelleniyorsa:
+
+1. `ptf_admin_rate_limit_total` metriğini kontrol et — decision label'ı "rejected" mi
+2. Uygulama loglarında rate limiter exception'larını ara
+3. Acil bypass gerekiyorsa: pod restart genellikle rate limiter state'ini sıfırlar
+
+---
+
+### Circuit Breaker Reset Prosedürü
+
+### CB Durumunu Kontrol Etme
+
+```bash
+curl -s -H "X-Admin-Key: $ADMIN_KEY" https://<host>/admin/ops/status | jq .circuit_breakers
+```
+
+```promql
+# CB state by dependency (0=closed, 1=half-open, 2=open)
+ptf_admin_circuit_breaker_state
+```
+
+### CB Açık Kaldığında (Open State)
+
+CB open state'te kalması bağımlılık arızasının devam ettiği anlamına gelir. Normal akış:
+
+1. CB open → `cb_open_duration_seconds` (default: 30s) sonra half-open'a geçer
+2. Half-open'da `cb_half_open_max_requests` (default: 3) kadar probe isteği gönderilir
+3. Probe başarılı → closed'a döner
+4. Probe başarısız → tekrar open'a döner
+
+**Bağımlılık hâlâ down ise:**
+- CB otomatik koruma sağlıyor, müdahale gerekmez
+- Bağımlılığı kurtarmaya odaklanın (DB restart, upstream fix)
+- CB recovery otomatik olacaktır
+
+**Bağımlılık düzeldi ama CB hâlâ open ise:**
+- `cb_open_duration_seconds` süresini bekleyin (half-open'a geçecek)
+- Acil reset gerekiyorsa: pod restart CB state'ini sıfırlar
+  ```bash
+  kubectl rollout restart deployment/ptf-admin
+  ```
+
+### CB Threshold Tuning
+
+| Env Var | Default | Açıklama |
+|---------|---------|----------|
+| `OPS_GUARD_CB_ERROR_THRESHOLD_PCT` | 50.0 | Hata oranı eşiği (%) |
+| `OPS_GUARD_CB_OPEN_DURATION_SECONDS` | 30.0 | Open → half-open geçiş süresi |
+| `OPS_GUARD_CB_HALF_OPEN_MAX_REQUESTS` | 3 | Half-open'da max probe sayısı |
+| `OPS_GUARD_CB_WINDOW_SECONDS` | 60.0 | Hata oranı hesaplama penceresi |
+| `OPS_GUARD_CB_MIN_SAMPLES` | 10 | Threshold uygulanmadan önce min event |
+
+**CB çok agresif açılıyorsa:**
+1. `cb_min_samples` artır (düşük trafik + birkaç hata → erken açılma)
+2. `cb_error_threshold_pct` yükselt (daha toleranslı)
+3. `cb_window_seconds` genişlet (daha uzun pencere, anlık spike'ları yumuşatır)
+
+**CB çok geç açılıyorsa:**
+1. `cb_error_threshold_pct` düşür
+2. `cb_min_samples` azalt
+3. `cb_window_seconds` daralt
+
+### Dependency Enum (Sabit Set — HD-5)
+
+CB `dependency` label'ı sabit enum'dan gelir:
+
+| Dependency | Açıklama |
+|------------|----------|
+| `db_primary` | Ana veritabanı |
+| `db_replica` | Okuma replikası |
+| `cache` | Cache katmanı |
+| `external_api` | Dış API bağımlılıkları |
+| `import_worker` | Import worker servisi |
+
+---
+
+### Guard Durumu Özet Kontrolü
+
+Tüm guard bileşenlerinin durumunu tek sorguda görmek için:
+
+```bash
+curl -s -H "X-Admin-Key: $ADMIN_KEY" https://<host>/admin/ops/status | jq .
+```
+
+### Grafana Dashboard Referansı
+
+- Ops Guard Status row → Kill-Switch State, CB State, Rate Limit Distribution, Top Rate-Limited Endpoints
+- Guard Decision Layer row → Decision Request Rate, Block Rate, Snapshot Build Failures
+
+### PromQL — Hızlı Durum Kontrolü
+
+```promql
+# Kill-switch aktif mi?
+max(ptf_admin_killswitch_state) == 1
+
+# CB open olan dependency var mı?
+max(ptf_admin_circuit_breaker_state) == 2
+
+# Rate limit deny rate (son 5 dk)
+sum(rate(ptf_admin_rate_limit_total{decision="rejected"}[5m])) * 60
+
+# Guard config fallback aktif mi?
+increase(ptf_admin_guard_config_fallback_total[15m])
+```
+
+---
+
 # Ek: HTTP Hata Kodu Semantiği (Error Mapping)
 
 ### 502 vs 503 Ayrımı (Alert Routing İçin)

@@ -74,6 +74,7 @@ class TestDashboardRows:
         "Lookup / History": 3,
         "Frontend Telemetry": 2,
         "Dependency Health": 4,
+        "Ops Guard Status": 4,
         "Guard Decision Layer": 5,
     }
 
@@ -81,9 +82,9 @@ class TestDashboardRows:
         return [p for p in dashboard["panels"] if p.get("type") == "row"]
 
     def test_row_count(self, dashboard):
-        """Dashboard has exactly 6 rows."""
+        """Dashboard has exactly 7 rows."""
         rows = self._get_rows(dashboard)
-        assert len(rows) == 6
+        assert len(rows) == 7
 
     def test_all_rows_collapsed(self, dashboard):
         """All rows are collapsible (collapsed=true).
@@ -207,6 +208,38 @@ class TestDashboardPromQL:
         expr = self._get_expr(p)
         assert "ptf_admin_api_request_total" in expr
         assert "/admin/telemetry/events" in expr
+
+    # Row 7: Ops Guard Status
+    def test_killswitch_state_query(self, dashboard):
+        """Validates: ops-guard Requirements 6.4"""
+        p = self._find_panel(dashboard, "Kill-Switch State")
+        assert p is not None, "Kill-Switch State panel not found"
+        expr = self._get_expr(p)
+        assert "ptf_admin_killswitch_state" in expr
+
+    def test_circuit_breaker_state_query(self, dashboard):
+        """Validates: ops-guard Requirements 6.4"""
+        p = self._find_panel(dashboard, "Circuit Breaker State")
+        assert p is not None, "Circuit Breaker State panel not found"
+        expr = self._get_expr(p)
+        assert "ptf_admin_circuit_breaker_state" in expr
+
+    def test_rate_limit_decision_query(self, dashboard):
+        """Validates: ops-guard Requirements 6.4"""
+        p = self._find_panel(dashboard, "Rate Limit Decision")
+        assert p is not None, "Rate Limit Decision Distribution panel not found"
+        expr = self._get_expr(p)
+        assert "ptf_admin_rate_limit_total" in expr
+        assert "decision" in expr
+
+    def test_top_rate_limited_endpoints_query(self, dashboard):
+        """Validates: ops-guard Requirements 6.4"""
+        p = self._find_panel(dashboard, "Top Rate-Limited")
+        assert p is not None, "Top Rate-Limited Endpoints panel not found"
+        expr = self._get_expr(p)
+        assert "ptf_admin_rate_limit_total" in expr
+        assert "rejected" in expr
+        assert "topk" in expr
 
 
 class TestSelfExcludeFilter:

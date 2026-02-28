@@ -1,0 +1,30 @@
+{
+  "meta": {
+    "supplier": "enerjisa",
+    "scenario": "line_crosscheck_fail",
+    "currency": "TRY",
+    "timezone": "Europe/Istanbul"
+  },
+  "invoice": {
+    "ettn": "550e8400-e29b-41d4-a716-446655440000",
+    "periods": [
+      {"code": "T1", "start": "2026-01-01", "end": "2026-01-31", "kwh": 1200, "amount": 360.00},
+      {"code": "T2", "start": "2026-01-01", "end": "2026-01-31", "kwh": 800, "amount": 200.00},
+      {"code": "T3", "start": "2026-01-01", "end": "2026-01-31", "kwh": 400, "amount": 80.00}
+    ],
+    "reactive": {"penalty_amount": 0, "penalty_kvarh": 0},
+    "totals": {"total": 1000.00, "payable": 1000.00},
+    "lines": [
+      {"label": "Enerji Bedeli", "qty_kwh": 2400, "unit_price": 0.30, "amount": 720.00},
+      {"label": "Hatalı Kalem", "qty_kwh": 1000, "unit_price": 0.10, "amount": 200.00}
+    ],
+    "taxes_total": 40.00,
+    "vat_amount": 40.00
+  },
+  "expected": {
+    "valid": false,
+    "errors": [
+      {"code": "LINE_CROSSCHECK_FAIL", "field": "lines[1]"}
+    ]
+  }
+}

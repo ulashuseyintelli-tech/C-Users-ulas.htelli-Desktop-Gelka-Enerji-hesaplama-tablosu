@@ -106,6 +106,12 @@ class GuardConfig(BaseSettings):
     # ── Adaptive Control (Feature: slo-adaptive-control) ─────────────────
     adaptive_control_enabled: bool = False  # Safe default: OFF (Req 9.1, 9.4)
 
+    # ── Drift Guard (Feature: drift-guard) ───────────────────────────────
+    drift_guard_enabled: bool = False          # DR1.2: Varsayılan OFF
+    drift_guard_killswitch: bool = False       # DR2.1-DR2.6: Kill-switch (ON → 0 call)
+    drift_guard_fail_open: bool = True         # DR4.3: fail-open (proceed on error); False → fail-closed (block on error in enforce)
+    drift_guard_provider_timeout_ms: int = 100 # DR4.6: provider call timeout (ms)
+
     # ── Validators ────────────────────────────────────────────────────────
 
     @field_validator("wrapper_timeout_seconds_default")
@@ -157,6 +163,13 @@ class GuardConfig(BaseSettings):
         allowed = {"shadow", "enforce", "off"}
         if v not in allowed:
             raise ValueError(f"decision_layer_default_mode must be one of {allowed}, got {v!r}")
+        return v
+
+    @field_validator("drift_guard_provider_timeout_ms")
+    @classmethod
+    def _validate_drift_guard_provider_timeout_ms(cls, v: int) -> int:
+        if v <= 0 or v > 5000:
+            raise ValueError(f"drift_guard_provider_timeout_ms must be in (0, 5000], got {v}")
         return v
 
     @model_validator(mode="after")
@@ -288,6 +301,11 @@ _FALLBACK_DEFAULTS = dict(
     decision_layer_tenant_allowlist_json="",
     # Adaptive Control
     adaptive_control_enabled=False,
+    # Drift Guard
+    drift_guard_enabled=False,
+    drift_guard_killswitch=False,
+    drift_guard_fail_open=True,
+    drift_guard_provider_timeout_ms=100,
 )
 
 
