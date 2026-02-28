@@ -77,6 +77,7 @@ function stopBackend() {
 // Güvenlik: İzin verilen backend adresi (sadece loopback IP, localhost DNS resolve riski nedeniyle yok)
 const ALLOWED_DOWNLOAD_ORIGINS = [
   `http://127.0.0.1:${BACKEND_PORT}`,
+  `http://localhost:${BACKEND_PORT}`,
 ];
 // İzin verilen path prefix'leri (sadece PDF endpoint'leri)
 const ALLOWED_PATH_PREFIXES = ['/generate-pdf'];
@@ -120,10 +121,20 @@ function validateDownloadUrl(rawUrl) {
 }
 
 ipcMain.handle('download:pdf', async (event, { url, formData, fileName }) => {
+  // ── 0) localhost → 127.0.0.1 normalize (net.request localhost sorununu önler) ──
+  let normalizedUrl = url;
+  try {
+    const u = new URL(url);
+    if (u.hostname === 'localhost') {
+      u.hostname = '127.0.0.1';
+      normalizedUrl = u.toString();
+    }
+  } catch { /* validateDownloadUrl yakalayacak */ }
+
   // ── 1) URL doğrulama (SSRF koruması) ──
-  const urlCheck = validateDownloadUrl(url);
+  const urlCheck = validateDownloadUrl(normalizedUrl);
   if (!urlCheck.ok) {
-    console.error(`[download:pdf] URL reddedildi: ${urlCheck.error} (url=${url})`);
+    console.error(`[download:pdf] URL reddedildi: ${urlCheck.error} (url=${normalizedUrl})`);
     return { ok: false, error: urlCheck.error };
   }
 
@@ -161,31 +172,32 @@ ipcMain.handle('download:pdf', async (event, { url, formData, fileName }) => {
   body += `--${boundary}--\r\n`;
   const bodyBuffer = Buffer.from(body, 'utf-8');
 
-  // ── 6) HTTP request (redirect takip etmez) ──
+  // ── 6) HTTP request (Node.js native http modülü) ──
   return new Promise((resolve) => {
-    const request = net.request({
+    const parsedUrl = new URL(normalizedUrl);
+    const options = {
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port,
+      path: parsedUrl.pathname + parsedUrl.search,
       method: 'POST',
-      url: url,
-      redirect: 'error', // Redirect'leri takip etme — SSRF koruması
-    });
-    request.setHeader('Content-Type', `multipart/form-data; boundary=${boundary}`);
-    request.setHeader('Content-Length', String(bodyBuffer.length));
+      headers: {
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        'Content-Length': String(bodyBuffer.length),
+      },
+    };
 
-    const chunks = [];
-    let totalBytes = 0;
-    let statusCode = 0;
-    let responseContentType = '';
-
-    request.on('response', (response) => {
-      statusCode = response.statusCode;
-      responseContentType = (response.headers['content-type'] || '').toString();
+    const request = http.request(options, (response) => {
+      const statusCode = response.statusCode;
+      const responseContentType = (response.headers['content-type'] || '').toString();
       console.log(`[download:pdf] Response: status=${statusCode}, content-type=${responseContentType}`);
+
+      const chunks = [];
+      let totalBytes = 0;
 
       response.on('data', (chunk) => {
         totalBytes += chunk.length;
-        // Max boyut kontrolü
         if (totalBytes > MAX_PDF_SIZE) {
-          request.abort();
+          request.destroy();
           resolve({ ok: false, error: `PDF boyutu limiti aşıldı (>${MAX_PDF_SIZE / 1024 / 1024}MB).` });
           return;
         }
@@ -195,11 +207,9 @@ ipcMain.handle('download:pdf', async (event, { url, formData, fileName }) => {
       response.on('end', () => {
         const buffer = Buffer.concat(chunks);
 
-        // HTTP hata kontrolü — structured JSON error propagation
+        // HTTP hata kontrolü
         if (statusCode !== 200) {
           let errorResult = { ok: false, statusCode, error: `Sunucu hatası (${statusCode})` };
-          
-          // Backend artık JSON error dönüyor: { error: { code, message, request_id } }
           if (responseContentType.includes('application/json')) {
             try {
               const parsed = JSON.parse(buffer.toString('utf-8'));
@@ -207,7 +217,6 @@ ipcMain.handle('download:pdf', async (event, { url, formData, fileName }) => {
               errorResult.code = errObj.code || 'unknown';
               errorResult.error = errObj.message || errObj.detail || errorResult.error;
               errorResult.request_id = errObj.request_id || null;
-              // 429: Retry-After header'ını da taşı
               if (statusCode === 429) {
                 const retryAfter = (response.headers['retry-after'] || '').toString();
                 errorResult.retry_after = parseInt(retryAfter, 10) || 5;
@@ -219,7 +228,6 @@ ipcMain.handle('download:pdf', async (event, { url, formData, fileName }) => {
           } else {
             errorResult.error = buffer.toString('utf-8').slice(0, 500) || errorResult.error;
           }
-          
           console.error(`[download:pdf] Sunucu hatası (${statusCode}): ${errorResult.error}`);
           resolve(errorResult);
           return;
@@ -231,7 +239,7 @@ ipcMain.handle('download:pdf', async (event, { url, formData, fileName }) => {
           return;
         }
 
-        // Content-Type kontrolü — PDF olmalı
+        // Content-Type kontrolü
         if (!responseContentType.includes('application/pdf')) {
           console.error(`[download:pdf] Beklenmeyen content-type: ${responseContentType}`);
           if (responseContentType.includes('application/json')) {
