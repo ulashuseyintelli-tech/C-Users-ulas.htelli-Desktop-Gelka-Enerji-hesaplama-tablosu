@@ -62,7 +62,13 @@ class EnforcementDecision:
 # ---------------------------------------------------------------------------
 
 class ValidationBlockedError(Exception):
-    """Raised when enforce_hard blocks an invoice."""
+    """Raised when enforce_hard blocks an invoice.
+
+    Terminal durum: worker retry etmemeli.
+    terminal = True sentinel özelliği ile worker guard pattern'i desteklenir.
+    """
+
+    terminal: bool = True
 
     def __init__(self, decision: EnforcementDecision) -> None:
         self.decision = decision
@@ -167,6 +173,10 @@ def enforce_validation(
     """
     cfg = config if isinstance(config, EnforcementConfig) else load_enforcement_config()
 
+    # Phase G: mode gauge update
+    from .telemetry import Phase, Timer, observe_duration, set_mode_gauge
+    set_mode_gauge(cfg.mode.value)
+
     # --- OFF ---
     if cfg.mode == ValidationMode.OFF:
         decision = EnforcementDecision(action="pass", mode=cfg.mode)
@@ -187,52 +197,94 @@ def enforce_validation(
     # --- ENFORCE_SOFT / ENFORCE_HARD ---
     from .validator import validate
 
-    result = validate(invoice_dict)
+    with Timer() as t_enforce:
+        result = validate(invoice_dict)
 
-    if result.valid:
-        decision = EnforcementDecision(action="pass", mode=cfg.mode)
-        record_enforcement_metrics(decision)
-        return decision
+        if result.valid:
+            decision = EnforcementDecision(action="pass", mode=cfg.mode)
+        else:
+            # Invalid — determine blockers
+            error_codes = [e.code.value for e in result.errors]
+            blockers = [c for c in error_codes if c in cfg.blocker_codes]
 
-    # Invalid — determine blockers
-    error_codes = [e.code.value for e in result.errors]
-    blockers = [c for c in error_codes if c in cfg.blocker_codes]
+            if cfg.mode == ValidationMode.ENFORCE_SOFT:
+                decision = EnforcementDecision(
+                    action="warn",
+                    mode=cfg.mode,
+                    errors=tuple(result.errors),
+                    blocker_codes=tuple(blockers),
+                )
+                logger.warning(
+                    "enforcement_warn",
+                    extra={"invoice_id": invoice_id or "unknown", "codes": error_codes},
+                )
+            elif blockers:
+                # ENFORCE_HARD with blockers
+                decision = EnforcementDecision(
+                    action="block",
+                    mode=cfg.mode,
+                    errors=tuple(result.errors),
+                    blocker_codes=tuple(blockers),
+                )
+            else:
+                # ENFORCE_HARD, only advisory codes — warn, don't block
+                decision = EnforcementDecision(
+                    action="warn",
+                    mode=cfg.mode,
+                    errors=tuple(result.errors),
+                    blocker_codes=(),
+                )
+                logger.warning(
+                    "enforcement_warn_advisory_only",
+                    extra={"invoice_id": invoice_id or "unknown", "codes": error_codes},
+                )
 
-    if cfg.mode == ValidationMode.ENFORCE_SOFT:
-        decision = EnforcementDecision(
-            action="warn",
-            mode=cfg.mode,
-            errors=tuple(result.errors),
-            blocker_codes=tuple(blockers),
-        )
-        logger.warning(
-            "enforcement_warn",
-            extra={"invoice_id": invoice_id or "unknown", "codes": error_codes},
-        )
-        record_enforcement_metrics(decision)
-        return decision
-
-    # ENFORCE_HARD
-    if blockers:
-        decision = EnforcementDecision(
-            action="block",
-            mode=cfg.mode,
-            errors=tuple(result.errors),
-            blocker_codes=tuple(blockers),
-        )
-        record_enforcement_metrics(decision)
-        return decision
-
-    # Only advisory codes — warn, don't block
-    decision = EnforcementDecision(
-        action="warn",
-        mode=cfg.mode,
-        errors=tuple(result.errors),
-        blocker_codes=(),
-    )
-    logger.warning(
-        "enforcement_warn_advisory_only",
-        extra={"invoice_id": invoice_id or "unknown", "codes": error_codes},
-    )
+    observe_duration(Phase.ENFORCEMENT.value, t_enforce.elapsed)
     record_enforcement_metrics(decision)
+
+    # H0 wiring: gate evaluation (log-only, karar vermez — ops bilgilendirme)
+    _log_gate_evaluation(decision)
+
     return decision
+
+
+def _log_gate_evaluation(decision: EnforcementDecision) -> None:
+    """Gate evaluator sonucunu log'a yaz (bilgilendirme amaçlı, karar vermez).
+
+    Sadece enforce_soft/enforce_hard modlarında çalışır.
+    Exception atmaz — gate evaluation hatası enforcement'ı etkilemez.
+    """
+    try:
+        from .rollout_config import load_rollout_config
+        from .gate_evaluator import evaluate_all_gates
+
+        cfg = load_rollout_config()
+        if cfg.rollout_stage is None:
+            return  # rollout aktif değil, gate evaluation atla
+
+        gate_decision = evaluate_all_gates(
+            observed_count=get_enforcement_counters()[ENFORCE_TOTAL],
+            n_min=cfg.n_min,
+            baseline_p95=0.0,  # upstream sağlamalı — şimdilik placeholder
+            baseline_p99=0.0,
+            current_p95=0.0,
+            current_p99=0.0,
+            delta_ms=cfg.latency_gate_delta_ms,
+            actionable_mismatch_count=0,
+            mismatch_threshold=cfg.mismatch_gate_count,
+            retry_loop_count=0,
+            unexpected_block_count=0,
+        )
+        logger.info(
+            "gate_evaluation_info",
+            extra={
+                "rollout_stage": cfg.rollout_stage,
+                "overall": gate_decision.overall.value,
+                "gates": [
+                    {"gate": r.gate, "verdict": r.verdict.value}
+                    for r in gate_decision.results
+                ],
+            },
+        )
+    except Exception:
+        logger.debug("gate_evaluation: beklenmeyen hata — atlanıyor", exc_info=True)

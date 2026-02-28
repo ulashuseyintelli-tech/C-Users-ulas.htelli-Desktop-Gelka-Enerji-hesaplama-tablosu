@@ -252,7 +252,12 @@ def shadow_validate_hook(
         if not should_sample(invoice_id, cfg.sample_rate):
             return None
 
-        result = compare_validators(invoice_dict)
+        from .telemetry import Phase, Timer, observe_duration
+
+        with Timer() as t_shadow:
+            result = compare_validators(invoice_dict)
+        observe_duration(Phase.SHADOW.value, t_shadow.elapsed)
+
         wl = is_whitelisted(result, cfg.whitelist)
         record_shadow_metrics(result, wl)
 

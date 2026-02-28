@@ -352,11 +352,17 @@ def validate(
     """Validate a canonical invoice dict.
 
     Invariant: result.valid == (len(result.errors) == 0)
+    Phase G: total süre ölçümü — her fatura için kaydedilir.
     """
-    errors: list[InvoiceValidationError] = []
-    errors.extend(_validate_ettn(invoice))
-    errors.extend(_validate_periods(invoice))
-    errors.extend(_validate_reactive(invoice))
-    errors.extend(_validate_totals(invoice))
-    errors.extend(_validate_lines(invoice))
-    return InvoiceValidationResult(valid=len(errors) == 0, errors=errors)
+    from .telemetry import Phase, Timer, observe_duration
+
+    with Timer() as t_total:
+        errors: list[InvoiceValidationError] = []
+        errors.extend(_validate_ettn(invoice))
+        errors.extend(_validate_periods(invoice))
+        errors.extend(_validate_reactive(invoice))
+        errors.extend(_validate_totals(invoice))
+        errors.extend(_validate_lines(invoice))
+        result = InvoiceValidationResult(valid=len(errors) == 0, errors=errors)
+    observe_duration(Phase.TOTAL.value, t_total.elapsed)
+    return result
