@@ -370,6 +370,29 @@ def extract_canonical(text: str, supplier_code: Optional[str] = None) -> Canonic
     # Doğrulama
     invoice.validate()
     
+    # --- Phase F: enforcement hook (default shadow = no-op) ---
+    try:
+        from app.invoice.validation.enforcement import (
+            EnforcementDecision,
+            ValidationBlockedError,
+            canonical_to_validator_dict,
+            enforce_validation,
+        )
+
+        inv_dict = canonical_to_validator_dict(invoice)
+        decision = enforce_validation(inv_dict, invoice.errors, invoice_id=invoice.ettn)
+
+        if decision.action == "block":
+            raise ValidationBlockedError(decision)
+        elif decision.action == "warn":
+            invoice.warnings.append(
+                f"ENFORCEMENT_WARN: {[e.code.value for e in decision.errors]}"
+            )
+    except ValidationBlockedError:
+        raise  # re-raise block — caller handles
+    except Exception:
+        logger.debug("enforcement hook skipped", exc_info=True)
+    
     # Debug log
     logger.info(f"Canonical extraction: {invoice.to_debug_dict()}")
     

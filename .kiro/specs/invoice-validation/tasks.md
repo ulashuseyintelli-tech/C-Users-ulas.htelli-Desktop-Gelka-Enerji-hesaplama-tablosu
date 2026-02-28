@@ -176,59 +176,59 @@
 ## Phase F: Feature-Flag Enforcement (Decision Path)
 
 ## Task F1: Enforcement config module
-- [ ] F1. Create `backend/app/invoice/validation/enforcement_config.py`
-  - [ ] F1.1 `ValidationMode(str, Enum)`: `OFF`, `SHADOW`, `ENFORCE_SOFT`, `ENFORCE_HARD` — default `SHADOW`
-  - [ ] F1.2 `CodeSeverity(str, Enum)`: `BLOCKER`, `ADVISORY`
-  - [ ] F1.3 `_DEFAULT_BLOCKER_CODES` frozenset: INVALID_ETTN, INCONSISTENT_PERIODS, REACTIVE_PENALTY_MISMATCH, TOTAL_MISMATCH, PAYABLE_TOTAL_MISMATCH
-  - [ ] F1.4 `EnforcementConfig` frozen dataclass: `mode`, `blocker_codes` — env override via `INVOICE_VALIDATION_MODE` and `INVOICE_VALIDATION_BLOCKER_CODES`
-  - [ ] F1.5 `load_enforcement_config() -> EnforcementConfig` — reads env vars, safe fallbacks
+- [x] F1. Create `backend/app/invoice/validation/enforcement_config.py`
+  - [x] F1.1 `ValidationMode(str, Enum)`: `OFF`, `SHADOW`, `ENFORCE_SOFT`, `ENFORCE_HARD` — default `SHADOW`
+  - [x] F1.2 `CodeSeverity(str, Enum)`: `BLOCKER`, `ADVISORY`
+  - [x] F1.3 `_DEFAULT_BLOCKER_CODES` frozenset: INVALID_ETTN, INCONSISTENT_PERIODS, REACTIVE_PENALTY_MISMATCH, TOTAL_MISMATCH, PAYABLE_TOTAL_MISMATCH
+  - [x] F1.4 `EnforcementConfig` frozen dataclass: `mode`, `blocker_codes` — env override via `INVOICE_VALIDATION_MODE` and `INVOICE_VALIDATION_BLOCKER_CODES`
+  - [x] F1.5 `load_enforcement_config() -> EnforcementConfig` — reads env vars, safe fallbacks
 
 ## Task F2: Enforcement decision engine
-- [ ] F2. Create `backend/app/invoice/validation/enforcement.py`
-  - [ ] F2.1 `EnforcementDecision` frozen dataclass: `action` (pass/warn/block), `mode`, `errors`, `blocker_codes`, `shadow_result`
-  - [ ] F2.2 `enforce_validation(invoice_dict, old_errors, *, invoice_id=None, config=None) -> EnforcementDecision`
-  - [ ] F2.3 Mode logic: off→pass, shadow→Faz E hook+pass, enforce_soft→validate+warn/pass, enforce_hard→validate+block/warn/pass
-  - [ ] F2.4 Blocker filtering: only codes in `blocker_codes` set trigger `action="block"` in enforce_hard
+- [x] F2. Create `backend/app/invoice/validation/enforcement.py`
+  - [x] F2.1 `EnforcementDecision` frozen dataclass: `action` (pass/warn/block), `mode`, `errors`, `blocker_codes`, `shadow_result`
+  - [x] F2.2 `enforce_validation(invoice_dict, old_errors, *, invoice_id=None, config=None) -> EnforcementDecision`
+  - [x] F2.3 Mode logic: off→pass, shadow→Faz E hook+pass, enforce_soft→validate+warn/pass, enforce_hard→validate+block/warn/pass
+  - [x] F2.4 Blocker filtering: only codes in `blocker_codes` set trigger `action="block"` in enforce_hard
 
 ## Task F3: Metric counters (Faz F)
-- [ ] F3. Add enforcement telemetry counters
-  - [ ] F3.1 Add 4 metric constants to `types.py`: `ENFORCE_TOTAL`, `ENFORCE_BLOCKED_TOTAL`, `ENFORCE_SOFTWARN_TOTAL`, `ENFORCE_MODE_GAUGE`
-  - [ ] F3.2 `record_enforcement_metrics(decision: EnforcementDecision)` in `enforcement.py` — test-only counter dict (same pattern as Faz E)
+- [x] F3. Add enforcement telemetry counters
+  - [x] F3.1 Add 4 metric constants to `types.py`: `ENFORCE_TOTAL`, `ENFORCE_BLOCKED_TOTAL`, `ENFORCE_SOFTWARN_TOTAL`, `ENFORCE_MODE_GAUGE`
+  - [x] F3.2 `record_enforcement_metrics(decision: EnforcementDecision)` in `enforcement.py` — test-only counter dict (same pattern as Faz E)
 
 ## Task F4: Wire enforcement into canonical_extractor
-- [ ] F4. Wire `enforce_validation` into `extract_canonical()` (post `invoice.validate()`)
-  - [ ] F4.1 `canonical_to_validator_dict(canonical: CanonicalInvoice) -> dict` adaptör in `enforcement.py`
-  - [ ] F4.2 `ValidationBlockedError(Exception)` in `enforcement.py`
-  - [ ] F4.3 Add enforcement call in `extract_canonical()` after `invoice.validate()`: call `enforce_validation`, handle warn (append to warnings) and block (raise `ValidationBlockedError`)
-  - [ ] F4.4 Default mode=shadow → no behavioral change (existing tests must pass unchanged)
+- [x] F4. Wire `enforce_validation` into `extract_canonical()` (post `invoice.validate()`)
+  - [x] F4.1 `canonical_to_validator_dict(canonical: CanonicalInvoice) -> dict` adaptör in `enforcement.py`
+  - [x] F4.2 `ValidationBlockedError(Exception)` in `enforcement.py`
+  - [x] F4.3 Add enforcement call in `extract_canonical()` after `invoice.validate()`: call `enforce_validation`, handle warn (append to warnings) and block (raise `ValidationBlockedError`)
+  - [x] F4.4 Default mode=shadow → no behavioral change (existing tests must pass unchanged)
 
 ## Task F5: Wire exports + __init__.py
-- [ ] F5. Update `__init__.py` with new exports
-  - [ ] F5.1 Export: `ValidationMode`, `CodeSeverity`, `EnforcementConfig`, `EnforcementDecision`, `enforce_validation`, `load_enforcement_config`
-  - [ ] F5.2 Export: metric constants + `record_enforcement_metrics`, `get_enforcement_counters`, `reset_enforcement_counters`
-  - [ ] F5.3 Export: `canonical_to_validator_dict`, `ValidationBlockedError`
+- [x] F5. Update `__init__.py` with new exports
+  - [x] F5.1 Export: `ValidationMode`, `CodeSeverity`, `EnforcementConfig`, `EnforcementDecision`, `enforce_validation`, `load_enforcement_config`
+  - [x] F5.2 Export: metric constants + `record_enforcement_metrics`, `get_enforcement_counters`, `reset_enforcement_counters`
+  - [x] F5.3 Export: `canonical_to_validator_dict`, `ValidationBlockedError`
 
 ## Task F6: Integration tests (Faz F)
-- [ ] F6. Create `backend/tests/test_invoice_validator_enforcement_f.py`
-  - [ ] F6.1 Test: mode=off → action="pass", no validation runs
-  - [ ] F6.2 Test: mode=shadow → action="pass", shadow_result is not None (Faz E behavior)
-  - [ ] F6.3 Test: mode=enforce_soft, valid invoice → action="pass"
-  - [ ] F6.4 Test: mode=enforce_soft, invalid invoice → action="warn"
-  - [ ] F6.5 Test: mode=enforce_hard, blocker code present → action="block"
-  - [ ] F6.6 Test: mode=enforce_hard, only advisory codes → action="warn" (not block)
-  - [ ] F6.7 Test: mode=enforce_hard, valid invoice → action="pass"
-  - [ ] F6.8 Test: rollback — enforce_hard → shadow flip → same invoice → action="pass"
-  - [ ] F6.9 Test: custom blocker_codes override via config
-  - [ ] F6.10 Test: metric counters — enforced/blocked/softwarn increments correct
-  - [ ] F6.11 Test: EnforcementDecision.to_dict() round-trip
-  - [ ] F6.12 Test: canonical_to_validator_dict maps CanonicalInvoice fields correctly
+- [x] F6. Create `backend/tests/test_invoice_validator_enforcement_f.py`
+  - [x] F6.1 Test: mode=off → action="pass", no validation runs
+  - [x] F6.2 Test: mode=shadow → action="pass", shadow_result is not None (Faz E behavior)
+  - [x] F6.3 Test: mode=enforce_soft, valid invoice → action="pass"
+  - [x] F6.4 Test: mode=enforce_soft, invalid invoice → action="warn"
+  - [x] F6.5 Test: mode=enforce_hard, blocker code present → action="block"
+  - [x] F6.6 Test: mode=enforce_hard, only advisory codes → action="warn" (not block)
+  - [x] F6.7 Test: mode=enforce_hard, valid invoice → action="pass"
+  - [x] F6.8 Test: rollback — enforce_hard → shadow flip → same invoice → action="pass"
+  - [x] F6.9 Test: custom blocker_codes override via config
+  - [x] F6.10 Test: metric counters — enforced/blocked/softwarn increments correct
+  - [x] F6.11 Test: EnforcementDecision.to_dict() round-trip
+  - [x] F6.12 Test: canonical_to_validator_dict maps CanonicalInvoice fields correctly
 
 ## Task F7: Regression checkpoint (Faz F)
-- [ ] F7. Run full test suite, confirm 0 failures
-  - [ ] F7.1 Faz A/B tests: 14 passed (unchanged)
-  - [ ] F7.2 Faz C tests: 7 passed (unchanged)
-  - [ ] F7.3 Faz D tests: 8 passed (unchanged)
-  - [ ] F7.4 Faz E tests: 13 passed (unchanged)
-  - [ ] F7.5 Faz F tests: new (target ~12 tests)
-  - [ ] F7.6 Full invoice validation suite: ~54 passed, 0 failed
-  - [ ] F7.7 Existing canonical_extractor tests: unchanged (default shadow = no-op)
+- [x] F7. Run full test suite, confirm 0 failures
+  - [x] F7.1 Faz A/B tests: 14 passed (unchanged) ✅
+  - [x] F7.2 Faz C tests: 7 passed (unchanged) ✅
+  - [x] F7.3 Faz D tests: 8 passed (unchanged) ✅
+  - [x] F7.4 Faz E tests: 13 passed (unchanged) ✅
+  - [x] F7.5 Faz F tests: 12 passed (new) ✅
+  - [x] F7.6 Full invoice validation suite: 54 passed, 0 failed ✅
+  - [x] F7.7 Existing canonical_extractor tests: unchanged (default shadow = no-op) ✅

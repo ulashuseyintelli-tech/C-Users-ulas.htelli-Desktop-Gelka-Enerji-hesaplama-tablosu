@@ -1185,12 +1185,18 @@ Tenant bazlı rollout gerekirse ayrı task (F-next veya Faz G) olarak açılır.
 
 ### 14.11 Faz F Kapanış Kriterleri
 
-- [ ] `enforcement_config.py`: `ValidationMode` enum, `CodeSeverity`, blocker mapping, `load_enforcement_config()`
-- [ ] `enforcement.py`: `EnforcementDecision` dataclass, `enforce_validation()` fonksiyonu
-- [ ] Mode switch: off/shadow/enforce_soft/enforce_hard tümü çalışıyor
-- [ ] enforce_soft: valid=false → action="warn", işlem devam
-- [ ] enforce_hard: blocker code → action="block"; sadece advisory → action="warn"
-- [ ] Rollback: mode flip testi (enforce_hard → shadow → action="pass")
-- [ ] 4 metrik counter: enforced, blocked, softwarn, mode gauge
-- [ ] Integration test suite (Faz F)
-- [ ] Mevcut test suite regresyon yok (Faz A–E testleri dahil)
+- [x] `enforcement_config.py`: `ValidationMode` enum, `CodeSeverity`, blocker mapping, `load_enforcement_config()`
+- [x] `enforcement.py`: `EnforcementDecision` dataclass, `enforce_validation()` fonksiyonu
+- [x] Mode switch: off/shadow/enforce_soft/enforce_hard tümü çalışıyor
+- [x] enforce_soft: valid=false → action="warn", işlem devam
+- [x] enforce_hard: blocker code → action="block"; sadece advisory → action="warn"
+- [x] Rollback: mode flip testi (enforce_hard → shadow → action="pass")
+- [x] 4 metrik counter: enforced, blocked, softwarn, mode gauge
+- [x] Integration test suite: 12 test (Faz F)
+- [x] Wiring: `extract_canonical()` içinde enforce_validation çağrısı, default shadow no-op
+- [x] Mevcut test suite regresyon yok (54 passed, 0 failed — Faz A–F)
+
+Gate F kapatıldı: 2026-02-28.
+- `ValidationBlockedError` sadece `enforce_hard` modunda raise edilir.
+- `enforce_soft` modunda raise edilmez; sadece warnings + metrics.
+- Prod enable: `INVOICE_VALIDATION_MODE=enforce_soft` (veya `enforce_hard`) config flip ile.
