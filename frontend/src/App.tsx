@@ -341,7 +341,7 @@ function App() {
       
       try {
         // DB'den PTF/YEKDEM fiyatlarını çek (önce DB, yoksa EPİAŞ fallback)
-        const res = await fetch(`http://localhost:8000/api/epias/prices/${period}?auto_fetch=false`);
+        const res = await fetch(`http://127.0.0.1:8000/api/epias/prices/${period}?auto_fetch=false`);
         const response = await res.json();
         
         if (response.ptf_tl_per_mwh) {

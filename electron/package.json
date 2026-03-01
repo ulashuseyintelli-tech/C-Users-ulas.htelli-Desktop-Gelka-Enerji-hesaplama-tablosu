@@ -53,14 +53,17 @@
       "target": ["nsis"],
       "signAndEditExecutable": false,
       "verifyUpdateCodeSignature": false,
-      "signDlls": false
+      "signDlls": false,
+      "requestedExecutionLevel": "asInvoker"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Gelka Enerji"
+      "shortcutName": "Gelka Enerji",
+      "deleteAppDataOnUninstall": false,
+      "menuCategory": "Gelka Enerji"
     }
   }
 }

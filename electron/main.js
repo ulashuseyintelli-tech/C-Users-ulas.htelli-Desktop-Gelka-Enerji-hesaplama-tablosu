@@ -45,10 +45,11 @@ function startBackend() {
       { cwd: path.join(__dirname, '..', 'backend'), env: { ...process.env }, stdio: ['pipe', 'pipe', 'pipe'] }
     );
   } else {
-    const backendExe = path.join(process.resourcesPath, 'backend', 'gelka-backend.exe');
+    const backendDir = path.join(process.resourcesPath, 'backend');
+    const backendExe = path.join(backendDir, 'gelka-backend.exe');
     backendProcess = spawn(backendExe,
       ['--host', '127.0.0.1', '--port', String(BACKEND_PORT)],
-      { env: { ...process.env }, stdio: ['pipe', 'pipe', 'pipe'] }
+      { cwd: backendDir, env: { ...process.env }, stdio: ['pipe', 'pipe', 'pipe'] }
     );
   }
 
@@ -58,7 +59,13 @@ function startBackend() {
     console.error('Backend başlatma hatası:', err);
     dialog.showErrorBox('Hata', `Backend başlatılamadı: ${err.message}`);
   });
-  backendProcess.on('exit', (code) => { console.log(`Backend kapandı (code: ${code})`); backendProcess = null; });
+  backendProcess.on('exit', (code) => {
+    console.log(`Backend kapandı (code: ${code})`);
+    if (code !== 0 && code !== null) {
+      dialog.showErrorBox('Backend Hatası', `Backend beklenmedik şekilde kapandı (code: ${code}).\nLütfen uygulamayı yeniden başlatın.`);
+    }
+    backendProcess = null;
+  });
 }
 
 function stopBackend() {
@@ -310,7 +317,33 @@ async function createWindow() {
   mainWindow.once('ready-to-show', () => mainWindow.show());
 
   if (isDev) {
-    mainWindow.loadURL('http://localhost:3000');
+    mainWindow.loadURL('http://localhost:3000').catch(() => {
+      mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
+        <!DOCTYPE html>
+        <html><head><meta charset="utf-8"><title>Gelka Enerji - Dev Server Bekleniyor</title>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #f8fafc; color: #334155; }
+          .box { text-align: center; max-width: 480px; padding: 2rem; }
+          h2 { color: #0f172a; margin-bottom: 0.5rem; }
+          code { background: #e2e8f0; padding: 2px 8px; border-radius: 4px; font-size: 14px; }
+          .steps { text-align: left; margin-top: 1rem; line-height: 1.8; }
+          button { margin-top: 1rem; padding: 8px 24px; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; }
+          button:hover { background: #1d4ed8; }
+        </style></head>
+        <body><div class="box">
+          <h2>⚡ Frontend Dev Server Çalışmıyor</h2>
+          <p>Electron, <code>http://localhost:3000</code> adresine bağlanamadı.</p>
+          <div class="steps">
+            <strong>Çözüm:</strong><br>
+            1. <code>frontend/</code> klasöründe terminali açın<br>
+            2. <code>npm run dev</code> komutunu çalıştırın<br>
+            3. "Local: http://localhost:3000" mesajını bekleyin<br>
+            4. Aşağıdaki butona tıklayın
+          </div>
+          <button onclick="window.location.href='http://localhost:3000'">Tekrar Dene</button>
+        </div></body></html>
+      `)}`);
+    });
     mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(path.join(process.resourcesPath, 'frontend', 'dist', 'index.html'));
