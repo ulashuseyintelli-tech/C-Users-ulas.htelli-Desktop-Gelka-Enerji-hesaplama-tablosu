@@ -21,8 +21,11 @@ def main():
     parser.add_argument('--port', type=int, default=8000)
     args = parser.parse_args()
 
+    # PyInstaller frozen modda string import çalışmayabilir,
+    # doğrudan modülü import edip geçiriyoruz.
+    from app.main import app as application
     uvicorn.run(
-        'app.main:app',
+        application,
         host=args.host,
         port=args.port,
         log_level='info',

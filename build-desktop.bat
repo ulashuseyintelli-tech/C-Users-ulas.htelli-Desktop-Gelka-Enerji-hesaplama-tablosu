@@ -20,61 +20,46 @@ echo [2/4] Backend paketleniyor (PyInstaller)...
 cd backend
 pip install pyinstaller >nul 2>&1
 pyinstaller --onefile --name gelka-backend ^
+    --paths . ^
     --add-data "app;app" ^
-    --hidden-import uvicorn.logging ^
-    --hidden-import uvicorn.protocols.http ^
-    --hidden-import uvicorn.protocols.http.auto ^
-    --hidden-import uvicorn.protocols.http.h11_impl ^
-    --hidden-import uvicorn.protocols.http.httptools_impl ^
-    --hidden-import uvicorn.protocols.websockets ^
-    --hidden-import uvicorn.protocols.websockets.auto ^
-    --hidden-import uvicorn.lifespan ^
-    --hidden-import uvicorn.lifespan.on ^
-    --hidden-import uvicorn.lifespan.off ^
-    --hidden-import sqlalchemy.dialects.sqlite ^
-    --hidden-import fastapi ^
-    --hidden-import fastapi.applications ^
-    --hidden-import fastapi.routing ^
-    --hidden-import fastapi.middleware ^
-    --hidden-import fastapi.middleware.cors ^
-    --hidden-import fastapi.responses ^
-    --hidden-import fastapi.staticfiles ^
-    --hidden-import starlette ^
-    --hidden-import starlette.responses ^
-    --hidden-import starlette.routing ^
-    --hidden-import starlette.middleware ^
-    --hidden-import starlette.middleware.cors ^
-    --hidden-import starlette.staticfiles ^
-    --hidden-import pydantic ^
+    --add-data "prompts;prompts" ^
+    --add-data "app/templates;app/templates" ^
+    --collect-submodules app ^
+    --collect-submodules app.core ^
+    --collect-submodules app.guards ^
+    --collect-submodules app.invoice ^
+    --collect-submodules app.services ^
+    --collect-submodules fastapi ^
+    --collect-submodules starlette ^
+    --collect-submodules pydantic ^
+    --collect-submodules uvicorn ^
+    --collect-submodules sqlalchemy ^
     --hidden-import pydantic_settings ^
     --hidden-import dotenv ^
     --hidden-import multipart ^
+    --hidden-import python_multipart ^
+    --hidden-import python_multipart.multipart ^
     --hidden-import httpx ^
+    --hidden-import httpx._transports ^
+    --hidden-import httpx._transports.default ^
     --hidden-import openai ^
     --hidden-import PIL ^
+    --hidden-import PIL.Image ^
     --hidden-import pypdfium2 ^
     --hidden-import pdfplumber ^
     --hidden-import jinja2 ^
     --hidden-import openpyxl ^
     --hidden-import prometheus_client ^
-    --hidden-import app.main ^
-    --hidden-import app.models ^
-    --hidden-import app.database ^
-    --hidden-import app.extractor ^
-    --hidden-import app.calculator ^
-    --hidden-import app.validator ^
-    --hidden-import app.pdf_generator ^
-    --hidden-import app.epias_client ^
-    --hidden-import app.pdf_api ^
-    --hidden-import app.ptf_metrics ^
-    --hidden-import app.guard_config ^
-    --hidden-import app.kill_switch ^
-    --hidden-import app.metrics_middleware ^
-    --hidden-import app.ops_guard_middleware ^
-    --hidden-import app.canonical_extractor ^
-    --collect-submodules fastapi ^
-    --collect-submodules starlette ^
-    --collect-submodules pydantic ^
+    --hidden-import email.mime.multipart ^
+    --hidden-import email.mime.text ^
+    --hidden-import h11 ^
+    --hidden-import anyio ^
+    --hidden-import anyio._backends ^
+    --hidden-import anyio._backends._asyncio ^
+    --hidden-import sniffio ^
+    --hidden-import idna ^
+    --hidden-import certifi ^
+    --hidden-import httpcore ^
     run_server.py
 if %ERRORLEVEL% neq 0 (
     echo HATA: Backend build basarisiz!

@@ -81,6 +81,14 @@ def html_to_pdf_bytes_sync_v2(html: str) -> bytes:
                 prefer_css_page_size=True,
                 scale=1.0,
             )
+            
+            # Post-process: sayfa numarası damgala
+            try:
+                from .pdf_page_numbering import stamp_page_numbers
+                pdf_bytes = stamp_page_numbers(pdf_bytes)
+            except Exception as e:
+                logger.warning(f"Page numbering failed, returning raw PDF: {e}")
+            
             return pdf_bytes
         finally:
             browser.close()

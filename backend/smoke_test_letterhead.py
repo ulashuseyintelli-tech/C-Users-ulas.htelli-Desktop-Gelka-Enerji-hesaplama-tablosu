@@ -1,118 +1,72 @@
 """
-Smoke test: Antetli kağıt PNG'nin Playwright PDF'e basılıp basılmadığını test eder.
-Çalıştır: python -m smoke_test_letterhead  (backend/ dizininden)
-veya:     python backend/smoke_test_letterhead.py
+Smoke test: ReportLab PDF testi (birincil renderer).
+Çalıştır: python smoke_test_letterhead.py  (backend/ dizininden)
 """
-import base64
-import sys
-import os
-
-# Add backend to path
+import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 
 def main():
-    # 1) PNG'yi yükle
-    png_path = os.path.join(os.path.dirname(__file__), "app", "templates", "antetli_bg_300dpi.png")
-    if not os.path.exists(png_path):
-        png_path = os.path.join(os.path.dirname(__file__), "app", "templates", "antetli_bg.png")
-    
-    if not os.path.exists(png_path):
-        print("HATA: Antetli PNG bulunamadı!")
-        return
-    
-    with open(png_path, "rb") as f:
-        b64 = base64.b64encode(f.read()).decode("utf-8")
-    
-    print(f"PNG loaded: {png_path}")
-    print(f"Base64 length: {len(b64)}")
-    print(f"Base64 starts: {b64[:40]}")
-    
-    # 2) Minimal HTML - sadece antet
-    html = f"""<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<style>
-@page {{ size: A4; margin: 0; }}
-html, body {{ margin:0; padding:0; width:210mm; height:297mm; }}
-.letterhead {{
-  position: fixed;
-  top: 0; left: 0;
-  width: 210mm; height: 297mm;
-  z-index: 0;
-}}
-.letterhead img {{
-  width: 100%; height: 100%;
-  object-fit: fill; display: block;
-}}
-.content {{
-  position: relative; z-index: 1;
-  padding: 60mm 20mm 35mm 20mm;
-  background: transparent;
-}}
-h1 {{ color: red; text-align: center; }}
-</style>
-</head>
-<body>
-<div class="letterhead">
-  <img src="data:image/png;base64,{b64}" alt="antet" />
-</div>
-<div class="content">
-  <h1>SMOKE TEST - ANTET GORUNUYOR MU?</h1>
-  <p>Bu metin antetli kağıdın üstünde görünmeli.</p>
-</div>
-</body>
-</html>"""
-    
-    print(f"HTML length: {len(html)}")
-    print(f"Contains base64 image: {'data:image/png;base64,' in html}")
-    
-    # 3) Playwright ile PDF oluştur
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        print("HATA: playwright yüklü değil! pip install playwright && python -m playwright install chromium")
-        return
-    
-    print("Playwright başlatılıyor...")
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        page = browser.new_page(viewport={"width": 1280, "height": 720})
-        
-        page.set_content(html, wait_until="load")
-        page.emulate_media(media="print")
-        
-        # Image yüklenmesini bekle
-        page.wait_for_function(
-            "() => Array.from(document.images).every(img => img.complete && img.naturalWidth > 0)",
-            timeout=15000,
-        )
-        
-        img_count = page.evaluate("document.images.length")
-        img_complete = page.evaluate("Array.from(document.images).every(img => img.complete)")
-        img_width = page.evaluate("document.images[0] ? document.images[0].naturalWidth : 0")
-        print(f"Images in DOM: {img_count}, all complete: {img_complete}, first naturalWidth: {img_width}")
-        
-        # Screenshot al (debug)
-        screenshot_path = os.path.join(os.path.dirname(__file__), "smoke_screenshot.png")
-        page.screenshot(path=screenshot_path, full_page=True)
-        print(f"Screenshot saved: {screenshot_path}")
-        
-        # PDF al
-        pdf_bytes = page.pdf(
-            print_background=True,
-            prefer_css_page_size=True,
-            scale=1.0,
-        )
-        
-        browser.close()
-    
-    pdf_path = os.path.join(os.path.dirname(__file__), "smoke_test_output3.pdf")
-    with open(pdf_path, "wb") as f:
+    from app.models import InvoiceExtraction, CalculationResult, OfferParams, FieldValue
+
+    extraction = InvoiceExtraction(
+        vendor="Manuel Giriş",
+        invoice_period="01/2026",
+        consumption_kwh=FieldValue(value=222222, confidence=1.0),
+        current_active_unit_price_tl_per_kwh=FieldValue(value=4.0, confidence=1.0),
+        distribution_unit_price_tl_per_kwh=FieldValue(value=1.878, confidence=1.0),
+        invoice_total_with_vat_tl=FieldValue(value=1620641.05, confidence=1.0),
+        demand_qty=FieldValue(value=0, confidence=1.0),
+        demand_unit_price_tl_per_unit=FieldValue(value=0, confidence=1.0),
+    )
+
+    calculation = CalculationResult(
+        current_energy_tl=888888.00,
+        current_distribution_tl=417201.81,
+        current_btv_tl=44444.40,
+        current_vat_matrah_tl=1350534.21,
+        current_vat_tl=270106.84,
+        current_total_with_vat_tl=1620641.05,
+        current_demand_tl=0.0,
+        offer_energy_tl=749217.25,
+        offer_ptf_tl=660888.12,
+        offer_yekdem_tl=80888.89,
+        offer_distribution_tl=417201.81,
+        offer_btv_tl=37460.86,
+        offer_vat_matrah_tl=1203879.92,
+        offer_vat_tl=240775.98,
+        offer_total_with_vat_tl=1444655.90,
+        offer_demand_tl=0.0,
+        difference_excl_vat_tl=146654.29,
+        difference_incl_vat_tl=175985.14,
+        savings_ratio=-0.1086,
+        unit_price_savings_ratio=-0.1572,
+        meta_vat_rate=0.20,
+    )
+
+    params = OfferParams(
+        weighted_ptf_tl_per_mwh=2974.10,
+        yekdem_tl_per_mwh=364.00,
+        agreement_multiplier=1.01,
+    )
+
+    from app.pdf_generator import _generate_pdf_reportlab
+
+    print("ReportLab PDF üretiliyor...")
+    pdf_bytes = _generate_pdf_reportlab(
+        extraction, calculation, params,
+        customer_name="Akın Plastik",
+        customer_company="Akın Plastik",
+        offer_id=20260303,
+        contact_person="Ahmet",
+        offer_date="2026-03-03",
+        offer_validity_days=15,
+    )
+
+    # Çıktı dosyası
+    out = os.path.join(os.path.dirname(__file__), "smoke_test_reportlab10.pdf")
+    with open(out, "wb") as f:
         f.write(pdf_bytes)
-    
-    print(f"PDF saved: {pdf_path} ({len(pdf_bytes)} bytes)")
-    print("Şimdi smoke_test_output.pdf dosyasını aç ve anteti kontrol et!")
+    print(f"PDF kaydedildi: {out} ({len(pdf_bytes)} bytes)")
 
 if __name__ == "__main__":
     main()

@@ -504,13 +504,14 @@ function App() {
         ? DISTRIBUTION_TARIFFS.find(t => t.key === distributionTariffKey)?.label 
         : manualValues.tariff_group || 'Sanayi';
       
-      const period = manualMode ? manualValues.invoice_period : result?.extraction?.invoice_period;
       const companySlug = customerInfo.company_name
         ? customerInfo.company_name.trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_çÇğĞıİöÖşŞüÜ]/g, '')
         : '';
+      const now = new Date();
+      const offerId = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}`;
       const fileName = companySlug
-        ? `teklif_${companySlug}_${period || 'fatura'}.pdf`
-        : `teklif_${period || 'fatura'}.pdf`;
+        ? `teklif_${companySlug}_${offerId}.pdf`
+        : `teklif_${offerId}.pdf`;
       
       await downloadPdf(
         extraction,

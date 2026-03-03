@@ -13,7 +13,12 @@ body { font-family: Arial, sans-serif; font-size: 8pt; line-height: 1.35; color:
 * { margin: 0; padding: 0; box-sizing: border-box; }
 .letterhead { position: fixed; top: 0; left: 0; width: 210mm; height: 297mm; z-index: 0; pointer-events: none; }
 .letterhead img { width: 100%; height: 100%; object-fit: fill; display: block; }
-.content { position: relative; z-index: 1; background: transparent; padding: 33mm 18mm 25mm 18mm; }
+.footer-bar { position: fixed; bottom: 22mm; left: 0; width: 210mm; z-index: 3; pointer-events: none; padding: 0 15mm; }
+.footer-contacts { display: flex; justify-content: center; gap: 28px; align-items: center; font-size: 8pt; color: #333; padding-bottom: 5px; border-bottom: 2px solid #555; }
+.footer-contacts span { display: inline-flex; align-items: center; gap: 5px; }
+.footer-contacts .ico { width: 18px; height: 18px; border: 1.5px solid #333; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 9px; }
+.footer-page { position: fixed; bottom: 23mm; right: 15mm; z-index: 3; font-size: 7pt; color: #6B7280; }
+.content { position: relative; z-index: 1; background: transparent; padding: 38mm 18mm 20mm 18mm; }
 .header-meta { text-align: right; font-size: 8pt; color: #374151; line-height: 1.3; margin-bottom: 3px; }
 .title { text-align: center; font-size: 15pt; font-weight: bold; text-transform: uppercase; letter-spacing: 1.5px; border-bottom: 2px solid #10B981; padding: 6px 0; margin-bottom: 8px; color: #1F2937; }
 .intro { margin-bottom: 5px; line-height: 1.3; font-size: 8pt; }
@@ -41,6 +46,14 @@ table, img { max-width: 100%; }
 </style>
 </head>
 <body>
+<div class="footer-bar">
+  <div class="footer-contacts">
+    <span><span class="ico">&#127760;</span> www.gelkaenerji.com.tr</span>
+    <span><span class="ico">&#9742;</span> +90 212 706 0 562</span>
+    <span><span class="ico">&#9993;</span> info@gelkaenerji.com.tr</span>
+  </div>
+</div>
+<div class="footer-page">Sayfa 1</div>
 {% if letterhead_base64 %}
 <div class="letterhead">
   <img src="data:image/png;base64,{{ letterhead_base64 }}" alt="" />
@@ -83,9 +96,8 @@ table, img { max-width: 100%; }
 <p class="explanation" style="margin-top:6px;">Yap&#305;lan hesaplamalar sonucunda; mevcut durumda KDV hari&#231; toplam bedel <b>{{ calc.current_vat_matrah_tl | currency }}</b>, teklifimiz kapsam&#305;nda KDV hari&#231; toplam bedel <b>{{ calc.offer_vat_matrah_tl | currency }}</b> olmak &#252;zere, KDV hari&#231; <b>%{{ (calc.savings_ratio * 100) | abs | number(2) }}</b> oran&#305;nda tasarruf sa&#287;lanmaktad&#305;r.</p>
 {% if contact_person %}<p class="explanation">&#304;lgili: {{ contact_person }}</p>{% endif %}
 <p class="explanation">Bilgilerinize sunar&#305;z. Sayg&#305;lar&#305;m&#305;zla, <strong>Gelka Enerji</strong></p>
-<div class="terms"><div class="terms-title">Ticari &#350;artlar</div><div class="terms-grid"><div class="terms-item"><span class="terms-check"></span> Fatura vadesi +10 g&#252;n</div><div class="terms-item"><span class="terms-check"></span> Teminat</div><div class="terms-item"><span class="terms-check"></span> G&#252;vence</div><div class="terms-item"><span class="terms-check"></span> &#214;n &#246;deme</div></div></div>
+<div class="terms"><div class="terms-title">Ticari &#350;artlar</div><div class="terms-grid"><div class="terms-item"><span class="terms-check"></span> Fatura vadesi +10 g&#252;n</div><div class="terms-item"><span class="terms-check"></span> Teminat</div><div class="terms-item"><span class="terms-check"></span> G&#252;vence bedeli</div><div class="terms-item"><span class="terms-check"></span> &#214;n &#246;deme</div></div></div>
 <p class="ek-bilgi"><strong>Ek Bilgiler:</strong> Bu teklif, mevcut fatura verileriniz esas al&#305;narak haz&#305;rlanm&#305;&#351;t&#305;r. Ger&#231;ek tasarruf tutarlar&#305;, t&#252;ketim miktar&#305; ve piyasa ko&#351;ullar&#305;na g&#246;re de&#287;i&#351;iklik g&#246;sterebilir. Teklif {{ offer_validity_days }} g&#252;n s&#252;reyle ge&#231;erlidir.</p>
-<div class="foot">Teklif No: {{ offer_id }} | {{ date }} | Ge&#231;erlilik: {{ offer_validity_days }} G&#252;n | www.gelkaenerji.com.tr</div>
 </div>
 </body>
 </html>'''

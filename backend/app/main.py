@@ -2196,7 +2196,7 @@ async def generate_pdf_simple(
             content=pdf_bytes,
             media_type="application/pdf",
             headers={
-                "Content-Disposition": f'attachment; filename="{safe_filename}"',
+                "Content-Disposition": f'inline; filename="{safe_filename}"',
                 "Content-Length": str(len(pdf_bytes)),
                 "Cache-Control": "no-store, max-age=0",
                 "Pragma": "no-cache",

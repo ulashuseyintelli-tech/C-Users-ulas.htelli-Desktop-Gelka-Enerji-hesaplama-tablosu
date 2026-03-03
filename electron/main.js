@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, net } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const http = require('http');
@@ -10,23 +10,44 @@ let backendProcess;
 const BACKEND_PORT = 8000;
 const isDev = !app.isPackaged;
 
+// ── Backend log dosyası (crash debug için) ───────────────────────────────────
+function getBackendLogPath() {
+  const logDir = isDev
+    ? path.join(__dirname, '..', 'backend')
+    : path.join(app.getPath('userData'), 'logs');
+  if (!fs.existsSync(logDir)) {
+    fs.mkdirSync(logDir, { recursive: true });
+  }
+  return path.join(logDir, 'backend.log');
+}
+
+let backendLogStream = null;
+
+function logBackend(msg) {
+  const line = `[${new Date().toISOString()}] ${msg}\n`;
+  console.log(`[backend] ${msg}`);
+  if (backendLogStream) {
+    backendLogStream.write(line);
+  }
+}
+
 // ── Backend lifecycle ────────────────────────────────────────────────────────
 
-function waitForBackend(retries = 30) {
+function waitForBackend(retries = 60) {
   return new Promise((resolve, reject) => {
     const check = (attempt) => {
       const req = http.get(`http://127.0.0.1:${BACKEND_PORT}/health`, (res) => {
         if (res.statusCode === 200) {
           resolve();
         } else if (attempt < retries) {
-          setTimeout(() => check(attempt + 1), 500);
+          setTimeout(() => check(attempt + 1), 1000);
         } else {
           reject(new Error('Backend başlatılamadı'));
         }
       });
       req.on('error', () => {
         if (attempt < retries) {
-          setTimeout(() => check(attempt + 1), 500);
+          setTimeout(() => check(attempt + 1), 1000);
         } else {
           reject(new Error('Backend bağlantısı kurulamadı'));
         }
@@ -38,6 +59,15 @@ function waitForBackend(retries = 30) {
 }
 
 function startBackend() {
+  // Log dosyasını aç
+  try {
+    backendLogStream = fs.createWriteStream(getBackendLogPath(), { flags: 'a' });
+    logBackend('--- Backend starting ---');
+    logBackend(`isDev=${isDev}, resourcesPath=${isDev ? 'N/A' : process.resourcesPath}`);
+  } catch (e) {
+    console.error('Log dosyası açılamadı:', e);
+  }
+
   if (isDev) {
     const pythonPath = process.platform === 'win32' ? 'python' : 'python3';
     backendProcess = spawn(pythonPath,
@@ -47,28 +77,52 @@ function startBackend() {
   } else {
     const backendDir = path.join(process.resourcesPath, 'backend');
     const backendExe = path.join(backendDir, 'gelka-backend.exe');
+    logBackend(`Backend exe: ${backendExe}`);
+    logBackend(`Backend dir: ${backendDir}`);
+    logBackend(`Exe exists: ${fs.existsSync(backendExe)}`);
     backendProcess = spawn(backendExe,
       ['--host', '127.0.0.1', '--port', String(BACKEND_PORT)],
       { cwd: backendDir, env: { ...process.env }, stdio: ['pipe', 'pipe', 'pipe'] }
     );
   }
 
-  backendProcess.stdout.on('data', (data) => console.log(`[backend] ${data.toString().trim()}`));
-  backendProcess.stderr.on('data', (data) => console.error(`[backend] ${data.toString().trim()}`));
+  backendProcess.stdout.on('data', (data) => logBackend(`[stdout] ${data.toString().trim()}`));
+  backendProcess.stderr.on('data', (data) => logBackend(`[stderr] ${data.toString().trim()}`));
   backendProcess.on('error', (err) => {
-    console.error('Backend başlatma hatası:', err);
+    logBackend(`[ERROR] Backend başlatma hatası: ${err.message}`);
     dialog.showErrorBox('Hata', `Backend başlatılamadı: ${err.message}`);
   });
-  backendProcess.on('exit', (code) => {
-    console.log(`Backend kapandı (code: ${code})`);
-    if (code !== 0 && code !== null) {
-      dialog.showErrorBox('Backend Hatası', `Backend beklenmedik şekilde kapandı (code: ${code}).\nLütfen uygulamayı yeniden başlatın.`);
-    }
+  backendProcess.on('exit', (code, signal) => {
+    logBackend(`[EXIT] Backend process kapandı (code: ${code}, signal: ${signal})`);
     backendProcess = null;
+
+    // PyInstaller --onefile modunda wrapper process kapanabilir ama
+    // asıl Python process hala çalışıyor olabilir.
+    // Health check yaparak gerçek durumu kontrol et.
+    if (code !== 0 && code !== null) {
+      setTimeout(() => {
+        const req = http.get(`http://127.0.0.1:${BACKEND_PORT}/health`, (res) => {
+          if (res.statusCode === 200) {
+            logBackend('[EXIT] Backend hala çalışıyor (health OK). Hata yok sayılıyor.');
+          } else {
+            logBackend(`[EXIT] Backend health check failed: status=${res.statusCode}`);
+            dialog.showErrorBox('Backend Hatası',
+              `Backend beklenmedik şekilde kapandı (code: ${code}).\nLog: ${getBackendLogPath()}`);
+          }
+        });
+        req.on('error', () => {
+          logBackend('[EXIT] Backend gerçekten kapanmış (health unreachable).');
+          dialog.showErrorBox('Backend Hatası',
+            `Backend beklenmedik şekilde kapandı (code: ${code}).\nLog: ${getBackendLogPath()}`);
+        });
+        req.setTimeout(3000);
+      }, 2000); // 2 saniye bekle, belki backend hala ayağa kalkıyor
+    }
   });
 }
 
 function stopBackend() {
+  logBackend('Stopping backend...');
   if (backendProcess) {
     if (process.platform === 'win32') {
       spawn('taskkill', ['/pid', String(backendProcess.pid), '/f', '/t']);
@@ -77,7 +131,35 @@ function stopBackend() {
     }
     backendProcess = null;
   }
+  // PyInstaller --onefile: wrapper process kapanmış olabilir ama
+  // asıl Python process hala port'u dinliyor olabilir.
+  // Port üzerinden de temizle.
+  if (process.platform === 'win32') {
+    try {
+      const { execSync } = require('child_process');
+      const result = execSync(
+        `netstat -ano | findstr ":${BACKEND_PORT}" | findstr "LISTENING"`,
+        { encoding: 'utf-8', timeout: 5000 }
+      ).trim();
+      const lines = result.split('\n');
+      for (const line of lines) {
+        const parts = line.trim().split(/\s+/);
+        const pid = parts[parts.length - 1];
+        if (pid && /^\d+$/.test(pid)) {
+          logBackend(`Killing leftover backend process PID=${pid}`);
+          try { execSync(`taskkill /pid ${pid} /f /t`, { timeout: 5000 }); } catch {}
+        }
+      }
+    } catch {
+      // Port'ta dinleyen process yok, sorun değil
+    }
+  }
+  if (backendLogStream) {
+    backendLogStream.end();
+    backendLogStream = null;
+  }
 }
+
 
 // ── IPC: PDF Download (main process ile dosya indirme) ───────────────────────
 
@@ -160,7 +242,7 @@ ipcMain.handle('download:pdf', async (event, { url, formData, fileName }) => {
 
   // ── 4) Kullanıcıya "Farklı Kaydet" dialogu göster ──
   const { canceled, filePath } = await dialog.showSaveDialog(win, {
-    defaultPath: path.join(app.getPath('downloads'), safeName),
+    defaultPath: path.join(app.getPath('desktop'), safeName),
     filters: [{ name: 'PDF Dosyası', extensions: ['pdf'] }],
   });
   if (canceled || !filePath) return { ok: false, canceled: true };
@@ -277,6 +359,12 @@ ipcMain.handle('download:pdf', async (event, { url, formData, fileName }) => {
             resolve({ ok: false, error: `Dosya kaydedilemedi: ${err.message}` });
           } else {
             console.log(`[download:pdf] PDF kaydedildi: ${filePath} (${buffer.length} bytes)`);
+            // Otomatik aç - masaüstüne kaydedildiğinde hemen kontrol edilebilsin
+            shell.openPath(filePath).then((openErr) => {
+              if (openErr) {
+                console.warn(`[download:pdf] PDF otomatik açılamadı: ${openErr}`);
+              }
+            });
             resolve({ ok: true, filePath });
           }
         });
@@ -302,7 +390,7 @@ async function createWindow() {
     minWidth: 1024,
     minHeight: 700,
     title: 'Gelka Enerji',
-    icon: path.join(__dirname, 'icons', 'icon.png'),
+    icon: undefined,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,

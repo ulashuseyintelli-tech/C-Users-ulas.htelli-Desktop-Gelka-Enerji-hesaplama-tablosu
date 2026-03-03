@@ -313,19 +313,47 @@ export async function downloadPdf(
       throw new Error('Sunucudan boş PDF yanıtı alındı.');
     }
 
-    // Native download via <a> click
-    const url = URL.createObjectURL(blob);
+    // Blob URL oluştur — hem önizleme hem indirme için kullanılacak
+    const blobUrl = URL.createObjectURL(blob);
+
+    // Yeni sekmede PDF önizleme aç
+    window.open(blobUrl, '_blank');
+
+    // "Farklı Kaydet" dialogu ile masaüstüne kaydet (File System Access API)
+    if ('showSaveFilePicker' in window) {
+      try {
+        const handle = await (window as any).showSaveFilePicker({
+          suggestedName: fileName,
+          types: [{ description: 'PDF Dosyası', accept: { 'application/pdf': ['.pdf'] } }],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        // Önizleme sekmesi açık kalsın, blob URL'i 5dk sonra temizle
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 300_000);
+        return;
+      } catch (pickerErr: any) {
+        // Kullanıcı iptal ettiyse — önizleme zaten açık, sadece çık
+        if (pickerErr.name === 'AbortError') {
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 300_000);
+          return;
+        }
+        // Diğer hatalarda fallback'e düş
+      }
+    }
+
+    // Fallback: <a> click ile indir (tarayıcı varsayılan klasörüne)
     const a = document.createElement('a');
-    a.href = url;
+    a.href = blobUrl;
     a.download = fileName;
     a.style.display = 'none';
     document.body.appendChild(a);
     a.click();
-    // Cleanup
     setTimeout(() => {
       document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 1000);
+      // Önizleme sekmesi açık kalsın, blob URL'i 5dk sonra temizle
+      URL.revokeObjectURL(blobUrl);
+    }, 300_000);
   } catch (err: any) {
     clearTimeout(timeoutId);
     if (err.name === 'AbortError') {

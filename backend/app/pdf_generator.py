@@ -173,6 +173,13 @@ def generate_offer_html(
     else:
         logger.error("LETTERHEAD NOT LOADED! Check templates dir for antetli_bg_300dpi.png or antetli_bg.png")
 
+    # Footer PNG'sini base64 olarak yükle
+    footer_b64 = _load_image_base64("footer.png")
+    if footer_b64:
+        logger.info(f"FOOTER loaded OK, base64 length={len(footer_b64)}")
+    else:
+        logger.warning("Footer image not found, will use text fallback")
+
     context = {
         "offer_id": offer_id or datetime.now().strftime("%Y%m%d%H%M%S"),
         "date": formatted_offer_date,
@@ -184,6 +191,7 @@ def generate_offer_html(
         
         # Antetli kağıt arka planı
         "letterhead_base64": letterhead_b64 or "",
+        "footer_base64": footer_b64 or "",
         
         # Extraction data
         "vendor": extraction.vendor,
@@ -512,6 +520,8 @@ def _generate_pdf_reportlab(
     customer_company: Optional[str] = None,
     offer_id: Optional[int] = None,
     contact_person: Optional[str] = None,
+    offer_date: Optional[str] = None,
+    offer_validity_days: int = 15,
 ) -> bytes:
     """Generate PDF using ReportLab (pure Python, works everywhere)."""
     from reportlab.pdfbase import pdfmetrics
@@ -543,7 +553,14 @@ def _generate_pdf_reportlab(
     
     # Offer ID and date for header
     offer_id_str = str(offer_id) if offer_id else datetime.now().strftime('%Y%m%d%H%M%S')
-    date_str = datetime.now().strftime('%d.%m.%Y')
+    if offer_date:
+        try:
+            parsed = datetime.strptime(offer_date, "%Y-%m-%d")
+            date_str = parsed.strftime('%d.%m.%Y')
+        except Exception:
+            date_str = datetime.now().strftime('%d.%m.%Y')
+    else:
+        date_str = datetime.now().strftime('%d.%m.%Y')
     
     # Header/Footer callback - font_name'i closure'da yakala
     def add_header_footer(canvas, doc):
@@ -559,11 +576,9 @@ def _generate_pdf_reportlab(
             with PILImage.open(str(header_path)) as img:
                 img_w, img_h = img.size
             
-            # Header'ı tam sayfa genişliğine yerleştir (referans PDF gibi)
             pdf_img_width = width
             pdf_img_height = pdf_img_width * (img_h / img_w)
             
-            # Header'ı sayfanın en üstüne yerleştir
             canvas.drawImage(
                 str(header_path),
                 x=0,
@@ -573,23 +588,23 @@ def _generate_pdf_reportlab(
                 mask='auto'
             )
             
-            # Teklif No ve Tarih (sağ üst beyaz alan - yeşil çizgilerin üstünde)
+            # Teklif No ve Tarih — header görseli ile başlık arasındaki beyaz alan
+            # Header görseli height-pdf_img_height'ta bitiyor, topMargin=3.2cm
+            # Beyaz alan: (height - pdf_img_height) ile (height - 3.2cm) arası
+            white_zone_top = height - pdf_img_height  # header görseli alt kenarı
             canvas.setFont(font_name, 9)
             canvas.setFillColor(colors.HexColor('#374151'))
-            # Header görselinin üst kısmındaki beyaz alana yerleştir
-            # Sağ kenardan 1.5cm içeride, üstten ~0.5cm aşağıda
-            text_x = width - 1.5*cm
-            text_y_top = height - 0.5*cm
+            text_x = width - 2*cm
+            text_y_top = white_zone_top - 0.25*cm
             canvas.drawRightString(text_x, text_y_top, f"Teklif No: {offer_id_str}")
-            canvas.drawRightString(text_x, text_y_top - 0.35*cm, f"Tarih: {date_str}")
+            canvas.drawRightString(text_x, text_y_top - 0.4*cm, f"Tarih: {date_str}")
         else:
-            # Fallback: Basit metin header
             canvas.setFont(font_name, 18)
             canvas.setFillColor(colors.HexColor('#10B981'))
             canvas.drawString(2*cm, height - 1.5*cm, "GELKA ENERJİ")
         
         # ═══════════════════════════════════════════════════════════════════
-        # FOOTER - Görsel kullan (1654x250 px)
+        # FOOTER - footer.png (ikonlar) + metin satırı (referans PDF gibi)
         # ═══════════════════════════════════════════════════════════════════
         footer_path = Path(__file__).parent / "templates" / "footer.png"
         if footer_path.exists():
@@ -600,44 +615,41 @@ def _generate_pdf_reportlab(
             img_height = img_width * (fimg_h / fimg_w)
             canvas.drawImage(
                 str(footer_path), 
-                0,  # Sol kenar
-                0,  # Alt kenar
+                0, 0,
                 width=img_width, 
                 height=img_height,
-                preserveAspectRatio=True,
                 mask='auto'
             )
-            # Sayfa numarası footer'ın üstüne
-            canvas.setFont(font_name, 8)
-            canvas.setFillColor(colors.HexColor('#6B7280'))
-            canvas.drawRightString(width - 1.5*cm, img_height + 0.2*cm, f"Sayfa {doc.page}")
+            # Metin satırı footer.png'nin hemen üstünde
+            footer_text_y = img_height + 0.2*cm
         else:
-            # Fallback: Metin footer
-            canvas.setStrokeColor(colors.HexColor('#E5E7EB'))
-            canvas.setLineWidth(1)
-            canvas.line(2*cm, 2*cm, width - 2*cm, 2*cm)
-            
-            canvas.setFont(font_name, 8)
-            canvas.setFillColor(colors.HexColor('#6B7280'))
-            canvas.drawString(2*cm, 1.5*cm, "www.gelkaenerji.com.tr | Tel: +90 212 706 0 562 | info@gelkaenerji.com.tr")
-            canvas.drawRightString(width - 2*cm, 1.5*cm, f"Sayfa {doc.page}")
-            canvas.drawCentredString(width/2, 1.0*cm, "Bu teklif 30 gün süreyle geçerlidir.")
+            footer_text_y = 0.8*cm
+        
+        # Footer metin satırı (referans PDF'deki gibi)
+        canvas.setFont(font_name, 7)
+        canvas.setFillColor(colors.HexColor('#6B7280'))
+        footer_text = f"Teklif No: {offer_id_str} | {date_str} | Geçerlilik: {offer_validity_days} Gün | www.gelkaenerji.com.tr"
+        canvas.drawCentredString(width / 2, footer_text_y, footer_text)
         
         canvas.restoreState()
     
     doc = SimpleDocTemplate(
         buffer, 
         pagesize=A4, 
-        topMargin=2.5*cm,  # Header için
-        bottomMargin=2.5*cm,  # Footer için
-        leftMargin=1.5*cm, 
-        rightMargin=1.5*cm
+        topMargin=3.2*cm,
+        bottomMargin=3.8*cm,
+        leftMargin=2*cm, 
+        rightMargin=2*cm
     )
     
-    title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontSize=14, textColor=colors.HexColor('#1F2937'), alignment=1, fontName=font_name)
-    heading_style = ParagraphStyle('Heading', parent=styles['Heading2'], fontSize=11, textColor=colors.HexColor('#1F2937'), fontName=font_name, spaceBefore=6, spaceAfter=4)
+    # doc.width = 21cm - 2cm - 2cm = 17cm — yazılar ve tablolar aynı genişlikte
+    avail_w = 17*cm
+    col4 = avail_w / 4
+    
+    title_style = ParagraphStyle('Title', parent=styles['Heading1'], fontSize=13, textColor=colors.HexColor('#1F2937'), alignment=1, fontName=font_name, spaceAfter=0, spaceBefore=0)
+    heading_style = ParagraphStyle('Heading', parent=styles['Heading2'], fontSize=10, textColor=colors.HexColor('#1F2937'), fontName=font_name, spaceBefore=2, spaceAfter=2)
     normal_style = ParagraphStyle('Normal', parent=styles['Normal'], fontSize=9, fontName=font_name)
-    letter_style = ParagraphStyle('Letter', parent=styles['Normal'], fontSize=8, fontName=font_name, leading=12, alignment=4)
+    letter_style = ParagraphStyle('Letter', parent=styles['Normal'], fontSize=8.5, fontName=font_name, leading=11.5, alignment=4)
     
     elements = []
     
@@ -648,6 +660,15 @@ def _generate_pdf_reportlab(
         if hasattr(field, 'value'):
             return field.value if field.value else default
         return str(field) if field else default
+    
+    # Sayıları Türkçe formatla (nokta binlik, virgül ondalık)
+    def fmt_tl(val):
+        return f"{val:,.2f} TL".replace(",", "X").replace(".", ",").replace("X", ".")
+    
+    # Türkçe sayı formatı
+    def fmt_num(val, decimals=2):
+        fmt_str = f"{{:,.{decimals}f}}"
+        return fmt_str.format(val).replace(",", "X").replace(".", ",").replace("X", ".")
     
     # Tarife grubu
     tariff_group = "Sanayi"
@@ -660,9 +681,17 @@ def _generate_pdf_reportlab(
     vendor = get_val(extraction.vendor)
     period = get_val(extraction.invoice_period)
     
-    # Başlık
-    elements.append(Paragraph("Enerji Tasarruf Teklifi", title_style))
-    elements.append(Spacer(1, 0.1*cm))
+    # Başlık - yeşil alt çizgili
+    title_para = Paragraph("ENERJİ TASARRUF TEKLİFİ", title_style)
+    title_table = Table([[title_para]], colWidths=[avail_w])
+    title_table.setStyle(TableStyle([
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('LINEBELOW', (0, 0), (-1, -1), 2, colors.HexColor('#10B981')),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+    ]))
+    elements.append(title_table)
+    elements.append(Spacer(1, 0.35*cm))  # Yeşil çizgi → Sayın arasında boşluk
     
     # Hitap metni
     if customer_name:
@@ -673,37 +702,42 @@ def _generate_pdf_reportlab(
         greeting = "Sayın Yetkili,"
     
     elements.append(Paragraph(f"<b>{greeting}</b>", letter_style))
-    elements.append(Spacer(1, 0.2*cm))
+    elements.append(Spacer(1, 0.1*cm))
     
     elements.append(Paragraph(
         f"Mevcut elektrik tüketim verileriniz ve tarafımıza iletilen fatura bilgileriniz esas alınarak yapılan analiz sonucunda, "
         f"<b>{tariff_group}</b> abone grubunuz için hazırlanan elektrik enerjisi tedarik teklifimizi bilgilerinize sunarız.",
         letter_style
     ))
-    elements.append(Spacer(1, 0.2*cm))
+    elements.append(Spacer(1, 0.1*cm))
     
     # Müşteri bilgileri tablosu
     if customer_name or contact_person:
+        cell_style = ParagraphStyle('CellText', fontSize=8.5, fontName=font_name, leading=11)
         cust_data = [
-            ["Firma Adı", customer_name or "-", "Yetkili Kişi", contact_person or "-"],
+            [
+                Paragraph("<b>Firma Adı</b>", cell_style),
+                Paragraph(customer_name or "-", cell_style),
+                Paragraph("<b>Yetkili Kişi</b>", cell_style),
+                Paragraph(contact_person or "-", cell_style),
+            ],
         ]
-        cust_col = 4.25*cm
-        ct = Table(cust_data, colWidths=[cust_col, cust_col, cust_col, cust_col])
+        # Etiketler dar, değerler geniş
+        ct = Table(cust_data, colWidths=[2.5*cm, avail_w/2 - 2.5*cm, 2.5*cm, avail_w/2 - 2.5*cm])
         ct.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#F3F4F6')),
             ('BACKGROUND', (2, 0), (2, -1), colors.HexColor('#F3F4F6')),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#E5E7EB')),
-            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('GRID', (0, 0), (-1, -1), 0.75, colors.HexColor('#CCCCCC')),
             ('FONTNAME', (0, 0), (-1, -1), font_name),
-            ('PADDING', (0, 0), (-1, -1), 8),
+            ('PADDING', (0, 0), (-1, -1), 4),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ]))
         elements.append(ct)
-        elements.append(Spacer(1, 0.2*cm))
+        elements.append(Spacer(1, 0.1*cm))
     
     elements.append(Paragraph(
-        f"Çalışma, aynı tüketim miktarı (<b>{consumption:,.0f} kWh</b>), aynı dağıtım bedelleri ve aynı vergi kalemleri esas alınarak yapılmış; "
-        f"karşılaştırmadaki fark yalnızca enerji tedarik bedelinden kaynaklanmaktadır.",
+        f"Çalışma, aynı tüketim miktarı (<b>{fmt_num(consumption, 2)} kWh</b>), aynı dağıtım bedelleri ve aynı vergi kalemleri esas alınarak yapılmış; "
+        f"fark yalnızca enerji tedarik bedelinden kaynaklanmaktadır.",
         letter_style
     ))
     elements.append(Spacer(1, 0.1*cm))
@@ -711,27 +745,21 @@ def _generate_pdf_reportlab(
     # Enerji Bedelinin Hesaplama Yapısı
     elements.append(Paragraph("<b>Enerji Bedelinin Hesaplama Yapısı</b>", letter_style))
     elements.append(Paragraph(
-        "Enerji bedeli, piyasa mevzuatına uygun şekilde EPİAŞ verileri esas alınarak oluşturulmaktadır. "
-        "İlgili fatura dönemi için EPİAŞ saatlik Piyasa Takas Fiyatları (PTF) ile abonenin saatlik veya profillenmiş "
-        "tüketim değerleri kullanılarak <b>Ağırlıklı PTF</b> hesaplanır.",
+        f"Enerji bedeli, EPİAŞ verileri esas alınarak oluşturulmaktadır. İlgili fatura dönemi için EPİAŞ saatlik PTF ile "
+        f"abonenin tüketim değerleri kullanılarak Ağırlıklı PTF hesaplanır. Üzerine YEKDEM birim bedeli eklenerek toplam enerji birim maliyeti "
+        f"oluşturulur. Bu maliyet, anlaşma fiyat katsayısı (<b>{params.agreement_multiplier:.2f}</b>) ile çarpılarak nihai enerji bedeline ulaşılır.",
         letter_style
     ))
-    elements.append(Paragraph(
-        f"Ağırlıklı PTF üzerine ilgili dönem YEKDEM birim bedeli eklenerek toplam enerji birim maliyeti oluşturulur. "
-        f"Bu maliyet, sözleşmede belirlenen anlaşma fiyat katsayısı (<b>{params.agreement_multiplier:.2f}</b>) ile çarpılarak "
-        f"nihai enerji bedeline ulaşılır.",
-        letter_style
-    ))
-    elements.append(Spacer(1, 0.2*cm))
+    elements.append(Spacer(1, 0.1*cm))
     
     # YEKDEM Uygulaması
     elements.append(Paragraph("<b>YEKDEM Uygulaması</b>", letter_style))
     elements.append(Paragraph(
-        "YEKDEM bedeli, EPİAŞ tarafından ilgili dönem için kesinleştirilmediği durumlarda tahmini olarak faturalandırılabilir. "
-        "Gerçekleşen değer açıklandığında, tahmini değer ile oluşan fark izleyen dönemlerde mahsup edilerek dengelenir.",
+        "YEKDEM bedeli, EPİAŞ tarafından kesinleştirilmediği durumlarda tahmini olarak faturalandırılabilir. "
+        "Gerçekleşen değer açıklandığında fark izleyen dönemlerde mahsup edilir.",
         letter_style
     ))
-    elements.append(Spacer(1, 0.2*cm))
+    elements.append(Spacer(1, 0.1*cm))
     
     # Diğer Bedeller
     elements.append(Paragraph("<b>Diğer Bedeller</b>", letter_style))
@@ -739,20 +767,16 @@ def _generate_pdf_reportlab(
         "Dağıtım bedeli, BTV ve KDV gibi regüle edilen kalemlerde mevcut uygulama aynen korunmaktadır.",
         letter_style
     ))
-    elements.append(Spacer(1, 0.15*cm))
+    elements.append(Spacer(1, 0.05*cm))
     
     # ═══════════════════════════════════════════════════════════════════════════
     # KARŞILAŞTIRMA TABLOSU (Diğer Bedeller ile Ticari Şartlar arasında)
     # ═══════════════════════════════════════════════════════════════════════════
-    elements.append(Paragraph("<b>Maliyet Karşılaştırması</b>", heading_style))
+    elements.append(Paragraph("<b>MALİYET KARŞILAŞTIRMASI</b>", heading_style))
     
     energy_diff = calculation.current_energy_tl - calculation.offer_energy_tl
     total_diff = abs(calculation.difference_incl_vat_tl)
     savings_pct = abs(calculation.savings_ratio * 100)
-    
-    # Sayıları Türkçe formatla (nokta binlik, virgül ondalık)
-    def fmt_tl(val):
-        return f"{val:,.2f} TL".replace(",", "X").replace(".", ",").replace("X", ".")
     
     savings_data = [
         ["Kalem", "Mevcut Fatura", "Teklifimiz", "Tasarruf"],
@@ -763,40 +787,50 @@ def _generate_pdf_reportlab(
         [f"KDV (%{int(getattr(calculation, 'meta_vat_rate', 0.20) * 100)})", fmt_tl(calculation.current_vat_tl), fmt_tl(calculation.offer_vat_tl), "-"],
         ["TOPLAM", fmt_tl(calculation.current_total_with_vat_tl), fmt_tl(calculation.offer_total_with_vat_tl), fmt_tl(total_diff)],
     ]
-    # Eşit sütun genişlikleri - toplam 17cm (A4 - 2cm sol - 2cm sağ margin)
-    col_width = 4.25*cm
-    t = Table(savings_data, colWidths=[col_width, col_width, col_width, col_width])
+    # Eşit sütun genişlikleri
+    t = Table(savings_data, colWidths=[col4, col4, col4, col4])
     t.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#10B981')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
         ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#ECFDF5')),
         ('FONTNAME', (0, 0), (-1, -1), font_name),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#E5E7EB')),
+        ('GRID', (0, 0), (-1, -1), 0.75, colors.HexColor('#CCCCCC')),
         ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('PADDING', (0, 0), (-1, -1), 8),
+        ('PADDING', (0, 0), (-1, -1), 4),
         ('ALIGN', (0, 0), (0, -1), 'LEFT'),  # İlk sütun sola
         ('ALIGN', (1, 0), (-1, 0), 'CENTER'),  # Header ortala
         ('ALIGN', (1, 1), (-1, -1), 'RIGHT'),  # Sayılar sağa
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
     ]))
     elements.append(t)
-    elements.append(Spacer(1, 0.1*cm))
+    elements.append(Spacer(1, 0.05*cm))
     
-    # Tasarruf vurgusu
-    elements.append(Paragraph(
-        f"<b>Aylık Tasarruf: {total_diff:,.2f} TL (%{savings_pct:.2f})</b>",
-        ParagraphStyle('Savings', fontSize=12, textColor=colors.HexColor('#059669'), alignment=1, fontName=font_name)
-    ))
-    elements.append(Spacer(1, 0.1*cm))
+    # Tasarruf vurgusu - yeşil arka planlı kutu (HTML .save class gibi)
+    savings_text = (
+        f'<font size="6">Aylık Tasarruf</font><br/>'
+        f'<b><font size="10">{fmt_tl(total_diff)} (%{fmt_num(savings_pct)})</font></b>'
+    )
+    savings_style = ParagraphStyle('SavingsBox', fontSize=10, textColor=colors.white, alignment=1, fontName=font_name, leading=14)
+    # Karşılaştırma tablosuyla aynı genişlik: avail_w = 18cm
+    savings_box = Table(
+        [[Paragraph(savings_text, savings_style)]],
+        colWidths=[avail_w],
+    )
+    savings_box.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#10B981')),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('LEFTPADDING', (0, 0), (-1, -1), 8),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+    ]))
+    elements.append(savings_box)
+    elements.append(Spacer(1, 0.05*cm))
     
     # Teklif Parametreleri - Maliyet tablosunun hemen altında
     offer_unit_price = (params.weighted_ptf_tl_per_mwh / 1000 + params.yekdem_tl_per_mwh / 1000) * params.agreement_multiplier
     current_unit_price = calculation.current_energy_tl / consumption if consumption > 0 else 0
-    
-    # Türkçe sayı formatı
-    def fmt_num(val, decimals=2):
-        fmt_str = f"{{:,.{decimals}f}}"
-        return fmt_str.format(val).replace(",", "X").replace(".", ",").replace("X", ".")
     
     param_data = [
         ["Ağırlıklı PTF", f"{fmt_num(params.weighted_ptf_tl_per_mwh)} TL/MWh", "YEKDEM", f"{fmt_num(params.yekdem_tl_per_mwh)} TL/MWh"],
@@ -804,21 +838,20 @@ def _generate_pdf_reportlab(
         ["Mevcut Birim Fiyat", f"{fmt_num(current_unit_price, 4)} TL/kWh", "Birim Fiyat Farkı", f"{fmt_num(current_unit_price - offer_unit_price, 4)} TL/kWh"],
     ]
     # 4 eşit sütun
-    param_col = 4.25*cm
-    t = Table(param_data, colWidths=[param_col, param_col, param_col, param_col])
+    t = Table(param_data, colWidths=[col4, col4, col4, col4])
     t.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#F3F4F6')),
         ('BACKGROUND', (2, 0), (2, -1), colors.HexColor('#F3F4F6')),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#E5E7EB')),
+        ('GRID', (0, 0), (-1, -1), 0.75, colors.HexColor('#CCCCCC')),
         ('FONTSIZE', (0, 0), (-1, -1), 9),
         ('FONTNAME', (0, 0), (-1, -1), font_name),
-        ('PADDING', (0, 0), (-1, -1), 8),
+        ('PADDING', (0, 0), (-1, -1), 4),
         ('ALIGN', (1, 0), (1, -1), 'LEFT'),  # Değerler sola
         ('ALIGN', (3, 0), (3, -1), 'LEFT'),  # Değerler sola
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
     ]))
     elements.append(t)
-    elements.append(Spacer(1, 0.1*cm))
+    elements.append(Spacer(1, 0.05*cm))
     
     # Fatura Bilgileri - Teklif Parametreleri'nin hemen altında
     elements.append(Paragraph("<b>Fatura Bilgileri</b>", letter_style))
@@ -826,18 +859,18 @@ def _generate_pdf_reportlab(
         ["Tedarikçi", vendor, "Dönem", period],
         ["Tüketim", f"{fmt_num(consumption)} kWh", "Tarife Grubu", tariff_group],
     ]
-    t = Table(invoice_data, colWidths=[param_col, param_col, param_col, param_col])
+    t = Table(invoice_data, colWidths=[col4, col4, col4, col4])
     t.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#F3F4F6')),
         ('BACKGROUND', (2, 0), (2, -1), colors.HexColor('#F3F4F6')),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#E5E7EB')),
+        ('GRID', (0, 0), (-1, -1), 0.75, colors.HexColor('#CCCCCC')),
         ('FONTSIZE', (0, 0), (-1, -1), 9),
         ('FONTNAME', (0, 0), (-1, -1), font_name),
-        ('PADDING', (0, 0), (-1, -1), 8),
+        ('PADDING', (0, 0), (-1, -1), 4),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
     ]))
     elements.append(t)
-    elements.append(Spacer(1, 0.1*cm))
+    elements.append(Spacer(1, 0.05*cm))
     
     # Sonuç paragrafı - ilk sayfada kalsın
     elements.append(Paragraph(
@@ -846,25 +879,45 @@ def _generate_pdf_reportlab(
         f"<b>KDV hariç %{fmt_num(savings_pct)} oranında tasarruf</b> sağlanmaktadır.",
         letter_style
     ))
-    elements.append(Spacer(1, 0.1*cm))
+    elements.append(Spacer(1, 0.05*cm))
     
     if contact_person:
         elements.append(Paragraph(f"İlgili: {contact_person}", letter_style))
-    elements.append(Paragraph("Bilgilerinize sunarız.", letter_style))
-    elements.append(Paragraph("Saygılarımızla,", letter_style))
-    elements.append(Paragraph("<b>Gelka Enerji</b>", letter_style))
+    elements.append(Paragraph("Bilgilerinize sunarız. Saygılarımızla, <b>Gelka Enerji</b>", letter_style))
     
     # ═══════════════════════════════════════════════════════════════════════════
     # TİCARİ ŞARTLAR - Aynı sayfada devam et (PageBreak kaldırıldı)
     # ═══════════════════════════════════════════════════════════════════════════
+    elements.append(Spacer(1, 0.05*cm))
+    
+    # Ticari Şartlar - yeşil sol kenarlı kutu (HTML .terms class gibi)
+    terms_title_style = ParagraphStyle('TermsTitle', fontSize=9, fontName=font_name, textColor=colors.HexColor('#1F2937'), leading=13)
+    terms_item_style = ParagraphStyle('TermsItem', fontSize=8, fontName=font_name, textColor=colors.HexColor('#333333'), leading=12)
+    
+    green = '#10B981'
+    terms_content = Paragraph(
+        f'<b>Ticari Şartlar</b><br/>'
+        f'<font color="{green}">□</font> Fatura vadesi +10 gün&nbsp;&nbsp;&nbsp;'
+        f'<font color="{green}">□</font> Teminat&nbsp;&nbsp;&nbsp;'
+        f'<font color="{green}">□</font> Güvence Bedeli&nbsp;&nbsp;&nbsp;'
+        f'<font color="{green}">□</font> Ön ödeme',
+        terms_title_style
+    )
+    terms_box = Table([[terms_content]], colWidths=[avail_w])
+    terms_box.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F9F9F9')),
+        ('LINEBEFORE', (0, 0), (0, -1), 3, colors.HexColor('#10B981')),
+        ('LEFTPADDING', (0, 0), (-1, -1), 10),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+    ]))
+    elements.append(terms_box)
     elements.append(Spacer(1, 0.1*cm))
     
-    # Ticari Şartlar - Kompakt
-    elements.append(Paragraph("<b>Ticari Şartlar:</b> ✓ Fatura vadesi +10 gün ✓ Teminat yok ✓ Güvence yok", letter_style))
-    elements.append(Spacer(1, 0.2*cm))
-    
     # Ek Bilgiler
-    elements.append(Paragraph("<b>Ek Bilgiler:</b> Bu teklif, mevcut fatura verileriniz esas alınarak hazırlanmıştır. Gerçek tasarruf tutarları, tüketim miktarı ve piyasa koşullarına göre değişiklik gösterebilir. Teklif 30 gün süreyle geçerlidir. Detaylı bilgi ve sözleşme süreci için bizimle iletişime geçebilirsiniz.", letter_style))
+    ek_bilgi_style = ParagraphStyle('EkBilgi', parent=styles['Normal'], fontSize=7.5, fontName=font_name, leading=10, textColor=colors.HexColor('#6B7280'))
+    elements.append(Paragraph(f"<b>Ek Bilgiler:</b> Bu teklif, mevcut fatura verileriniz esas alınarak hazırlanmıştır. Gerçek tasarruf tutarları, tüketim miktarı ve piyasa koşullarına göre değişiklik gösterebilir. Teklif {offer_validity_days} gün süreyle geçerlidir.", ek_bilgi_style))
     
     # Build with header/footer
     doc.build(elements, onFirstPage=add_header_footer, onLaterPages=add_header_footer)
@@ -884,13 +937,31 @@ def generate_offer_pdf_bytes(
 ) -> bytes:
     """
     Generate PDF offer document as bytes.
-    
-    Priority: Playwright > WeasyPrint > ReportLab
-    
+
+    Priority: ReportLab (best layout with header/footer PNG) > Playwright > WeasyPrint
+
     Returns:
         PDF file bytes (ready for storage.put_bytes)
     """
-    # Generate HTML first
+    # 1) ReportLab FIRST — produces the best layout with header.png/footer.png
+    if REPORTLAB_AVAILABLE:
+        try:
+            logger.info("Attempting ReportLab PDF generation (primary)...")
+            pdf_bytes = _generate_pdf_reportlab(
+                extraction, calculation, params,
+                customer_name, customer_company, offer_id,
+                contact_person=contact_person,
+                offer_date=offer_date,
+                offer_validity_days=offer_validity_days,
+            )
+            logger.info(f"Generated PDF with ReportLab: {len(pdf_bytes)} bytes for offer {offer_id}")
+            return pdf_bytes
+        except Exception as e:
+            logger.warning(f"ReportLab PDF generation failed: {e}")
+            import traceback
+            logger.warning(traceback.format_exc())
+
+    # 2) Fallback: Playwright (HTML template)
     try:
         html_content = generate_offer_html(
             extraction, calculation, params,
@@ -900,15 +971,7 @@ def generate_offer_pdf_bytes(
             offer_validity_days=offer_validity_days,
         )
         logger.info(f"HTML generated successfully, length: {len(html_content)}")
-    except Exception as e:
-        logger.error(f"HTML generation failed: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise RuntimeError(f"HTML generation failed: {e}")
-    
-    # 1) Try Playwright FIRST (best quality, works everywhere)
-    try:
-        logger.info("Attempting Playwright PDF generation...")
+        logger.info("Attempting Playwright PDF generation (fallback)...")
         pdf_bytes = _html_to_pdf_playwright(html_content)
         logger.info(f"Generated PDF with Playwright: {len(pdf_bytes)} bytes for offer {offer_id}")
         return pdf_bytes
@@ -916,29 +979,25 @@ def generate_offer_pdf_bytes(
         import traceback
         logger.warning(f"Playwright PDF generation failed: {e}")
         logger.warning(traceback.format_exc())
-    
-    # 2) Try WeasyPrint (faster but needs system deps)
+
+    # 3) Final fallback: WeasyPrint
     if WEASYPRINT_AVAILABLE:
         try:
+            html_content = generate_offer_html(
+                extraction, calculation, params,
+                customer_name, customer_company, offer_id,
+                contact_person=contact_person,
+                offer_date=offer_date,
+                offer_validity_days=offer_validity_days,
+            )
             pdf_bytes = _html_to_pdf_weasyprint(html_content)
             logger.info(f"Generated PDF with WeasyPrint: {len(pdf_bytes)} bytes for offer {offer_id}")
             return pdf_bytes
         except Exception as e:
             logger.warning(f"WeasyPrint failed: {e}")
-    
-    # 3) Final fallback to ReportLab (pure Python, always works)
-    if REPORTLAB_AVAILABLE:
-        try:
-            logger.info("Attempting ReportLab PDF generation...")
-            pdf_bytes = _generate_pdf_reportlab(extraction, calculation, params, customer_name, customer_company, offer_id, contact_person=contact_person)
-            logger.info(f"Generated PDF with ReportLab: {len(pdf_bytes)} bytes for offer {offer_id}")
-            return pdf_bytes
-        except Exception as e:
-            logger.error(f"ReportLab PDF generation failed: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-    
-    raise RuntimeError(f"PDF generation failed. WeasyPrint: {'available' if WEASYPRINT_AVAILABLE else 'unavailable'}. ReportLab: {'available' if REPORTLAB_AVAILABLE else 'unavailable'}.")
+
+    raise RuntimeError(f"PDF generation failed. ReportLab: {'available' if REPORTLAB_AVAILABLE else 'unavailable'}. WeasyPrint: {'available' if WEASYPRINT_AVAILABLE else 'unavailable'}.")
+
 
 
 def generate_and_store_offer_pdf(
