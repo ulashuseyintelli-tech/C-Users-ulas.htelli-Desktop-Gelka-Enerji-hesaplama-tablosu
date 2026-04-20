@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
+         xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
+         xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"
+         xmlns:ext="urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2">
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- FATURA GENEL BİLGİLERİ                                     -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <cbc:UBLVersionID>2.1</cbc:UBLVersionID>
+  <cbc:CustomizationID>TR1.2.1</cbc:CustomizationID>
+  <cbc:ProfileID>TICARIFATURA</cbc:ProfileID>
+  <cbc:ID>ABC2024000000123</cbc:ID>
+  <cbc:CopyIndicator>false</cbc:CopyIndicator>
+  <cbc:IssueDate>2024-08-08</cbc:IssueDate>
+  <cbc:InvoiceTypeCode>SATIS</cbc:InvoiceTypeCode>
+  <cbc:Note>Fatura No: ABC2024000000123 | Belge No: ABC2024000000123 | Dönem: Temmuz-2024</cbc:Note>
+  <cbc:DocumentCurrencyCode>TRY</cbc:DocumentCurrencyCode>
+  <cbc:LineCountNumeric>3</cbc:LineCountNumeric>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- FATURA DÖNEMİ                                               -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <cac:InvoicePeriod>
+    <cbc:StartDate>2024-10-01</cbc:StartDate>
+    <cbc:EndDate>2024-10-31</cbc:EndDate>
+    <cbc:Description>Temmuz-2024</cbc:Description>
+  </cac:InvoicePeriod>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- ÖDEME KOŞULLARI                                             -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <cac:PaymentTerms>
+    <cbc:Note>Son Ödeme Tarihi: 20-08-2024</cbc:Note>
+    <cbc:PaymentDueDate>2024-08-20</cbc:PaymentDueDate>
+  </cac:PaymentTerms>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- TEDARİKÇİ (SATICI) BİLGİLERİ                               -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <cac:AccountingSupplierParty>
+    <cac:Party>
+      <cbc:WebsiteURI>www.sayax.com.tr</cbc:WebsiteURI>
+      <cac:PartyIdentification>
+        <cbc:ID schemeID="VKN">1234567890</cbc:ID>
+      </cac:PartyIdentification>
+      <cac:PartyName>
+        <cbc:Name>GELKA ENERJİ YATIRIM SANAYİ VE TİCARET ANONİM ŞİRKETİ</cbc:Name>
+      </cac:PartyName>
+      <cac:PostalAddress>
+        <cbc:StreetName>Muallimköy Mah. Deniz Cad. 1.2.B. Blok</cbc:StreetName>
+        <cbc:CitySubdivisionName>Gebze</cbc:CitySubdivisionName>
+        <cbc:CityName>KOCAELİ</cbc:CityName>
+        <cac:Country>
+          <cbc:Name>Türkiye</cbc:Name>
+        </cac:Country>
+      </cac:PostalAddress>
+      <cac:PartyTaxScheme>
+        <cac:TaxScheme>
+          <cbc:Name>Uluçınar</cbc:Name>
+        </cac:TaxScheme>
+      </cac:PartyTaxScheme>
+      <cac:Contact>
+        <cbc:Telephone>0216 888 88 01</cbc:Telephone>
+        <cbc:ElectronicMail>satis@sayax.com.tr</cbc:ElectronicMail>
+      </cac:Contact>
+    </cac:Party>
+  </cac:AccountingSupplierParty>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- MÜŞTERİ (ALICI) BİLGİLERİ                                  -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <cac:AccountingCustomerParty>
+    <cac:Party>
+      <cac:PartyIdentification>
+        <cbc:ID schemeID="VKN">1234567890123456</cbc:ID>
+      </cac:PartyIdentification>
+      <cac:PartyName>
+        <cbc:Name>Test Müşteri A.Ş.</cbc:Name>
+      </cac:PartyName>
+      <cac:PostalAddress>
+        <cbc:StreetName>Cumhuriyet CD. Test Sok.</cbc:StreetName>
+      </cac:PostalAddress>
+    </cac:Party>
+  </cac:AccountingCustomerParty>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- VERGİ TOPLAMI                                               -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <cac:TaxTotal>
+    <cbc:TaxAmount currencyID="TRY">92797.51</cbc:TaxAmount>
+    <cac:TaxSubtotal>
+      <cbc:TaxableAmount currencyID="TRY">483251.64</cbc:TaxableAmount>
+      <cbc:TaxAmount currencyID="TRY">92797.51</cbc:TaxAmount>
+      <cac:TaxCategory>
+        <cac:TaxScheme>
+          <cbc:Name>KDV</cbc:Name>
+          <cbc:TaxTypeCode>0015</cbc:TaxTypeCode>
+        </cac:TaxScheme>
+      </cac:TaxCategory>
+    </cac:TaxSubtotal>
+  </cac:TaxTotal>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- GENEL TOPLAMLAR                                             -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <cac:LegalMonetaryTotal>
+    <cbc:LineExtensionAmount currencyID="TRY">483251.64</cbc:LineExtensionAmount>
+    <cbc:TaxExclusiveAmount currencyID="TRY">483251.64</cbc:TaxExclusiveAmount>
+    <cbc:TaxInclusiveAmount currencyID="TRY">576049.15</cbc:TaxInclusiveAmount>
+    <cbc:PayableAmount currencyID="TRY">576049.15</cbc:PayableAmount>
+  </cac:LegalMonetaryTotal>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- FATURA KALEMLERİ                                            -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+
+  <!-- Kalem 1: Enerji Tüketim Bedeli -->
+  <cac:InvoiceLine>
+    <cbc:ID>1</cbc:ID>
+    <cbc:InvoicedQuantity unitCode="KWH">110274</cbc:InvoicedQuantity>
+    <cbc:LineExtensionAmount currencyID="TRY">337194.25</cbc:LineExtensionAmount>
+    <cac:Item>
+      <cbc:Name>Enerji Tüketim Bedeli</cbc:Name>
+      <cbc:Description>Toplam Tüketim: 110.274 kWh | Birim Fiyat: 3,06 TL/kWh | Gündüz: 22.022 kWh | Puant: 5.439 kWh | Gece: 4.197 kWh</cbc:Description>
+    </cac:Item>
+    <cac:Price>
+      <cbc:PriceAmount currencyID="TRY">3.06</cbc:PriceAmount>
+    </cac:Price>
+  </cac:InvoiceLine>
+
+  <!-- Kalem 2: Dağıtım Bedeli -->
+  <cac:InvoiceLine>
+    <cbc:ID>2</cbc:ID>
+    <cbc:InvoicedQuantity unitCode="KWH">110274</cbc:InvoicedQuantity>
+    <cbc:LineExtensionAmount currencyID="TRY">129197.68</cbc:LineExtensionAmount>
+    <cac:Item>
+      <cbc:Name>Dağıtım Bedeli</cbc:Name>
+      <cbc:Description>Dağıtım Birim Fiyat: 1,17 TL/kWh</cbc:Description>
+    </cac:Item>
+    <cac:Price>
+      <cbc:PriceAmount currencyID="TRY">1.17</cbc:PriceAmount>
+    </cac:Price>
+  </cac:InvoiceLine>
+
+  <!-- Kalem 3: Güç Bedeli -->
+  <cac:InvoiceLine>
+    <cbc:ID>3</cbc:ID>
+    <cbc:InvoicedQuantity unitCode="KWH">0</cbc:InvoicedQuantity>
+    <cbc:LineExtensionAmount currencyID="TRY">16859.71</cbc:LineExtensionAmount>
+    <cac:Item>
+      <cbc:Name>Güç Bedeli</cbc:Name>
+      <cbc:Description>Güç Bedeli (kr/Ay/kWh)</cbc:Description>
+    </cac:Item>
+    <cac:Price>
+      <cbc:PriceAmount currencyID="TRY">0</cbc:PriceAmount>
+    </cac:Price>
+  </cac:InvoiceLine>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- ENDEKS / SAYAÇ BİLGİLERİ (Ek Veri)                         -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <cac:AdditionalDocumentReference>
+    <cbc:ID>ENDEKS_BILGILERI</cbc:ID>
+    <cbc:DocumentType>EndeksBilgileri</cbc:DocumentType>
+    <cbc:DocumentDescription>Okuma Dönemi: 01.10.2024 - 31.10.2024 | İlk Endeks: 3.869,454 | Son Endeks: 3.901,112 | Fark: 31,658 | Gündüz: 22,022 | Puant: 5,439 | Gece: 4,197</cbc:DocumentDescription>
+  </cac:AdditionalDocumentReference>
+
+  <cac:AdditionalDocumentReference>
+    <cbc:ID>MUSTERI_BILGILERI</cbc:ID>
+    <cbc:DocumentType>MusteriBilgileri</cbc:DocumentType>
+    <cbc:DocumentDescription>Müşteri No: 3350965 | Banka: 9876543210 | Çarpan/Demand/Söz.Gücü: 2.070 | Gerilim: OG | Günlük Ortalama Tüketim: 648.715,230 kWh | Toplam: 2.113</cbc:DocumentDescription>
+  </cac:AdditionalDocumentReference>
+
+  <cac:AdditionalDocumentReference>
+    <cbc:ID>DIGER_BEDELLER</cbc:ID>
+    <cbc:DocumentType>DigerBedeller</cbc:DocumentType>
+    <cbc:DocumentDescription>Reaktif Bedel | Kesme Bağlama Bedeli | Sayaç Kontrol Bedeli | Usulsüz Kullanım Bedeli | Gecikme Bedeli | İlave-Tenzil | Danışmanlık Bedeli</cbc:DocumentDescription>
+  </cac:AdditionalDocumentReference>
+
+  <cac:AdditionalDocumentReference>
+    <cbc:ID>GECMIS_BORC</cbc:ID>
+    <cbc:DocumentType>GecmisBorc</cbc:DocumentType>
+    <cbc:DocumentDescription>Eski Borç / Bakiye: 0,00 TL</cbc:DocumentDescription>
+  </cac:AdditionalDocumentReference>
+
+</Invoice>

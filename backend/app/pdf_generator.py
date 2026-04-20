@@ -897,7 +897,7 @@ def _generate_pdf_reportlab(
     green = '#10B981'
     terms_content = Paragraph(
         f'<b>Ticari Şartlar</b><br/>'
-        f'<font color="{green}">□</font> Fatura vadesi +10 gün&nbsp;&nbsp;&nbsp;'
+        f'<font color="{green}">□</font> Fatura vadesi +7 gün&nbsp;&nbsp;&nbsp;'
         f'<font color="{green}">□</font> Teminat&nbsp;&nbsp;&nbsp;'
         f'<font color="{green}">□</font> Güvence Bedeli&nbsp;&nbsp;&nbsp;'
         f'<font color="{green}">□</font> Ön ödeme',

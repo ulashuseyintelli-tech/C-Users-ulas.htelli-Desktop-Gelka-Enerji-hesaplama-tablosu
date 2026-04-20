@@ -392,7 +392,7 @@ def calculate_offer(
     current_demand_tl = demand_qty * demand_unit_price
     
     # BTV: raw_breakdown varsa oradan, yoksa hesapla
-    current_btv_tl = raw_btv_tl if raw_btv_tl is not None else (current_energy_tl * 0.01)
+    current_btv_tl = raw_btv_tl if raw_btv_tl is not None else (current_energy_tl * params.btv_rate)
     
     # KDV: raw_breakdown varsa oradan, yoksa hesapla
     current_vat_tl = raw_vat_tl if raw_vat_tl is not None else None
@@ -414,8 +414,8 @@ def calculate_offer(
         # Fatura tutarı okunamadı - line_items'dan hesapla
         # KDV oranı params'dan alınır (default %20, tarımsal sulama için %10)
         
-        # BTV (%1 enerji bedeli üzerinden)
-        calculated_btv = abs(line_items_energy_total) * 0.01
+        # BTV (enerji bedeli üzerinden, params'dan gelen oran)
+        calculated_btv = abs(line_items_energy_total) * params.btv_rate
         
         # KDV matrahı
         calculated_matrah = line_items_subtotal + calculated_btv
@@ -458,7 +458,7 @@ def calculate_offer(
     offer_energy_tl = offer_energy_base * agreement_mult
     offer_distribution_tl = kwh * offer_dist_unit_price
     offer_demand_tl = demand_qty * demand_unit_price
-    offer_btv_tl = offer_energy_tl * 0.01
+    offer_btv_tl = offer_energy_tl * params.btv_rate
     # Teklif matrah: ek kalemler switch'e göre
     offer_vat_matrah_tl = offer_energy_tl + offer_distribution_tl + offer_demand_tl + offer_btv_tl + offer_extra_items
     # KDV oranı params'dan (default %20, tarımsal sulama için %10)

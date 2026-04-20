@@ -341,6 +341,9 @@ class OfferParams(BaseModel):
     # KDV oranı (default %20, tarımsal sulama için %10)
     vat_rate: float = 0.20  # 0.20 = %20, 0.10 = %10
     
+    # BTV oranı (Sanayi %1, Ticari/Kamu %5)
+    btv_rate: float = 0.01  # 0.01 = %1, 0.05 = %5
+    
     # UI Switches
     include_yekdem_in_offer: bool = False  # YEKDEM'i teklife dahil et? (default: hayır)
     extra_items_apply_to_offer: bool = False  # Ek kalemleri teklife dahil et?

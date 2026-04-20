@@ -241,11 +241,13 @@ function App() {
     const backendDistUnitPrice = result.extraction.distribution_unit_price_tl_per_kwh?.value || 0;
     const current_distribution_tl = backendCalc?.current_distribution_tl || (kwh * backendDistUnitPrice);
     
-    // BTV ve KDV: Seçilen oranlara göre HESAPLA (karşılaştırma için)
-    const current_btv_tl = current_energy_tl * btvRate;
-    const current_vat_matrah_tl = current_energy_tl + current_distribution_tl + current_btv_tl;
-    const current_vat_tl = current_vat_matrah_tl * vatRate;
-    const current_total_with_vat_tl = current_vat_matrah_tl + current_vat_tl;
+    // Mevcut fatura: Backend'den gelen değerleri kullan (faturadan okunan SOURCE OF TRUTH)
+    // BTV ve KDV backend'den geldiyse onu kullan, yoksa frontend'de hesapla
+    const current_btv_tl = backendCalc?.current_btv_tl ?? (current_energy_tl * btvRate);
+    const current_vat_matrah_tl = backendCalc?.current_vat_matrah_tl ?? (current_energy_tl + current_distribution_tl + current_btv_tl);
+    const current_vat_tl = backendCalc?.current_vat_tl ?? (current_vat_matrah_tl * vatRate);
+    // Faturadan okunan toplam (SOURCE OF TRUTH) - backend hesaplamasını kullan
+    const current_total_with_vat_tl = backendCalc?.current_total_with_vat_tl ?? (current_vat_matrah_tl + current_vat_tl);
     
     // YEKDEM: Backend'in kararını kullan (faturada YEKDEM varsa dahil et, yoksa etme)
     // meta_include_yekdem_in_offer backend tarafından faturaya göre belirleniyor
@@ -262,7 +264,6 @@ function App() {
     const offer_energy_tl = offer_energy_base * multiplier;
     
     const offer_distribution_tl = kwh * distUnitPrice;
-    // BTV oranı: Sanayi %1, Ticarethane/Kamu/Özel %5
     // BTV oranı: Sanayi %1, Ticarethane/Kamu/Özel %5
     const offer_btv_tl = offer_energy_tl * btvRate;
     const offer_vat_matrah_tl = offer_energy_tl + offer_distribution_tl + offer_btv_tl;
@@ -340,14 +341,18 @@ function App() {
       setPriceError(null);
       
       try {
-        // DB'den PTF/YEKDEM fiyatlarını çek (önce DB, yoksa EPİAŞ fallback)
-        const res = await fetch(`http://127.0.0.1:8000/api/epias/prices/${period}?auto_fetch=false`);
+        // DB'den PTF/YEKDEM fiyatlarını çek (auto_fetch=true ile EPİAŞ fallback aktif)
+        const res = await fetch(`http://127.0.0.1:8000/api/epias/prices/${period}`);
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({}));
+          throw new Error(errBody.detail || `HTTP ${res.status}`);
+        }
         const response = await res.json();
         
-        if (response.ptf_tl_per_mwh) {
+        if (response.ptf_tl_per_mwh !== undefined && response.ptf_tl_per_mwh !== null) {
           setPtfPrice(response.ptf_tl_per_mwh);
         }
-        if (response.yekdem_tl_per_mwh !== undefined) {
+        if (response.yekdem_tl_per_mwh !== undefined && response.yekdem_tl_per_mwh !== null) {
           setYekdemPrice(response.yekdem_tl_per_mwh);
         }
       } catch (err: any) {
@@ -734,8 +739,9 @@ function App() {
                           <input
                             type="number"
                             className={`w-full px-2 py-1.5 pr-7 text-sm border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 focus:border-primary-500 outline-none ${ptfDisabled ? 'bg-gray-50' : ''} ${priceLoading ? 'animate-pulse' : ''}`}
-                            value={ptfPrice}
-                            onChange={(e) => setPtfPrice(parseFloat(e.target.value) || 0)}
+                            value={ptfPrice || ''}
+                            onChange={(e) => setPtfPrice(e.target.value === '' ? 0 : parseFloat(e.target.value))}
+                            onFocus={(e) => { if (ptfPrice === 0) e.target.value = ''; }}
                             step="0.1"
                             disabled={ptfDisabled}
                           />
@@ -794,8 +800,9 @@ function App() {
                             <input
                               type="number"
                               className={`w-full px-2 py-1.5 pr-7 text-sm border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 focus:border-primary-500 outline-none ${yekdemDisabled ? 'bg-gray-100 text-gray-400' : ''}`}
-                              value={yekdemVal}
-                              onChange={(e) => setYekdemPrice(parseFloat(e.target.value) || 0)}
+                              value={yekdemVal || ''}
+                              onChange={(e) => setYekdemPrice(e.target.value === '' ? 0 : parseFloat(e.target.value))}
+                              onFocus={(e) => { if (yekdemVal === 0) e.target.value = ''; }}
                               step="0.1"
                               disabled={yekdemDisabled}
                             />
@@ -834,8 +841,9 @@ function App() {
                     <input
                       type="number"
                       className="w-20 px-2 py-1.5 text-sm border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 focus:border-primary-500 outline-none"
-                      value={multiplier}
-                      onChange={(e) => setMultiplier(parseFloat(e.target.value) || 1)}
+                      value={multiplier || ''}
+                      onChange={(e) => setMultiplier(e.target.value === '' ? 0 : parseFloat(e.target.value))}
+                      onFocus={(e) => { if (multiplier === 0) e.target.value = ''; }}
                       step="0.01"
                       min="1"
                       max="2"
@@ -1539,9 +1547,9 @@ function App() {
                         <tr className="bg-blue-50/50">
                           <td className="py-1 px-2 text-gray-600 italic">Birim Aktif Enerji (TL/kWh)</td>
                           <td className="py-1 px-2 text-right text-blue-700 font-medium">{manualValues.current_unit_price.toLocaleString('tr-TR', {minimumFractionDigits: 4, maximumFractionDigits: 4})}</td>
-                          <td className="py-1 px-2 text-right text-primary-700 font-medium">{((ptfPrice / 1000) * multiplier).toLocaleString('tr-TR', {minimumFractionDigits: 4, maximumFractionDigits: 4})}</td>
-                          <td className={`py-1 px-2 text-right font-medium ${manualValues.current_unit_price > (ptfPrice / 1000) * multiplier ? 'text-green-600' : 'text-red-600'}`}>
-                            {(manualValues.current_unit_price - (ptfPrice / 1000) * multiplier).toLocaleString('tr-TR', {minimumFractionDigits: 4, maximumFractionDigits: 4})}
+                          <td className="py-1 px-2 text-right text-primary-700 font-medium">{((ptfPrice / 1000 + (liveCalculation.include_yekdem ? yekdemPrice / 1000 : 0)) * multiplier).toLocaleString('tr-TR', {minimumFractionDigits: 4, maximumFractionDigits: 4})}</td>
+                          <td className={`py-1 px-2 text-right font-medium ${manualValues.current_unit_price > (ptfPrice / 1000 + (liveCalculation.include_yekdem ? yekdemPrice / 1000 : 0)) * multiplier ? 'text-green-600' : 'text-red-600'}`}>
+                            {(manualValues.current_unit_price - (ptfPrice / 1000 + (liveCalculation.include_yekdem ? yekdemPrice / 1000 : 0)) * multiplier).toLocaleString('tr-TR', {minimumFractionDigits: 4, maximumFractionDigits: 4})}
                           </td>
                         </tr>
                       )}

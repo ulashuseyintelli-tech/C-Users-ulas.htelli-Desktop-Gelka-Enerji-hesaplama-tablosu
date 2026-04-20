@@ -99,6 +99,7 @@ function startBackend() {
     // PyInstaller --onefile modunda wrapper process kapanabilir ama
     // asıl Python process hala çalışıyor olabilir.
     // Health check yaparak gerçek durumu kontrol et.
+    // NOT: code=1 olsa bile backend çalışıyor olabilir (ikinci worker crash'i gibi)
     if (code !== 0 && code !== null) {
       setTimeout(() => {
         const req = http.get(`http://127.0.0.1:${BACKEND_PORT}/health`, (res) => {
@@ -106,17 +107,22 @@ function startBackend() {
             logBackend('[EXIT] Backend hala çalışıyor (health OK). Hata yok sayılıyor.');
           } else {
             logBackend(`[EXIT] Backend health check failed: status=${res.statusCode}`);
-            dialog.showErrorBox('Backend Hatası',
-              `Backend beklenmedik şekilde kapandı (code: ${code}).\nLog: ${getBackendLogPath()}`);
+            // Sadece pencere hala açıksa hata göster
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              dialog.showErrorBox('Backend Hatası',
+                `Backend beklenmedik şekilde kapandı (code: ${code}).\nLog: ${getBackendLogPath()}`);
+            }
           }
         });
         req.on('error', () => {
           logBackend('[EXIT] Backend gerçekten kapanmış (health unreachable).');
-          dialog.showErrorBox('Backend Hatası',
-            `Backend beklenmedik şekilde kapandı (code: ${code}).\nLog: ${getBackendLogPath()}`);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            dialog.showErrorBox('Backend Hatası',
+              `Backend beklenmedik şekilde kapandı (code: ${code}).\nLog: ${getBackendLogPath()}`);
+          }
         });
         req.setTimeout(3000);
-      }, 2000); // 2 saniye bekle, belki backend hala ayağa kalkıyor
+      }, 3000); // 3 saniye bekle — PyInstaller extraction süresi
     }
   });
 }
@@ -438,6 +444,20 @@ async function createWindow() {
   }
 
   mainWindow.on('closed', () => { mainWindow = null; });
+}
+
+// ── Single instance lock ──────────────────────────────────────────────────────
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    // İkinci instance açılmaya çalışınca mevcut pencereyi öne getir
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
 }
 
 // ── App lifecycle ────────────────────────────────────────────────────────────

@@ -29,6 +29,7 @@ def main():
         host=args.host,
         port=args.port,
         log_level='info',
+        workers=1,
     )
 
 if __name__ == '__main__':
