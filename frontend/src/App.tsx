@@ -30,6 +30,10 @@ const DISTRIBUTION_TARIFFS = [
   { key: 'dsk_mesken_tt_ag_2', label: 'DSK Mesken TT AG', price: 1.83617, group: 'mesken' },
   { key: 'dsk_tarimsal_tt_ag', label: 'DSK Tarımsal TT AG', price: 1.54263, group: 'tarimsal' },
   { key: 'dsk_aydinlatma_tt_ag', label: 'DSK Aydınlatma TT AG', price: 1.79815, group: 'aydinlatma' },
+  // OSB Tarifeleri (İletim + OSB Dağıtım)
+  // İletim bedeli (TEİAŞ): 0,212 kr/kWh — tüm OSB'ler için aynı
+  // OSB Dağıtım bedeli: OSB'ye özel (EPDK onaylı)
+  { key: 'osb_ikitelli', label: 'OSB İkitelli (İletim+Dağıtım)', price: 0.79253, group: 'sanayi' },
   // Manuel giriş
   { key: 'custom', label: 'Manuel Giriş', price: 0, group: 'custom' },
 ];
@@ -732,7 +736,9 @@ function App() {
                         { label: 'Kas 25 — 2.784,10', value: 2784.10 },
                         { label: 'Ara 25 — 2.973,04', value: 2973.04 },
                         { label: 'Oca 26 — 2.894,92', value: 2894.92 },
-                        { label: 'Şub 26 — 2.134,31', value: 2134.31 },
+                        { label: 'Şub 26 — 2.078,20', value: 2078.20 },
+                        { label: 'Mar 26 — 1.620,32', value: 1620.32 },
+                        { label: 'Nis 26 — 1.038,80', value: 1038.80 },
                       ];
                       return (
                         <div className="relative">
@@ -775,18 +781,9 @@ function App() {
                       const yekdemDisabled = !!(liveCalculation && !liveCalculation.include_yekdem && !manualMode) || (useReferencePrices && !manualMode);
                       const yekdemVal = liveCalculation && !liveCalculation.include_yekdem && !manualMode ? 0 : yekdemPrice;
                       const yekdemPresets = [
-                        { label: 'Oca 26 — 274,89', value: 274.89 },
-                        { label: 'Şub 26 — 201,41', value: 201.41 },
-                        { label: 'Mar 26 — 460,88', value: 460.88 },
-                        { label: 'Nis 26 — 441,29', value: 441.29 },
-                        { label: 'May 26 — 563,78', value: 563.78 },
-                        { label: 'Haz 26 — 617,89', value: 617.89 },
-                        { label: 'Tem 26 — 292,21', value: 292.21 },
-                        { label: 'Ağu 26 — 302,65', value: 302.65 },
-                        { label: 'Eyl 26 — 395,98', value: 395.98 },
-                        { label: 'Eki 26 — 416,69', value: 416.69 },
-                        { label: 'Kas 26 — 374,19', value: 374.19 },
-                        { label: 'Ara 26 — 281,23', value: 281.23 },
+                        { label: 'Oca 26 — 162,73', value: 162.73 },
+                        { label: 'Şub 26 — 479,35', value: 479.35 },
+                        { label: 'Mar 26 — 747,80', value: 747.80 },
                       ];
                       return (
                         <>
@@ -885,9 +882,12 @@ function App() {
                         setManualValues(prev => ({...prev, tariff_group: tariff.label}));
                         
                         // BTV Oranları (2464 sayılı Kanun Madde 34):
+                        // OSB: %0 (belediye sınırları dışı, BTV muaf)
                         // Sanayi (imal/istihsal kapsamı): %1
                         // Diğer tüm gruplar: %5
-                        if (tariff.group === 'sanayi') {
+                        if (tariff.key.startsWith('osb_')) {
+                          setBtvRate(0);
+                        } else if (tariff.group === 'sanayi') {
                           setBtvRate(0.01);
                         } else if (tariff.group !== 'custom') {
                           setBtvRate(0.05);
@@ -936,6 +936,17 @@ function App() {
                 <div className="pt-2 border-t border-gray-100">
                   <label className="text-xs font-medium text-gray-700 mb-1 block">BTV Oranı</label>
                   <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setBtvRate(0)}
+                      className={`flex-1 px-2 py-1.5 text-xs rounded transition-colors ${
+                        btvRate === 0
+                          ? 'bg-primary-600 text-white'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      %0 (OSB)
+                    </button>
                     <button
                       type="button"
                       onClick={() => setBtvRate(0.01)}

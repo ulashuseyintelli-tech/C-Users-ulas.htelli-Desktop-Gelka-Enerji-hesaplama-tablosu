@@ -510,20 +510,26 @@ def get_market_prices_with_epias_fallback(
     if prices:
         return (prices, f"DB ({prices.source})")
     
-    # 2. EPİAŞ'tan çek (sync wrapper)
+    # 2. EPİAŞ'tan çek (sync wrapper - thread ile async çakışmasını önle)
     if auto_fetch:
         try:
-            # Async fonksiyonu sync context'te çalıştır
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                success, epias_prices, msg = loop.run_until_complete(
-                    fetch_and_cache_from_epias(db, period)
-                )
+            import concurrent.futures
+            
+            def _run_in_new_loop():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    return loop.run_until_complete(
+                        fetch_and_cache_from_epias(db, period)
+                    )
+                finally:
+                    loop.close()
+            
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_run_in_new_loop)
+                success, epias_prices, msg = future.result(timeout=30)
                 if success and epias_prices:
                     return (epias_prices, f"EPİAŞ API: {msg}")
-            finally:
-                loop.close()
         except Exception as e:
             logger.warning(f"EPİAŞ auto-fetch başarısız: {e}")
     
