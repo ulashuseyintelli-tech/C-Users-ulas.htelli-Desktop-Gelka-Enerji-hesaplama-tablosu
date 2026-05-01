@@ -1,42 +1,92 @@
-import { useState, useCallback, useMemo, useEffect } from 'react';
+﻿import { useState, useCallback, useMemo, useEffect } from 'react';
 import { Upload, FileText, Zap, TrendingDown, AlertCircle, CheckCircle, Loader2, RefreshCw, Download, Settings } from 'lucide-react';
-import { fullProcess, downloadPdf, FullProcessResponse, syncEpiasPrices } from './api';
+import { fullProcess, downloadPdf, FullProcessResponse, pricingAnalyze, pricingGetTemplates, pricingDownloadPdf, pricingDownloadExcel, PricingAnalyzeResponse, normalizeInvoicePeriod } from './api';
 import AdminPanel from './AdminPanel';
+import { generateBayiRaporPdf } from './bayiRapor';
 
-// EPDK Dağıtım Tarifeleri (Şubat 2026)
-const DISTRIBUTION_TARIFFS = [
-  // EPDK Dağıtım Tarifeleri — Şubat 2026 (24 satır, tablodaki sırayla)
-  { key: 'isk_sanayi', label: 'İSK Sanayi', price: 0.00000, group: 'sanayi' },
-  { key: 'dsk_sanayi_ct_og', label: 'DSK Sanayi ÇT OG', price: 0.81060, group: 'sanayi' },
-  { key: 'dsk_sanayi_tt_og', label: 'DSK Sanayi TT OG', price: 0.89537, group: 'sanayi' },
-  { key: 'dsk_ticarethane_ct_og', label: 'DSK Ticarethane ÇT OG', price: 1.26329, group: 'ticarethane' },
-  { key: 'dsk_mesken_ct_og', label: 'DSK Mesken ÇT OG', price: 1.25129, group: 'mesken' },
-  { key: 'dsk_aydinlatma_ct_og', label: 'DSK Aydınlatma ÇT OG', price: 1.21249, group: 'aydinlatma' },
-  { key: 'dsk_tarimsal_ct_og', label: 'DSK Tarımsal ÇT OG', price: 1.04042, group: 'tarimsal' },
-  { key: 'dsk_sanayi_ct_og_2', label: 'DSK Sanayi ÇT OG', price: 0.81060, group: 'sanayi' },
-  { key: 'dsk_sanayi_tt_og_2', label: 'DSK Sanayi TT OG', price: 0.89537, group: 'sanayi' },
-  { key: 'dsk_ticarethane_tt_og', label: 'DSK Ticarethane TT OG', price: 1.57581, group: 'ticarethane' },
-  { key: 'dsk_mesken_tt_og', label: 'DSK Mesken TT OG', price: 1.54502, group: 'mesken' },
-  { key: 'dsk_aydinlatma_tt_og', label: 'DSK Aydınlatma TT OG', price: 1.51248, group: 'aydinlatma' },
-  { key: 'dsk_tarimsal_tt_og', label: 'DSK Tarımsal TT OG', price: 1.29543, group: 'tarimsal' },
-  { key: 'dsk_sanayi_ct_og_3', label: 'DSK Sanayi ÇT OG', price: 0.81060, group: 'sanayi' },
-  { key: 'dsk_sanayi_tt_og_3', label: 'DSK Sanayi TT OG', price: 0.89537, group: 'sanayi' },
-  { key: 'dsk_sanayi_tt_ag', label: 'DSK Sanayi TT AG', price: 1.38532, group: 'sanayi' },
-  { key: 'dsk_ticarethane_tt_ag', label: 'DSK Ticarethane TT AG', price: 1.87741, group: 'ticarethane' },
-  { key: 'dsk_ticarethane_tt_ag_2', label: 'DSK Ticarethane TT AG', price: 1.87741, group: 'ticarethane' },
-  { key: 'dsk_ticarethane_tt_ag_3', label: 'DSK Ticarethane TT AG', price: 1.87741, group: 'ticarethane' },
-  { key: 'dsk_mesken_tt_ag', label: 'DSK Mesken TT AG', price: 1.83617, group: 'mesken' },
-  { key: 'dsk_mesken_sehit_gazi', label: 'DSK Mesken Şehit Gazi', price: 1.03557, group: 'mesken' },
-  { key: 'dsk_mesken_tt_ag_2', label: 'DSK Mesken TT AG', price: 1.83617, group: 'mesken' },
-  { key: 'dsk_tarimsal_tt_ag', label: 'DSK Tarımsal TT AG', price: 1.54263, group: 'tarimsal' },
-  { key: 'dsk_aydinlatma_tt_ag', label: 'DSK Aydınlatma TT AG', price: 1.79815, group: 'aydinlatma' },
-  // OSB Tarifeleri (İletim + OSB Dağıtım)
-  // İletim bedeli (TEİAŞ): 0,212 kr/kWh — tüm OSB'ler için aynı
-  // OSB Dağıtım bedeli: OSB'ye özel (EPDK onaylı)
-  { key: 'osb_ikitelli', label: 'OSB İkitelli (İletim+Dağıtım)', price: 0.79253, group: 'sanayi' },
-  // Manuel giriş
-  { key: 'custom', label: 'Manuel Giriş', price: 0, group: 'custom' },
+// EPDK Dağıtım Tarifeleri — Dönem bazlı
+// validFrom: Bu tarife bu tarihten itibaren geçerli (YYYY-MM-DD)
+// Dönem seçimine göre doğru tarife otomatik uygulanır
+type TariffEntry = { key: string; label: string; price: number; group: string };
+type TariffPeriod = { validFrom: string; label: string; tariffs: TariffEntry[] };
+
+const TARIFF_PERIODS: TariffPeriod[] = [
+  {
+    validFrom: '2026-04-04',  // 4 Nisan 2026'dan itibaren
+    label: 'Nisan 2026+',
+    tariffs: [
+      // Excel: "EPDK TARİFE.xlsx" — 4 Nisan 2026 tarihinden itibaren geçerli
+      // kr/kWh → TL/kWh (÷100)
+      { key: 'dsk_sanayi_ct_og', label: 'DSK Sanayi ÇT OG', price: 1.070498, group: 'sanayi' },
+      { key: 'dsk_sanayi_tt_og', label: 'DSK Sanayi TT OG', price: 1.182457, group: 'sanayi' },
+      { key: 'dsk_sanayi_tt_ag', label: 'DSK Sanayi TT AG', price: 1.829503, group: 'sanayi' },
+      { key: 'dsk_ticarethane_ct_og', label: 'DSK Kamu/Özel ÇT OG', price: 1.668345, group: 'ticarethane' },
+      { key: 'dsk_ticarethane_tt_og', label: 'DSK Kamu/Özel TT OG', price: 2.081065, group: 'ticarethane' },
+      { key: 'dsk_ticarethane_tt_ag', label: 'DSK Kamu/Özel TT AG', price: 2.479368, group: 'ticarethane' },
+      { key: 'dsk_mesken_ct_og', label: 'DSK Mesken ÇT OG', price: 1.652488, group: 'mesken' },
+      { key: 'dsk_mesken_tt_og', label: 'DSK Mesken TT OG', price: 2.040402, group: 'mesken' },
+      { key: 'dsk_mesken_tt_ag', label: 'DSK Mesken TT AG', price: 2.424900, group: 'mesken' },
+      { key: 'dsk_mesken_sehit_gazi', label: 'DSK Mesken Şehit Gazi', price: 1.314667, group: 'mesken' },
+      { key: 'dsk_tarimsal_ct_og', label: 'DSK Tarımsal ÇT OG', price: 1.374008, group: 'tarimsal' },
+      { key: 'dsk_tarimsal_tt_og', label: 'DSK Tarımsal TT OG', price: 1.710785, group: 'tarimsal' },
+      { key: 'dsk_tarimsal_tt_ag', label: 'DSK Tarımsal TT AG', price: 2.037247, group: 'tarimsal' },
+      { key: 'dsk_aydinlatma_ct_og', label: 'DSK Aydınlatma ÇT OG', price: 1.601246, group: 'aydinlatma' },
+      { key: 'dsk_aydinlatma_tt_og', label: 'DSK Aydınlatma TT OG', price: 1.997432, group: 'aydinlatma' },
+      { key: 'dsk_aydinlatma_tt_ag', label: 'DSK Aydınlatma TT AG', price: 2.374690, group: 'aydinlatma' },
+    ],
+  },
+  {
+    validFrom: '2025-01-01',  // Ocak 2025 — Mart 2026 arası
+    label: 'Oca 2025 – Mar 2026',
+    tariffs: [
+      { key: 'dsk_sanayi_ct_og', label: 'DSK Sanayi ÇT OG', price: 0.81060, group: 'sanayi' },
+      { key: 'dsk_sanayi_tt_og', label: 'DSK Sanayi TT OG', price: 0.89537, group: 'sanayi' },
+      { key: 'dsk_sanayi_tt_ag', label: 'DSK Sanayi TT AG', price: 1.38532, group: 'sanayi' },
+      { key: 'dsk_ticarethane_ct_og', label: 'DSK Kamu/Özel ÇT OG', price: 1.26329, group: 'ticarethane' },
+      { key: 'dsk_ticarethane_tt_og', label: 'DSK Kamu/Özel TT OG', price: 1.57581, group: 'ticarethane' },
+      { key: 'dsk_ticarethane_tt_ag', label: 'DSK Kamu/Özel TT AG', price: 1.87741, group: 'ticarethane' },
+      { key: 'dsk_mesken_ct_og', label: 'DSK Mesken ÇT OG', price: 1.25129, group: 'mesken' },
+      { key: 'dsk_mesken_tt_og', label: 'DSK Mesken TT OG', price: 1.54502, group: 'mesken' },
+      { key: 'dsk_mesken_tt_ag', label: 'DSK Mesken TT AG', price: 1.83617, group: 'mesken' },
+      { key: 'dsk_mesken_sehit_gazi', label: 'DSK Mesken Şehit Gazi', price: 1.03557, group: 'mesken' },
+      { key: 'dsk_tarimsal_ct_og', label: 'DSK Tarımsal ÇT OG', price: 1.04042, group: 'tarimsal' },
+      { key: 'dsk_tarimsal_tt_og', label: 'DSK Tarımsal TT OG', price: 1.29543, group: 'tarimsal' },
+      { key: 'dsk_tarimsal_tt_ag', label: 'DSK Tarımsal TT AG', price: 1.54263, group: 'tarimsal' },
+      { key: 'dsk_aydinlatma_ct_og', label: 'DSK Aydınlatma ÇT OG', price: 1.21249, group: 'aydinlatma' },
+      { key: 'dsk_aydinlatma_tt_og', label: 'DSK Aydınlatma TT OG', price: 1.51248, group: 'aydinlatma' },
+      { key: 'dsk_aydinlatma_tt_ag', label: 'DSK Aydınlatma TT AG', price: 1.79815, group: 'aydinlatma' },
+    ],
+  },
 ];
+
+// OSB tarifeleri (dönemden bağımsız — her OSB kendi tarifesini belirler)
+const OSB_TARIFFS: TariffEntry[] = [
+  // İkitelli: İletim 0,212 + Dağıtım 0,580532 = 0,79253 TL/kWh (Mart 2026)
+  { key: 'osb_ikitelli', label: 'OSB İkitelli (İletim+Dağıtım)', price: 0.79253, group: 'sanayi' },
+  // Çerkezköy: İletim 0,0996469 + Dağıtım 0,31537 = 0,41502 TL/kWh (Ocak 2026)
+  { key: 'osb_cerkezkoy', label: 'OSB Çerkezköy (İletim+Dağıtım)', price: 0.41502, group: 'sanayi' },
+];
+
+// Seçilen döneme göre geçerli EPDK tarifelerini döndür
+function getDistributionTariffsForPeriod(period: string): TariffEntry[] {
+  // period: "2026-04" formatında
+  // 4 Nisan 2026'dan itibaren yeni tarife → Nisan 2026 ve sonrası
+  const periodDate = period ? `${period}-15` : ''; // Ayın ortası referans
+  
+  let activeTariffs = TARIFF_PERIODS[TARIFF_PERIODS.length - 1].tariffs; // fallback: en eski
+  for (const tp of TARIFF_PERIODS) {
+    if (periodDate >= tp.validFrom) {
+      activeTariffs = tp.tariffs;
+      break;
+    }
+  }
+  
+  return [
+    ...activeTariffs,
+    ...OSB_TARIFFS,
+    { key: 'custom', label: 'Manuel Giriş', price: 0, group: 'custom' },
+  ];
+}
 
 // Son 24 ay için dönem seçenekleri oluştur
 const generatePeriodOptions = () => {
@@ -62,6 +112,64 @@ const generatePeriodOptions = () => {
 };
 
 const PERIOD_OPTIONS = generatePeriodOptions();
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Bayi Komisyon Segmentleri — PUAN PAYLAŞIMI MODELİ
+// ═══════════════════════════════════════════════════════════════════════════════
+// Katsayı 1.10 → 10 puan kar. Bayi segmente göre sabit puan alır.
+// Bayi Komisyonu = Baz Enerji × (bayiPuan / 100)
+// Gelka Net = Baz Enerji × ((toplam puan - bayiPuan) / 100)
+//
+// Örnek: katsayı 1.10, segment "Yüksek" (2p bayi)
+//   Toplam marj puanı: 10
+//   Bayi: 2 puan → Baz Enerji × 0.02
+//   Gelka: 8 puan → Baz Enerji × 0.08
+
+interface BayiSegment {
+  name: string;
+  minMultiplier: number;
+  maxMultiplier: number;
+  bayiPoints: number; // Bayinin aldığı sabit puan
+  requiresApproval: boolean;
+}
+
+const BAYI_SEGMENTS: BayiSegment[] = [
+  { name: 'Özel Onay',   minMultiplier: 1.01, maxMultiplier: 1.03, bayiPoints: 0,   requiresApproval: true },
+  { name: 'Sabit',       minMultiplier: 1.03, maxMultiplier: 1.06, bayiPoints: 1,   requiresApproval: false },
+  { name: 'Artırılmış',  minMultiplier: 1.06, maxMultiplier: 1.09, bayiPoints: 1.5, requiresApproval: false },
+  { name: 'Yüksek',      minMultiplier: 1.09, maxMultiplier: 1.15, bayiPoints: 2,   requiresApproval: false },
+  { name: 'Premium',     minMultiplier: 1.15, maxMultiplier: 99,   bayiPoints: 3,   requiresApproval: false },
+];
+
+function getBayiSegment(multiplier: number): BayiSegment | null {
+  if (multiplier < 1.01) return null;
+  return BAYI_SEGMENTS.find(s => multiplier >= s.minMultiplier && multiplier < s.maxMultiplier) || null;
+}
+
+function calculateBayiCommission(
+  multiplier: number,
+  baseEnergyTl: number,   // kWh × (PTF + YEKDEM) / 1000 — katsayı HARİÇ
+  customPoints?: number,   // Özel onay segmenti için manuel puan
+): {
+  segment: BayiSegment | null;
+  commission_tl: number;
+  bayiPoints: number;
+  gelkaPoints: number;
+  totalMarginPoints: number;
+  requiresApproval: boolean;
+} {
+  const segment = getBayiSegment(multiplier);
+  if (!segment) return { segment: null, commission_tl: 0, bayiPoints: 0, gelkaPoints: 0, totalMarginPoints: 0, requiresApproval: false };
+  
+  const totalMarginPoints = (multiplier - 1) * 100; // 1.10 → 10 puan
+  const bayiPoints = segment.requiresApproval ? (customPoints || 0) : segment.bayiPoints;
+  const gelkaPoints = totalMarginPoints - bayiPoints;
+  
+  // Komisyon = Baz Enerji × (bayiPuan / 100)
+  const commission_tl = baseEnergyTl * (bayiPoints / 100);
+  
+  return { segment, commission_tl, bayiPoints, gelkaPoints, totalMarginPoints, requiresApproval: segment.requiresApproval };
+}
 
 function App() {
   // Türkçe sayı formatını parse et: 58.761,15 -> 58761.15
@@ -91,6 +199,20 @@ function App() {
   const [ptfPrice, setPtfPrice] = useState(2974.1);
   const [yekdemPrice, setYekdemPrice] = useState(364.0);
   const [multiplier, setMultiplier] = useState(1.01);
+  
+  // Bayi komisyonu (toplam marjın yüzdesi olarak, örn: 25 = %25)
+  // Çarpan 1.06 ve bayi %25 ise: marj=6p, bayi=6×0.25=1.5p, gelka=4.5p
+  // PDF'e yansımaz, sadece dahili kar hesabı için
+  const [bayiEnabled, setBayiEnabled] = useState(false);
+  const [bayiOzelOnayPuan, setBayiOzelOnayPuan] = useState(0.5); // Özel onay segmenti için varsayılan 0.5 puan // Özel onay segmenti için %0.5 varsayılan
+  
+  // ── Risk Analizi Paneli State'leri ──
+  const [riskPanelEnabled, setRiskPanelEnabled] = useState(false);
+  const [riskLoading, setRiskLoading] = useState(false);
+  const [riskError, setRiskError] = useState<string | null>(null);
+  const [riskResult, setRiskResult] = useState<PricingAnalyzeResponse | null>(null);
+  const [riskTemplateName, setRiskTemplateName] = useState('3_vardiya_sanayi');
+  const [riskTemplates, setRiskTemplates] = useState<Array<{name: string; display_name: string}>>([]);
   
   // PTF/YEKDEM kaynağı: true = DB'den otomatik, false = manuel override
   const [useReferencePrices, setUseReferencePrices] = useState(true);
@@ -145,18 +267,22 @@ function App() {
     { value: 1.15, label: '1.15 (%15 kar)' },
   ];
   
+  // Seçili döneme göre aktif EPDK tarifeleri
+  const selectedPeriod = manualMode ? manualValues.invoice_period : (result?.extraction?.invoice_period || '');
+  const activeTariffs = useMemo(() => getDistributionTariffsForPeriod(selectedPeriod), [selectedPeriod]);
+  
   // Dağıtım birim fiyatını belirle (öncelik: manuel > tarife seçimi > backend)
   const getDistributionUnitPrice = useCallback(() => {
     if (distributionTariffKey === 'custom') {
       return customDistributionPrice;
     }
     if (distributionTariffKey && distributionTariffKey !== 'custom') {
-      const tariff = DISTRIBUTION_TARIFFS.find(t => t.key === distributionTariffKey);
+      const tariff = activeTariffs.find(t => t.key === distributionTariffKey);
       if (tariff) return tariff.price;
     }
     // Backend'den gelen değer
     return result?.extraction?.distribution_unit_price_tl_per_kwh?.value || 0;
-  }, [distributionTariffKey, customDistributionPrice, result?.extraction?.distribution_unit_price_tl_per_kwh?.value]);
+  }, [distributionTariffKey, customDistributionPrice, result?.extraction?.distribution_unit_price_tl_per_kwh?.value, activeTariffs]);
   
   // Parametreler değiştiğinde otomatik yeniden hesaplama
   // Backend'den gelen calculation varsa onu kullan, yoksa frontend'de hesapla
@@ -205,6 +331,15 @@ function App() {
       const supplier_profit_tl = offer_energy_base * (multiplier - 1);
       const supplier_profit_margin = (multiplier - 1) * 100;
       
+      // Bayi komisyonu — Puan paylaşımı modeli
+      // offer_energy_base = kWh × (PTF + YEKDEM) — baz enerji bedeli
+      const bayiResult = bayiEnabled 
+        ? calculateBayiCommission(multiplier, offer_energy_base, bayiOzelOnayPuan)
+        : { segment: null, commission_tl: 0, bayiPoints: 0, gelkaPoints: 0, totalMarginPoints: 0, requiresApproval: false };
+      const bayi_commission_tl = bayiResult.commission_tl;
+      const gelka_net_profit_tl = supplier_profit_tl - bayi_commission_tl;
+      const bayiPuanHesap = bayiResult.bayiPoints;
+      
       return {
         current_energy_tl,
         current_distribution_tl,
@@ -223,8 +358,18 @@ function App() {
         savings_ratio,
         supplier_profit_tl,
         supplier_profit_margin,
+        bayi_commission_tl,
+        gelka_net_profit_tl,
+        bayi_puan_hesap: bayiPuanHesap,
         include_yekdem: includeYekdem,
         distribution_unit_price: distUnitPrice,
+        bayi_segment: bayiResult.segment,
+        bayi_rate: bayiResult.bayiPoints / 100,
+        bayi_requires_approval: bayiResult.requiresApproval,
+        bayi_commission_base_tl: offer_energy_base,
+        bayi_points: bayiResult.bayiPoints,
+        gelka_points: bayiResult.gelkaPoints,
+        total_margin_points: bayiResult.totalMarginPoints,
       };
     }
     
@@ -283,6 +428,14 @@ function App() {
     const supplier_profit_tl = offer_energy_base * (multiplier - 1);
     const supplier_profit_margin = (multiplier - 1) * 100;
     
+    // Bayi komisyonu — Puan paylaşımı modeli
+    const bayiResult = bayiEnabled 
+      ? calculateBayiCommission(multiplier, offer_energy_base, bayiOzelOnayPuan)
+      : { segment: null, commission_tl: 0, bayiPoints: 0, gelkaPoints: 0, totalMarginPoints: 0, requiresApproval: false };
+    const bayi_commission_tl = bayiResult.commission_tl;
+    const gelka_net_profit_tl = supplier_profit_tl - bayi_commission_tl;
+    const bayiPuanHesap = bayiResult.bayiPoints;
+    
     return {
       current_energy_tl,
       current_distribution_tl,
@@ -301,10 +454,79 @@ function App() {
       savings_ratio,
       supplier_profit_tl,
       supplier_profit_margin,
+      bayi_commission_tl,
+      gelka_net_profit_tl,
+      bayi_puan_hesap: bayiPuanHesap,
       include_yekdem: includeYekdem,  // UI'da göstermek için
       distribution_unit_price: distUnitPrice,  // UI'da göstermek için
+      bayi_segment: bayiResult.segment,
+      bayi_rate: bayiResult.bayiPoints / 100,
+      bayi_requires_approval: bayiResult.requiresApproval,
+      bayi_commission_base_tl: offer_energy_base,
+      bayi_points: bayiResult.bayiPoints,
+      gelka_points: bayiResult.gelkaPoints,
+      total_margin_points: bayiResult.totalMarginPoints,
     };
-  }, [result?.extraction, result?.calculation, ptfPrice, yekdemPrice, multiplier, getDistributionUnitPrice, manualMode, manualValues, btvRate, vatRate]);
+  }, [result?.extraction, result?.calculation, ptfPrice, yekdemPrice, multiplier, getDistributionUnitPrice, manualMode, manualValues, btvRate, vatRate, bayiEnabled, bayiOzelOnayPuan]);
+
+  // ── Risk Paneli: Dönem ve şablon listesi çek ──
+  useEffect(() => {
+    if (!riskPanelEnabled) return;
+    pricingGetTemplates()
+      .then(res => setRiskTemplates(res.items || []))
+      .catch(() => setRiskTemplates([]));
+  }, [riskPanelEnabled]);
+
+  // ── Risk Paneli: Auto-trigger (debounce 500ms) ──
+  useEffect(() => {
+    if (!riskPanelEnabled) return;
+    const timer = setTimeout(() => {
+      runRiskAnalysis();
+    }, 500);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [riskPanelEnabled, multiplier, riskTemplateName, manualValues.invoice_period, manualValues.consumption_kwh, bayiEnabled]);
+
+  // ── Risk Paneli: Analiz çalıştır ──
+  const runRiskAnalysis = useCallback(async () => {
+    const period = manualMode ? manualValues.invoice_period : (result?.extraction?.invoice_period || '');
+    const normalizedPeriod = period ? normalizeInvoicePeriod(period) : null;
+    if (!normalizedPeriod) {
+      setRiskError('Dönem bilgisi bulunamadı.');
+      return;
+    }
+    
+    const kwh = manualMode ? manualValues.consumption_kwh : (result?.extraction?.consumption_kwh?.value || 0);
+    if (kwh <= 0) {
+      setRiskError('Tüketim bilgisi bulunamadı.');
+      return;
+    }
+
+    setRiskLoading(true);
+    setRiskError(null);
+    setRiskResult(null);
+
+    try {
+      const res = await pricingAnalyze({
+        period: normalizedPeriod,
+        multiplier: multiplier,
+        dealer_commission_pct: bayiEnabled ? (getBayiSegment(multiplier)?.bayiPoints || 0) : 0,
+        imbalance_params: {
+          forecast_error_rate: 0.05,
+          imbalance_cost_tl_per_mwh: 50.0,
+          smf_based_imbalance_enabled: false,
+        },
+        use_template: true,
+        template_name: riskTemplateName,
+        template_monthly_kwh: kwh,
+      });
+      setRiskResult(res);
+    } catch (err: any) {
+      setRiskError(err.message || 'Risk analizi başarısız.');
+    } finally {
+      setRiskLoading(false);
+    }
+  }, [manualMode, manualValues, result, multiplier, bayiEnabled, riskTemplateName]);
 
   // Dağıtım bedeli otomatik hesaplama: dağıtım birim fiyatı × kWh
   useEffect(() => {
@@ -486,7 +708,7 @@ function App() {
     
     // Seçili tarife grubunu belirle
     const selectedTariffLabel = distributionTariffKey 
-      ? DISTRIBUTION_TARIFFS.find(t => t.key === distributionTariffKey)?.label || manualValues.tariff_group
+      ? activeTariffs.find(t => t.key === distributionTariffKey)?.label || manualValues.tariff_group
       : manualValues.tariff_group;
     
     // Manuel modda veya OCR modda extraction oluştur
@@ -510,7 +732,7 @@ function App() {
     setPdfLoading(true);
     try {
       const tariffLabel = distributionTariffKey 
-        ? DISTRIBUTION_TARIFFS.find(t => t.key === distributionTariffKey)?.label 
+        ? activeTariffs.find(t => t.key === distributionTariffKey)?.label 
         : manualValues.tariff_group || 'Sanayi';
       
       const companySlug = customerInfo.company_name
@@ -864,6 +1086,294 @@ function App() {
                   </div>
                 </div>
                 
+                {/* Bayi Komisyonu — Segment Bazlı (Ek Şartname) */}
+                <div className="pt-2 border-t border-gray-100">
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-medium text-gray-700">Bayi Komisyonu</label>
+                    <button
+                      type="button"
+                      onClick={() => setBayiEnabled(!bayiEnabled)}
+                      className={`relative inline-flex h-4 w-8 items-center rounded-full transition-colors ${
+                        bayiEnabled ? 'bg-orange-500' : 'bg-gray-300'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                          bayiEnabled ? 'translate-x-4' : 'translate-x-0.5'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  {bayiEnabled && (
+                    <div className="space-y-1.5">
+                      {/* Segment bilgisi */}
+                      {liveCalculation?.bayi_segment && (
+                        <div className={`text-xs px-2 py-1 rounded font-medium ${
+                          liveCalculation.bayi_requires_approval 
+                            ? 'bg-red-50 text-red-700 border border-red-200' 
+                            : 'bg-orange-50 text-orange-700'
+                        }`}>
+                          📋 {liveCalculation.bayi_segment.name} Segment — {liveCalculation.bayi_points}p bayi / {liveCalculation.total_margin_points.toFixed(1)}p toplam
+                          {liveCalculation.bayi_requires_approval && ' ⚠️ Gelka onayı gerekli'}
+                        </div>
+                      )}
+                      {multiplier < 1.01 && (
+                        <div className="text-xs text-gray-500 bg-gray-50 p-1.5 rounded">
+                          Katsayı 1.01 altında — bayi komisyonu uygulanmaz
+                        </div>
+                      )}
+
+                      {/* Özel onay segmenti için manuel puan girişi */}
+                      {liveCalculation?.bayi_requires_approval && (
+                        <div className="flex items-center gap-2">
+                          <label className="text-xs text-red-600">Özel Puan:</label>
+                          <input
+                            type="number"
+                            className="w-20 px-2 py-1 text-sm border border-red-200 rounded focus:ring-1 focus:ring-red-500 bg-red-50"
+                            value={bayiOzelOnayPuan || ''}
+                            onChange={(e) => setBayiOzelOnayPuan(e.target.value === '' ? 0 : parseFloat(e.target.value))}
+                            step="0.1"
+                            min="0"
+                            max="5"
+                          />
+                          <span className="text-xs text-gray-500">puan</span>
+                        </div>
+                      )}
+
+                      {/* Hesaplama sonuçları */}
+                      {liveCalculation && (
+                        <div className="text-xs space-y-0.5 bg-orange-50 p-1.5 rounded">
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Toplam Marj:</span>
+                            <span className="font-medium">{liveCalculation.total_margin_points.toFixed(1)}p = {formatCurrency(liveCalculation.supplier_profit_tl)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-orange-600">Bayi ({liveCalculation.bayi_points}p):</span>
+                            <span className="font-medium text-orange-700">{formatCurrency(liveCalculation.bayi_commission_tl)}</span>
+                          </div>
+                          <div className="flex justify-between border-t border-orange-200 pt-0.5">
+                            <span className="text-green-600 font-medium">Gelka Net ({liveCalculation.gelka_points.toFixed(1)}p):</span>
+                            <span className="font-bold text-green-700">{formatCurrency(liveCalculation.gelka_net_profit_tl)}</span>
+                          </div>
+                          <button
+                            onClick={() => {
+                              if (!liveCalculation) return;
+                              const ptfKwh = ptfPrice / 1000;
+                              const yekdemKwh = yekdemPrice / 1000;
+                              const kwh = manualMode ? manualValues.consumption_kwh : (result?.extraction?.consumption_kwh?.value || 0);
+                              const offerBasePrice = liveCalculation.include_yekdem ? (ptfKwh + yekdemKwh) : ptfKwh;
+                              generateBayiRaporPdf({
+                                customerName: customerInfo.company_name || 'Belirtilmedi',
+                                contactPerson: customerInfo.contact_person,
+                                invoicePeriod: manualMode ? manualValues.invoice_period : (result?.extraction?.invoice_period || '-'),
+                                raporTarihi: new Date().toLocaleDateString('tr-TR'),
+                                consumptionKwh: kwh,
+                                ptfTlPerMwh: ptfPrice,
+                                yekdemTlPerMwh: liveCalculation.include_yekdem ? yekdemPrice : 0,
+                                multiplier,
+                                bayiPoints: liveCalculation.bayi_points,
+                                gelkaPoints: liveCalculation.gelka_points,
+                                totalMarginPoints: liveCalculation.total_margin_points,
+                                segmentName: liveCalculation.bayi_segment?.name || 'Komisyon Yok',
+                                offerEnergyBase: kwh * offerBasePrice,
+                                supplierProfitTl: liveCalculation.supplier_profit_tl,
+                                bayiCommissionTl: liveCalculation.bayi_commission_tl,
+                                gelkaNetProfitTl: liveCalculation.gelka_net_profit_tl,
+                                offerTotalWithVatTl: liveCalculation.offer_total_with_vat_tl,
+                                currentTotalWithVatTl: liveCalculation.current_total_with_vat_tl,
+                                savingsRatio: liveCalculation.savings_ratio,
+                              });
+                            }}
+                            className="w-full mt-1 px-2 py-1 text-xs bg-orange-100 text-orange-700 rounded hover:bg-orange-200 transition-colors"
+                          >
+                            📄 Bayi Raporu İndir
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                
+                {/* ═══ Risk Analizi Paneli ═══ */}
+                <div className="pt-2 border-t border-gray-100">
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-medium text-gray-700">📊 Risk Analizi</label>
+                    <button
+                      type="button"
+                      onClick={() => setRiskPanelEnabled(!riskPanelEnabled)}
+                      className={`relative inline-flex h-4 w-8 items-center rounded-full transition-colors ${
+                        riskPanelEnabled ? 'bg-blue-500' : 'bg-gray-300'
+                      }`}
+                    >
+                      <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                        riskPanelEnabled ? 'translate-x-4' : 'translate-x-0.5'
+                      }`} />
+                    </button>
+                  </div>
+                  {riskPanelEnabled && (
+                    <div className="space-y-2">
+                      {/* Şablon seçimi */}
+                      <div className="flex items-center gap-2">
+                        <select
+                          className="flex-1 px-2 py-1 text-xs border border-blue-200 rounded bg-blue-50 focus:ring-1 focus:ring-blue-500"
+                          value={riskTemplateName}
+                          onChange={(e) => setRiskTemplateName(e.target.value)}
+                        >
+                          {riskTemplates.length > 0 ? (
+                            riskTemplates.map(t => (
+                              <option key={t.name} value={t.name}>{t.display_name}</option>
+                            ))
+                          ) : (
+                            <>
+                              <option value="3_vardiya_sanayi">3 Vardiya Sanayi</option>
+                              <option value="tek_vardiya_fabrika">Tek Vardiya Fabrika</option>
+                              <option value="ofis">Ofis</option>
+                              <option value="otel">Otel</option>
+                              <option value="restoran">Restoran</option>
+                              <option value="avm">AVM</option>
+                              <option value="market_supermarket">Market/Süpermarket</option>
+                              <option value="hastane">Hastane</option>
+                              <option value="soguk_hava_deposu">Soğuk Hava Deposu</option>
+                              <option value="gece_agirlikli_uretim">Gece Ağırlıklı Üretim</option>
+                              <option value="akaryakit_istasyonu">Akaryakıt İstasyonu</option>
+                              <option value="tarimsal_sulama">Tarımsal Sulama</option>
+                            </>
+                          )}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={runRiskAnalysis}
+                          disabled={riskLoading}
+                          className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                        >
+                          {riskLoading ? '⏳ Analiz ediliyor...' : '🔍 Analiz'}
+                        </button>
+                      </div>
+
+                      {/* Hata mesajı */}
+                      {riskError && (
+                        <div className="text-xs text-red-600 bg-red-50 p-1.5 rounded">
+                          ⚠ {riskError}
+                        </div>
+                      )}
+
+                      {/* Loading */}
+                      {riskLoading && !riskResult && (
+                        <div className="text-xs text-blue-600 bg-blue-50 p-2 rounded text-center">
+                          ⏳ Risk analizi hesaplanıyor...
+                        </div>
+                      )}
+
+                      {/* Sonuçlar */}
+                      {riskResult && (
+                        <div className="space-y-1.5 bg-blue-50 p-2 rounded text-xs">
+                          {/* Güvenli katsayı + risk */}
+                          <div className="flex justify-between items-center">
+                            <span className="text-gray-600">Güvenli Katsayı:</span>
+                            <span className="font-bold text-blue-700">×{riskResult.safe_multiplier.safe_multiplier.toFixed(3)}</span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span className="text-gray-600">Önerilen:</span>
+                            <span className="font-medium text-blue-600">×{riskResult.safe_multiplier.recommended_multiplier.toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span className="text-gray-600">Risk Seviyesi:</span>
+                            <span className={`font-bold px-1.5 py-0.5 rounded text-white ${
+                              riskResult.risk_score.score === 'Düşük' ? 'bg-green-500' :
+                              riskResult.risk_score.score === 'Orta' ? 'bg-yellow-500' : 'bg-red-500'
+                            }`}>{riskResult.risk_score.score}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Zarar Saati:</span>
+                            <span className="font-medium text-red-600">{riskResult.loss_map.total_loss_hours} saat</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Net Marj:</span>
+                            <span className={`font-medium ${riskResult.pricing.total_net_margin_tl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {riskResult.pricing.total_net_margin_tl.toLocaleString('tr-TR', {minimumFractionDigits: 2})} TL
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Sapma:</span>
+                            <span className="font-medium">%{riskResult.risk_score.deviation_pct.toFixed(1)}</span>
+                          </div>
+
+                          {/* Uyarılar */}
+                          {riskResult.warnings.filter(w => w.message).map((w, i) => (
+                            <div key={i} className="text-xs text-amber-700 bg-amber-50 p-1 rounded">
+                              ⚠ {w.message}
+                            </div>
+                          ))}
+
+                          {/* Seçilen katsayı uyarısı */}
+                          {multiplier < riskResult.safe_multiplier.safe_multiplier && (
+                            <div className="text-xs text-red-700 bg-red-100 p-1.5 rounded font-medium">
+                              ⛔ Seçilen ×{multiplier.toFixed(2)} güvenli katsayının (×{riskResult.safe_multiplier.safe_multiplier.toFixed(3)}) altında — zarar riski!
+                              <button
+                                type="button"
+                                onClick={() => setMultiplier(riskResult!.safe_multiplier.recommended_multiplier)}
+                                className="ml-2 px-2 py-0.5 text-xs bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
+                              >
+                                ×{riskResult.safe_multiplier.recommended_multiplier.toFixed(2)} uygula
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Rapor indirme butonları */}
+                          <div className="flex gap-1 pt-1">
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  const period = manualMode ? manualValues.invoice_period : (result?.extraction?.invoice_period || '');
+                                  const np = normalizeInvoicePeriod(period || '') || '';
+                                  const kwh = manualMode ? manualValues.consumption_kwh : (result?.extraction?.consumption_kwh?.value || 0);
+                                  const blob = await pricingDownloadPdf({
+                                    period: np, multiplier, dealer_commission_pct: bayiEnabled ? (getBayiSegment(multiplier)?.bayiPoints || 0) : 0,
+                                    use_template: true, template_name: riskTemplateName, template_monthly_kwh: kwh,
+                                  }, 'internal');
+                                  const url = URL.createObjectURL(blob);
+                                  const a = document.createElement('a'); a.href = url;
+                                  a.download = `risk_analiz_${np}.pdf`; a.click();
+                                  URL.revokeObjectURL(url);
+                                } catch (e: any) { setRiskError(e.message); }
+                              }}
+                              className="flex-1 px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition-colors"
+                            >
+                              📄 PDF Rapor
+                            </button>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  const period = manualMode ? manualValues.invoice_period : (result?.extraction?.invoice_period || '');
+                                  const np = normalizeInvoicePeriod(period || '') || '';
+                                  const kwh = manualMode ? manualValues.consumption_kwh : (result?.extraction?.consumption_kwh?.value || 0);
+                                  const blob = await pricingDownloadExcel({
+                                    period: np, multiplier, dealer_commission_pct: bayiEnabled ? (getBayiSegment(multiplier)?.bayiPoints || 0) : 0,
+                                    use_template: true, template_name: riskTemplateName, template_monthly_kwh: kwh,
+                                  });
+                                  const url = URL.createObjectURL(blob);
+                                  const a = document.createElement('a'); a.href = url;
+                                  a.download = `risk_analiz_${np}.xlsx`; a.click();
+                                  URL.revokeObjectURL(url);
+                                } catch (e: any) { setRiskError(e.message); }
+                              }}
+                              className="flex-1 px-2 py-1 text-xs bg-green-100 text-green-700 rounded hover:bg-green-200 transition-colors"
+                            >
+                              📊 Excel Rapor
+                            </button>
+                          </div>
+
+                          {riskResult.cache_hit && (
+                            <div className="text-[10px] text-blue-400 text-right">⚡ Cache</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                
                 {/* Dağıtım Bedeli */}
                 <div className="pt-2 border-t border-gray-100">
                   <label className="text-xs font-medium text-gray-700 mb-1 block">Dağıtım Bedeli</label>
@@ -877,16 +1387,17 @@ function App() {
                         setCustomDistributionPrice(0);
                       }
                       // Tarife grubuna göre BTV ve KDV oranlarını otomatik ayarla
-                      const tariff = DISTRIBUTION_TARIFFS.find(t => t.key === key);
+                      const tariff = activeTariffs.find(t => t.key === key);
                       if (tariff) {
                         setManualValues(prev => ({...prev, tariff_group: tariff.label}));
                         
                         // BTV Oranları (2464 sayılı Kanun Madde 34):
-                        // OSB: %0 (belediye sınırları dışı, BTV muaf)
+                        // OSB: Belediye sınırları dışındaki OSB'ler BTV muaf (%0)
+                        // Belediye sınırları içindeki OSB'ler (Çerkezköy gibi) normal oran
                         // Sanayi (imal/istihsal kapsamı): %1
                         // Diğer tüm gruplar: %5
-                        if (tariff.key.startsWith('osb_')) {
-                          setBtvRate(0);
+                        if (tariff.key === 'osb_ikitelli') {
+                          setBtvRate(0);  // Belediye sınırları dışı OSB
                         } else if (tariff.group === 'sanayi') {
                           setBtvRate(0.01);
                         } else if (tariff.group !== 'custom') {
@@ -905,7 +1416,7 @@ function App() {
                     }}
                   >
                     <option value="">Faturadan (Otomatik)</option>
-                    {DISTRIBUTION_TARIFFS.map((tariff) => (
+                    {activeTariffs.map((tariff) => (
                       <option key={tariff.key} value={tariff.key}>
                         {tariff.label} {tariff.key !== 'custom' ? `— ${(tariff.price * 1000).toFixed(2)} kr/kWh` : ''}
                       </option>
@@ -1111,12 +1622,15 @@ function App() {
                   
                   {/* Tedarikçi Karı */}
                   <div className="card p-2 bg-gradient-to-br from-purple-50 to-purple-100 border-purple-200">
-                    <p className="text-xs text-purple-600 font-medium">Tedarikçi Karı</p>
+                    <p className="text-xs text-purple-600 font-medium">
+                      {bayiEnabled ? 'Gelka Net Kar' : 'Tedarikçi Karı'}
+                    </p>
                     <p className="text-lg font-bold text-purple-900">
-                      {formatCurrency(liveCalculation.supplier_profit_tl)}
+                      {formatCurrency(bayiEnabled ? liveCalculation.gelka_net_profit_tl : liveCalculation.supplier_profit_tl)}
                     </p>
                     <p className="text-xs text-purple-600">
                       %{liveCalculation.supplier_profit_margin.toFixed(1)} marj
+                      {bayiEnabled && liveCalculation.bayi_segment && ` (${liveCalculation.bayi_segment.name} ${liveCalculation.bayi_points}p: ${formatCurrency(liveCalculation.bayi_commission_tl)})`}
                     </p>
                   </div>
                 </div>
@@ -1382,6 +1896,7 @@ function App() {
                     </div>
                   ) : (
                     /* OCR'dan Gelen Değerler (Sadece Görüntüleme) */
+                    result && (
                     <>
                       <div className="grid grid-cols-4 gap-2 text-xs">
                         <div>
@@ -1410,6 +1925,7 @@ function App() {
                         </div>
                       </div>
                     </>
+                    )
                   )}
                   
                   {/* Dağıtım + Validasyon - Tek satır */}
@@ -1429,7 +1945,7 @@ function App() {
                               <span className="text-amber-600 ml-1">Manuel</span>
                             )}
                           </span>
-                          {result.calculation?.meta_distribution_tariff_key && (
+                          {result?.calculation?.meta_distribution_tariff_key && (
                             <span className="text-gray-500">Tarife: <span className="font-medium">{result.calculation.meta_distribution_tariff_key}</span></span>
                           )}
                         </>
@@ -1472,10 +1988,10 @@ function App() {
                     <details className="mt-2 pt-2 border-t border-gray-100">
                       <summary className="cursor-pointer text-xs font-medium text-gray-500 hover:text-gray-900 flex items-center gap-1">
                         <span>🔍 Hesap Detayı</span>
-                        <span className="text-xs text-gray-400">(trace: {result.debug_meta.trace_id || result.meta?.trace_id})</span>
+                        <span className="text-xs text-gray-400">(trace: {result?.debug_meta.trace_id || result?.meta?.trace_id})</span>
                         {result.quality_score && (
                           <span className={`ml-1 px-1 py-0.5 rounded text-xs font-medium ${
-                            result.quality_score.grade === 'OK' ? 'bg-green-100 text-green-700' :
+                            result?.quality_score.grade === 'OK' ? 'bg-green-100 text-green-700' :
                             result.quality_score.grade === 'CHECK' ? 'bg-yellow-100 text-yellow-700' :
                             'bg-red-100 text-red-700'
                           }`}>
@@ -1503,9 +2019,9 @@ function App() {
                         )}
                         
                         <div className="grid grid-cols-4 gap-1">
-                          <div><span className="text-gray-500">Dönem:</span> <span className="font-mono">{result.debug_meta.pricing_period || result.calculation?.meta_pricing_period || '-'}</span></div>
-                          <div><span className="text-gray-500">Kaynak:</span> <span className={`font-medium ${result.debug_meta.pricing_source === 'reference' ? 'text-primary-600' : 'text-amber-600'}`}>{result.debug_meta.pricing_source || '-'}</span></div>
-                          <div><span className="text-gray-500">PTF:</span> <span className="font-mono">{result.debug_meta.ptf_tl_per_mwh || 0}</span></div>
+                          <div><span className="text-gray-500">Dönem:</span> <span className="font-mono">{result?.debug_meta.pricing_period || result?.calculation?.meta_pricing_period || '-'}</span></div>
+                          <div><span className="text-gray-500">Kaynak:</span> <span className={`font-medium ${result?.debug_meta.pricing_source === 'reference' ? 'text-primary-600' : 'text-amber-600'}`}>{result?.debug_meta.pricing_source || '-'}</span></div>
+                          <div><span className="text-gray-500">PTF:</span> <span className="font-mono">{result?.debug_meta.ptf_tl_per_mwh || 0}</span></div>
                           <div><span className="text-gray-500">YEKDEM:</span> <span className="font-mono">{result.debug_meta.yekdem_tl_per_mwh || 0}</span></div>
                         </div>
                         

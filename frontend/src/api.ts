@@ -729,3 +729,159 @@ export function normalizeInvoicePeriod(period: string): string | null {
   
   return null;
 }
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Pricing Risk Engine API
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface PricingAnalyzeRequest {
+  period: string;
+  multiplier: number;
+  dealer_commission_pct?: number;
+  imbalance_params?: {
+    forecast_error_rate: number;
+    imbalance_cost_tl_per_mwh: number;
+    smf_based_imbalance_enabled: boolean;
+  };
+  use_template?: boolean;
+  template_name?: string;
+  template_monthly_kwh?: number;
+}
+
+export interface PricingRiskResult {
+  score: string;
+  weighted_ptf: number;
+  arithmetic_avg_ptf: number;
+  deviation_pct: number;
+  t2_consumption_pct: number;
+  peak_concentration: number;
+  reasons: string[];
+}
+
+export interface PricingSafeMultiplier {
+  safe_multiplier: number;
+  recommended_multiplier: number;
+  confidence_level: number;
+  periods_analyzed: number;
+  monthly_margins: number[];
+  warning: string | null;
+}
+
+export interface PricingLossMap {
+  total_loss_hours: number;
+  total_loss_tl: number;
+  by_time_zone: Record<string, number>;
+}
+
+export interface PricingAnalyzeResponse {
+  status: string;
+  period: string;
+  weighted_prices: {
+    weighted_ptf_tl_per_mwh: number;
+    weighted_smf_tl_per_mwh: number;
+    arithmetic_avg_ptf: number;
+    total_consumption_kwh: number;
+    total_cost_tl: number;
+    hours_count: number;
+  };
+  supplier_cost: {
+    weighted_ptf_tl_per_mwh: number;
+    yekdem_tl_per_mwh: number;
+    imbalance_tl_per_mwh: number;
+    total_cost_tl_per_mwh: number;
+  };
+  pricing: {
+    multiplier: number;
+    sales_price_tl_per_mwh: number;
+    gross_margin_tl_per_mwh: number;
+    net_margin_tl_per_mwh: number;
+    total_sales_tl: number;
+    total_cost_tl: number;
+    total_gross_margin_tl: number;
+    total_net_margin_tl: number;
+  };
+  loss_map: PricingLossMap;
+  risk_score: PricingRiskResult;
+  safe_multiplier: PricingSafeMultiplier;
+  warnings: Array<{ type: string; message: string }>;
+  cache_hit: boolean;
+}
+
+export interface PricingPeriodsResponse {
+  status: string;
+  market_data_periods: string[];
+  yekdem_periods: string[];
+}
+
+export interface PricingTemplatesResponse {
+  status: string;
+  count: number;
+  items: Array<{ name: string; display_name: string; description: string }>;
+}
+
+/**
+ * Pricing Risk Engine — Tam fiyatlama analizi.
+ * Şablon modu ile çalışır (tüketim Excel'i gerekmez).
+ */
+export async function pricingAnalyze(req: PricingAnalyzeRequest): Promise<PricingAnalyzeResponse> {
+  const response = await fetch(`${API_BASE}/api/pricing/analyze`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail?.message || err.detail || `Pricing analiz hatası: ${response.status}`);
+  }
+  return response.json();
+}
+
+/**
+ * Pricing Risk Engine — Yüklü dönemler listesi.
+ */
+export async function pricingGetPeriods(): Promise<PricingPeriodsResponse> {
+  const response = await fetch(`${API_BASE}/api/pricing/periods`);
+  if (!response.ok) throw new Error(`Dönem listesi alınamadı: ${response.status}`);
+  return response.json();
+}
+
+/**
+ * Pricing Risk Engine — Profil şablonları listesi.
+ */
+export async function pricingGetTemplates(): Promise<PricingTemplatesResponse> {
+  const response = await fetch(`${API_BASE}/api/pricing/templates`);
+  if (!response.ok) throw new Error(`Şablon listesi alınamadı: ${response.status}`);
+  return response.json();
+}
+
+/**
+ * Pricing Risk Engine — PDF analiz raporu indir.
+ */
+export async function pricingDownloadPdf(
+  req: PricingAnalyzeRequest,
+  reportMode: 'internal' | 'demo' = 'internal',
+): Promise<Blob> {
+  const url = new URL(`${API_BASE}/api/pricing/report/pdf`);
+  url.searchParams.set('report_mode', reportMode);
+  const response = await fetch(url.toString(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  });
+  if (!response.ok) throw new Error(`PDF rapor hatası: ${response.status}`);
+  return response.blob();
+}
+
+/**
+ * Pricing Risk Engine — Excel analiz raporu indir.
+ */
+export async function pricingDownloadExcel(req: PricingAnalyzeRequest): Promise<Blob> {
+  const response = await fetch(`${API_BASE}/api/pricing/report/excel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  });
+  if (!response.ok) throw new Error(`Excel rapor hatası: ${response.status}`);
+  return response.blob();
+}

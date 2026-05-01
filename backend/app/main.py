@@ -121,6 +121,10 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Pricing Risk Engine router
+from .pricing.router import pricing_router
+app.include_router(pricing_router)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Security - API Key Authentication + Rate Limiting
@@ -291,6 +295,20 @@ async def startup_event():
     
     # EPDK tarifeleri DB'ye seed et (yoksa)
     _seed_distribution_tariffs()
+
+    # Pricing Risk Engine: Profil şablonlarını seed et
+    try:
+        from .pricing.profile_templates import seed_profile_templates
+        from .database import SessionLocal
+        _pricing_db = SessionLocal()
+        try:
+            count = seed_profile_templates(_pricing_db)
+            if count > 0:
+                logger.info(f"Pricing: {count} profil şablonu seed edildi")
+        finally:
+            _pricing_db.close()
+    except Exception as e:
+        logger.warning(f"Pricing profil şablonu seed hatası (kritik değil): {e}")
 
 
 def _add_sample_market_prices():

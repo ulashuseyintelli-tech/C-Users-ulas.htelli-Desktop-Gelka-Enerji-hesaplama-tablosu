@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<title>Fiyatlama Analiz Raporu — {{ period }}</title>
+<style>
+@page { size: A4; margin: 0; }
+html, body { width: 210mm; margin: 0; padding: 0; }
+body {
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 8pt;
+  line-height: 1.4;
+  color: #222;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* ── Page container ── */
+.page {
+  width: 210mm;
+  min-height: 297mm;
+  padding: 14mm 16mm 20mm 16mm;
+  page-break-after: always;
+  position: relative;
+}
+.page:last-child { page-break-after: auto; }
+
+/* ── Header ── */
+.hdr {
+  border-bottom: 2.5px solid #10B981;
+  padding-bottom: 3mm;
+  margin-bottom: 4mm;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+}
+.hdr-title {
+  font-size: 13pt;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: #1F2937;
+}
+.hdr-meta {
+  text-align: right;
+  font-size: 8pt;
+  color: #6B7280;
+  line-height: 1.5;
+}
+
+/* ── Section titles ── */
+.section-title {
+  font-size: 9pt;
+  font-weight: bold;
+  color: #1F2937;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 4mm 0 2mm 0;
+  padding-bottom: 1mm;
+  border-bottom: 1px solid #E5E7EB;
+}
+
+/* ── Tables ── */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 7.5pt;
+  margin-bottom: 3mm;
+}
+th, td { padding: 1.2mm 2mm; border: 1px solid #D1D5DB; }
+th { background: #F3F4F6; text-align: left; font-weight: 600; color: #374151; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.highlight-row { background: #ECFDF5; font-weight: bold; }
+
+/* ── Risk badge ── */
+.risk-badge {
+  display: inline-block;
+  padding: 1mm 3mm;
+  border-radius: 2mm;
+  font-size: 8pt;
+  font-weight: bold;
+  color: white;
+}
+.risk-low { background: #10B981; }
+.risk-medium { background: #F59E0B; }
+.risk-high { background: #EF4444; }
+
+/* ── Summary cards ── */
+.cards {
+  display: flex;
+  gap: 3mm;
+  margin-bottom: 4mm;
+}
+.card {
+  flex: 1;
+  border: 1px solid #E5E7EB;
+  border-radius: 2mm;
+  padding: 2.5mm 3mm;
+  text-align: center;
+}
+.card-label { font-size: 6.5pt; color: #6B7280; margin-bottom: 1mm; }
+.card-value { font-size: 11pt; font-weight: bold; color: #1F2937; }
+.card-unit { font-size: 7pt; color: #9CA3AF; }
+.card-green .card-value { color: #10B981; }
+.card-amber .card-value { color: #F59E0B; }
+.card-red .card-value { color: #EF4444; }
+
+/* ── Simulation table ── */
+.sim-table th { background: #10B981; color: white; text-align: center; }
+.sim-table th:first-child { text-align: left; }
+.sim-table td { text-align: right; font-variant-numeric: tabular-nums; }
+.sim-table td:first-child { text-align: left; }
+.sim-safe { background: #ECFDF5; font-weight: bold; }
+
+/* ── Explanation box ── */
+.explain-box {
+  background: #F0FDF4;
+  border-left: 3px solid #10B981;
+  padding: 2.5mm 4mm;
+  margin: 3mm 0;
+  font-size: 7.5pt;
+  line-height: 1.5;
+}
+.explain-box b { color: #065F46; }
+
+/* ── Warning box ── */
+.warn-box {
+  background: #FEF3C7;
+  border-left: 3px solid #F59E0B;
+  padding: 2.5mm 4mm;
+  margin: 3mm 0;
+  font-size: 7.5pt;
+}
+
+/* ── Footer ── */
+.ftr {
+  position: absolute;
+  bottom: 8mm;
+  left: 16mm;
+  right: 16mm;
+  font-size: 6.5pt;
+  color: #9CA3AF;
+  border-top: 1px solid #E5E7EB;
+  padding-top: 2mm;
+  display: flex;
+  justify-content: space-between;
+}
+
+/* ── Legal ── */
+.legal {
+  font-size: 6pt;
+  color: #9CA3AF;
+  margin-top: 4mm;
+  line-height: 1.3;
+}
+
+/* ── Watermark (demo mode) ── */
+.watermark {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-35deg);
+  font-size: 48pt;
+  font-weight: bold;
+  color: rgba(239, 68, 68, 0.12);
+  white-space: nowrap;
+  z-index: 100;
+  pointer-events: none;
+  letter-spacing: 4px;
+}
+</style>
+</head>
+<body>
+
+{% if is_demo %}
+<div class="watermark">ÖN ANALİZ RAPORUDUR — TİCARİ TEKLİF YERİNE GEÇMEZ</div>
+{% endif %}
+
+<!-- ═══════════════════════════════════════════════════════════════
+     SAYFA 1: ÖZET + FİYATLAMA
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="page">
+  <div class="hdr">
+    <div class="hdr-title">Fiyatlama Analiz Raporu</div>
+    <div class="hdr-meta">
+      <div><b>Dönem:</b> {{ period }}</div>
+      {% if customer_name %}<div><b>Müşteri:</b> {{ customer_name }}</div>{% endif %}
+      <div><b>Tarih:</b> {{ report_date }}</div>
+    </div>
+  </div>
+
+  <!-- Özet Kartları -->
+  <div class="cards">
+    <div class="card">
+      <div class="card-label">Ağırlıklı PTF</div>
+      <div class="card-value">{{ "%.2f"|format(weighted_ptf) }}</div>
+      <div class="card-unit">TL/MWh</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Tedarikçi Maliyeti</div>
+      <div class="card-value">{{ "%.2f"|format(supplier_cost) }}</div>
+      <div class="card-unit">TL/MWh</div>
+    </div>
+    <div class="card card-green">
+      <div class="card-label">Güvenli Katsayı</div>
+      <div class="card-value">×{{ "%.3f"|format(safe_multiplier) }}</div>
+      <div class="card-unit">5. persentil</div>
+    </div>
+    <div class="card {% if risk_level == 'Düşük' %}card-green{% elif risk_level == 'Orta' %}card-amber{% else %}card-red{% endif %}">
+      <div class="card-label">Risk Seviyesi</div>
+      <div class="card-value">{{ risk_level }}</div>
+      <div class="card-unit">sapma %{{ "%.1f"|format(deviation_pct) }}</div>
+    </div>
+  </div>
+
+  <!-- Açıklama -->
+  <div class="explain-box">
+    {% for reason in risk_reasons %}
+    <div>→ {{ reason }}</div>
+    {% endfor %}
+    {% if risk_level == 'Düşük' and safe_multiplier > 1.05 %}
+    <div style="margin-top:1.5mm;">
+      <b>Değerlendirme:</b> Bu müşteri dengeli tüketim yapmasına rağmen, piyasa fiyat oynaklığı nedeniyle 
+      daha yüksek katsayı gerekmektedir. Profil riski düşük olsa da, saatlik PTF dalgalanmaları 
+      güvenli katsayıyı ×{{ "%.3f"|format(safe_multiplier) }} seviyesine taşımaktadır.
+    </div>
+    {% elif risk_level == 'Orta' %}
+    <div style="margin-top:1.5mm;">
+      <b>Değerlendirme:</b> Bu müşterinin tüketim profili puant saatlerine kısmen yoğunlaşmaktadır. 
+      Fiyatlama yapılırken bu yoğunlaşmanın ek maliyet yarattığı dikkate alınmalıdır.
+    </div>
+    {% elif risk_level == 'Yüksek' %}
+    <div style="margin-top:1.5mm;">
+      <b>Değerlendirme:</b> Bu müşterinin tüketim profili yüksek riskli olarak değerlendirilmektedir. 
+      Puant saatlerindeki yoğun tüketim ve/veya yüksek PTF sapması nedeniyle dikkatli fiyatlama önerilir.
+    </div>
+    {% endif %}
+    {% if coherence_note %}
+    <div style="margin-top:1mm;"><b>Not:</b> {{ coherence_note }}</div>
+    {% endif %}
+  </div>
+
+  <!-- Tedarikçi Maliyet Tablosu -->
+  <div class="section-title">Tedarikçi Maliyet Yapısı</div>
+  <table>
+    <colgroup><col style="width:50%"><col style="width:25%"><col style="width:25%"></colgroup>
+    <tr><th>Kalem</th><th>Birim Fiyat</th><th>Açıklama</th></tr>
+    <tr><td>Ağırlıklı PTF</td><td class="num">{{ "%.2f"|format(weighted_ptf) }} TL/MWh</td><td>Saatlik tüketim ağırlıklı</td></tr>
+    <tr><td>YEKDEM Bedeli</td><td class="num">{{ "%.2f"|format(yekdem) }} TL/MWh</td><td>Aylık sabit</td></tr>
+    <tr><td>Dengesizlik Maliyeti</td><td class="num">{{ "%.2f"|format(imbalance_cost) }} TL/MWh</td><td>Tahmin hata payı</td></tr>
+    <tr class="highlight-row"><td>Toplam Tedarikçi Maliyeti</td><td class="num">{{ "%.2f"|format(supplier_cost) }} TL/MWh</td><td></td></tr>
+  </table>
+
+  <!-- Fiyatlama Özeti -->
+  <div class="section-title">Fiyatlama Özeti (×{{ "%.2f"|format(multiplier) }})</div>
+  <table>
+    <colgroup><col style="width:50%"><col style="width:25%"><col style="width:25%"></colgroup>
+    <tr><th>Kalem</th><th>Birim (TL/MWh)</th><th>Toplam (TL)</th></tr>
+    <tr><td>Satış Fiyatı</td><td class="num">{{ "%.2f"|format(pricing.sales_price_tl_per_mwh) }}</td><td class="num">{{ "{:,.2f}".format(pricing.total_sales_tl) }}</td></tr>
+    <tr><td>Toplam Maliyet</td><td class="num">{{ "%.2f"|format(supplier_cost) }}</td><td class="num">{{ "{:,.2f}".format(pricing.total_cost_tl) }}</td></tr>
+    <tr><td>Brüt Marj</td><td class="num">{{ "%.2f"|format(pricing.gross_margin_tl_per_mwh) }}</td><td class="num">{{ "{:,.2f}".format(pricing.total_gross_margin_tl) }}</td></tr>
+    {% if pricing.dealer_commission_tl_per_mwh > 0 %}
+    <tr><td>Bayi Komisyonu</td><td class="num">{{ "%.2f"|format(pricing.dealer_commission_tl_per_mwh) }}</td><td class="num">{{ "{:,.2f}".format(pricing.total_dealer_commission_tl) }}</td></tr>
+    {% endif %}
+    <tr class="highlight-row"><td>Net Marj</td><td class="num">{{ "%.2f"|format(pricing.net_margin_tl_per_mwh) }}</td><td class="num">{{ "{:,.2f}".format(pricing.total_net_margin_tl) }}</td></tr>
+  </table>
+
+  <!-- T1/T2/T3 Dağılımı -->
+  <div class="section-title">Zaman Dilimi Dağılımı</div>
+  <table>
+    <colgroup><col style="width:28%"><col style="width:18%"><col style="width:18%"><col style="width:18%"><col style="width:18%"></colgroup>
+    <tr><th>Dilim</th><th>Tüketim (kWh)</th><th>Pay (%)</th><th>Ağırlıklı PTF</th><th>Maliyet (TL)</th></tr>
+    {% for tz_key, tz in time_zones.items() %}
+    <tr>
+      <td>{{ tz.label }}</td>
+      <td class="num">{{ "{:,.0f}".format(tz.consumption_kwh) }}</td>
+      <td class="num">%{{ "%.1f"|format(tz.consumption_pct) }}</td>
+      <td class="num">{{ "%.2f"|format(tz.weighted_ptf_tl_per_mwh) }}</td>
+      <td class="num">{{ "{:,.2f}".format(tz.total_cost_tl) }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+
+  <div class="ftr">
+    <span>Gelka Enerji — Fiyatlama Analiz Raporu</span>
+    <span>Sayfa 1/2</span>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     SAYFA 2: SİMÜLASYON + ZARAR HARİTASI
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="page">
+  <div class="hdr">
+    <div class="hdr-title">Katsayı Simülasyonu & Zarar Analizi</div>
+    <div class="hdr-meta">
+      <div><b>Dönem:</b> {{ period }}</div>
+      {% if customer_name %}<div><b>Müşteri:</b> {{ customer_name }}</div>{% endif %}
+    </div>
+  </div>
+
+  <!-- Katsayı Simülasyonu -->
+  <div class="section-title">Katsayı Simülasyonu</div>
+  <table class="sim-table">
+    <colgroup>
+      <col style="width:11%"><col style="width:15%"><col style="width:15%">
+      <col style="width:14%"><col style="width:14%"><col style="width:14%">
+      <col style="width:9%"><col style="width:8%">
+    </colgroup>
+    <tr>
+      <th>Katsayı</th><th>Satış (TL)</th><th>Maliyet (TL)</th>
+      <th>Brüt Marj</th><th>Bayi Kom.</th><th>Net Marj</th>
+      <th>Zarar Saat</th><th>Zarar TL</th>
+    </tr>
+    {% for row in simulation %}
+    <tr {% if row.multiplier == safe_multiplier_rounded %}class="sim-safe"{% endif %}>
+      <td>×{{ "%.2f"|format(row.multiplier) }}</td>
+      <td class="num">{{ "{:,.0f}".format(row.total_sales_tl) }}</td>
+      <td class="num">{{ "{:,.0f}".format(row.total_cost_tl) }}</td>
+      <td class="num">{{ "{:,.0f}".format(row.gross_margin_tl) }}</td>
+      <td class="num">{{ "{:,.0f}".format(row.dealer_commission_tl) }}</td>
+      <td class="num">{{ "{:,.0f}".format(row.net_margin_tl) }}</td>
+      <td class="num">{{ row.loss_hours }}</td>
+      <td class="num">{{ "{:,.0f}".format(row.total_loss_tl) }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+
+  <div class="explain-box">
+    <b>Güvenli Katsayı: ×{{ "%.3f"|format(safe_multiplier) }}</b> — 
+    Bu katsayıda, saatlik marj dağılımının %95'inde net marj pozitif kalır.
+    <b>Önerilen: ×{{ "%.2f"|format(recommended_multiplier) }}</b>
+    {% if safe_warning %}
+    <div style="margin-top:1mm; color:#92400E;">⚠ {{ safe_warning }}</div>
+    {% endif %}
+  </div>
+
+  <!-- Zarar Haritası -->
+  <div class="section-title">Zarar Haritası Özeti (×{{ "%.2f"|format(multiplier) }})</div>
+  <table>
+    <colgroup><col style="width:40%"><col style="width:30%"><col style="width:30%"></colgroup>
+    <tr><th>Metrik</th><th>Değer</th><th>Açıklama</th></tr>
+    <tr><td>Toplam Zararlı Saat</td><td class="num">{{ loss_map.total_loss_hours }}</td><td>Satış < maliyet olan saatler</td></tr>
+    <tr><td>Toplam Zarar Tutarı</td><td class="num">{{ "{:,.2f}".format(loss_map.total_loss_tl) }} TL</td><td>Negatif marj toplamı</td></tr>
+    <tr><td>T1 (Gündüz) Zarar Saati</td><td class="num">{{ loss_map.by_time_zone.get('T1', 0) }}</td><td>06:00–16:59</td></tr>
+    <tr><td>T2 (Puant) Zarar Saati</td><td class="num">{{ loss_map.by_time_zone.get('T2', 0) }}</td><td>17:00–21:59</td></tr>
+    <tr><td>T3 (Gece) Zarar Saati</td><td class="num">{{ loss_map.by_time_zone.get('T3', 0) }}</td><td>22:00–05:59</td></tr>
+  </table>
+
+  {% if loss_map.worst_hours %}
+  <div class="section-title">En Yüksek Zararlı Saatler (İlk 10)</div>
+  <table>
+    <colgroup><col style="width:20%"><col style="width:15%"><col style="width:20%"><col style="width:20%"><col style="width:25%"></colgroup>
+    <tr><th>Tarih</th><th>Saat</th><th>PTF (TL/MWh)</th><th>Satış (TL)</th><th>Zarar (TL)</th></tr>
+    {% for wh in loss_map.worst_hours[:10] %}
+    <tr>
+      <td>{{ wh.date }}</td>
+      <td class="num">{{ wh.hour }}:00</td>
+      <td class="num">{{ "{:,.2f}".format(wh.ptf) }}</td>
+      <td class="num">{{ "{:,.2f}".format(wh.sales_price) }}</td>
+      <td class="num" style="color:#EF4444;">{{ "{:,.2f}".format(wh.loss_tl) }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+
+  {% if warnings %}
+  <div class="warn-box">
+    <b>Uyarılar:</b>
+    {% for w in warnings %}
+    <div>⚠ {{ w.message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="legal">
+    <b>Yasal Uyarı:</b> Bu rapor, EPİAŞ piyasa verileri ve müşteri tüketim profili esas alınarak hazırlanmıştır. 
+    Gerçek maliyetler, piyasa koşulları ve tüketim değişikliklerine göre farklılık gösterebilir. 
+    Bu rapor bilgilendirme amaçlıdır ve bağlayıcı teklif niteliği taşımaz.
+    Rapor tarihi: {{ report_date }}
+  </div>
+
+  <div class="ftr">
+    <span>Gelka Enerji — Fiyatlama Analiz Raporu</span>
+    <span>Sayfa 2/2</span>
+  </div>
+</div>
+
+</body>
+</html>

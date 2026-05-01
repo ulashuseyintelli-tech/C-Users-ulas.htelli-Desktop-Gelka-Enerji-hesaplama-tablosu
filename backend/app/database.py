@@ -544,6 +544,9 @@ def init_db():
     except ImportError:
         pass
     
+    # Pricing modülü tablolarını kaydet (Base.metadata'ya)
+    import app.pricing.schemas  # noqa: F401
+    
     Base.metadata.create_all(bind=engine)
 
 
