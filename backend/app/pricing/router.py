@@ -114,7 +114,7 @@ from .consumption_service import save_consumption_profile
 from .profile_templates import (
     seed_profile_templates,
     generate_hourly_consumption,
-    PROFILE_TEMPLATES,
+    BUILTIN_TEMPLATES,
 )
 from .pricing_cache import (
     build_cache_key,
@@ -838,14 +838,14 @@ def list_templates(db: Session = Depends(get_db)):
     if not templates:
         return {
             "status": "ok",
-            "count": len(PROFILE_TEMPLATES),
+            "count": len(BUILTIN_TEMPLATES),
             "items": [
                 {
-                    "name": t["name"],
-                    "display_name": t["display_name"],
-                    "description": t.get("description", ""),
+                    "name": t.name,
+                    "display_name": t.display_name,
+                    "description": t.description or "",
                 }
-                for t in PROFILE_TEMPLATES
+                for t in BUILTIN_TEMPLATES
             ],
         }
 
