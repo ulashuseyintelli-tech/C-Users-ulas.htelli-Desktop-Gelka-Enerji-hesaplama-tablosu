@@ -29,6 +29,9 @@ pyinstaller --onefile --name gelka-backend ^
     --collect-submodules app.guards ^
     --collect-submodules app.invoice ^
     --collect-submodules app.services ^
+    --collect-submodules app.pricing ^
+    --collect-submodules app.adaptive_control ^
+    --collect-submodules app.testing ^
     --collect-submodules fastapi ^
     --collect-submodules starlette ^
     --collect-submodules pydantic ^
