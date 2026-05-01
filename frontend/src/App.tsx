@@ -1230,13 +1230,14 @@ function App() {
                               <option value="ofis">Ofis</option>
                               <option value="otel">Otel</option>
                               <option value="restoran">Restoran</option>
-                              <option value="avm">AVM</option>
-                              <option value="market_supermarket">Market/Süpermarket</option>
-                              <option value="hastane">Hastane</option>
                               <option value="soguk_hava_deposu">Soğuk Hava Deposu</option>
                               <option value="gece_agirlikli_uretim">Gece Ağırlıklı Üretim</option>
+                              <option value="avm">AVM</option>
                               <option value="akaryakit_istasyonu">Akaryakıt İstasyonu</option>
+                              <option value="market_supermarket">Market / Süpermarket</option>
+                              <option value="hastane">Hastane</option>
                               <option value="tarimsal_sulama">Tarımsal Sulama</option>
+                              <option value="site_yonetimi">Site Yönetimi</option>
                             </>
                           )}
                         </select>

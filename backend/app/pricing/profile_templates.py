@@ -183,6 +183,16 @@ _tarimsal_sulama_raw = [
 ]
 _tarimsal_sulama = _normalize(_tarimsal_sulama_raw)
 
+# Site Yönetimi — Ortak alan aydınlatma, asansör, hidrofor, otopark havalandırma
+# Sabah ve akşam pikleri (ev giriş-çıkış), gece minimal, gündüz orta
+_site_yonetimi_raw = [
+    2.0, 1.5, 1.0, 1.0, 1.0, 1.5,    # 00-05: gece minimal (aydınlatma + hidrofor)
+    3.0, 5.0, 6.0, 4.0, 3.5, 3.5,    # 06-11: sabah piki (asansör + hidrofor)
+    3.0, 3.0, 3.0, 3.5, 4.0, 5.0,    # 12-17: gündüz orta
+    7.0, 8.0, 7.0, 6.0, 4.0, 3.0,    # 18-23: akşam piki (aydınlatma + asansör + klima)
+]
+_site_yonetimi = _normalize(_site_yonetimi_raw)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Yerleşik Şablon Listesi
@@ -260,6 +270,12 @@ BUILTIN_TEMPLATES: list[TemplateDefinition] = [
         display_name="Tarımsal Sulama",
         description="Gece saatlerinde (22:00-06:00) ağırlıklı sulama. Ucuz gece tarifesinden faydalanır.",
         hourly_weights=_tarimsal_sulama,
+    ),
+    TemplateDefinition(
+        name="site_yonetimi",
+        display_name="Site Yönetimi",
+        description="Ortak alan aydınlatma, asansör, hidrofor, otopark. Sabah ve akşam ev giriş-çıkış pikleri.",
+        hourly_weights=_site_yonetimi,
     ),
 ]
 
