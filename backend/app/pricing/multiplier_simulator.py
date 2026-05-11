@@ -35,8 +35,8 @@ def run_simulation(
     yekdem_tl_per_mwh: float,
     imbalance_params: ImbalanceParams,
     dealer_commission_pct: float = 0.0,
-    multiplier_start: float = 1.02,
-    multiplier_end: float = 1.10,
+    multiplier_start: float = 1.01,
+    multiplier_end: float = 1.15,
     multiplier_step: float = 0.01,
 ) -> list[SimulationRow]:
     """Katsayı simülasyonu çalıştır.
@@ -54,8 +54,8 @@ def run_simulation(
         yekdem_tl_per_mwh: YEKDEM bedeli (TL/MWh).
         imbalance_params: Dengesizlik parametreleri.
         dealer_commission_pct: Bayi komisyon yüzdesi (0–100).
-        multiplier_start: Başlangıç katsayısı (varsayılan 1.02).
-        multiplier_end: Bitiş katsayısı (varsayılan 1.10).
+        multiplier_start: Başlangıç katsayısı (varsayılan 1.01).
+        multiplier_end: Bitiş katsayısı (varsayılan 1.15).
         multiplier_step: Adım değeri (varsayılan 0.01).
 
     Returns:

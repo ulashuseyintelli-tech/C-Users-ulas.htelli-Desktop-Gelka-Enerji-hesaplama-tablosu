@@ -109,6 +109,7 @@ def calculate_hourly_costs(
     multiplier: float,
     imbalance_params: ImbalanceParams,
     dealer_commission_pct: float = 0.0,
+    distribution_unit_price_tl_per_kwh: float = 0.0,
 ) -> HourlyCostResult:
     """Saatlik maliyet, satış fiyatı ve marj hesapla.
 
@@ -117,6 +118,14 @@ def calculate_hourly_costs(
         sales_price_tl = consumption_kwh × (weighted_ptf + yekdem) × multiplier / 1000
         margin_tl = sales_price_tl - base_cost_tl
 
+    Dual Margin Model (v3):
+        gross_margin_energy = total_sales - total_base_cost
+        gross_margin_total  = total_sales - total_base_cost - distribution_cost_total
+
+    Safety Guards (v3.1):
+        dealer_commission = max(0, min(dealer_commission, gross_margin_energy))
+        imbalance_cost_per_mwh = max(calculated, weighted_ptf * RISK_FLOOR)
+
     Args:
         market_records: Saatlik piyasa verileri.
         consumption_records: Saatlik tüketim verileri.
@@ -124,6 +133,7 @@ def calculate_hourly_costs(
         multiplier: Katsayı (≥ 1.0).
         imbalance_params: Dengesizlik parametreleri.
         dealer_commission_pct: Bayi komisyon yüzdesi (0–100, varsayılan 0).
+        distribution_unit_price_tl_per_kwh: Dağıtım birim fiyatı (TL/kWh, varsayılan 0).
 
     Returns:
         HourlyCostResult: Saatlik maliyet hesaplama sonucu.
@@ -134,9 +144,13 @@ def calculate_hourly_costs(
     weighted_smf = weighted_result.weighted_smf_tl_per_mwh
 
     # Dengesizlik maliyeti hesapla (TL/MWh)
-    imbalance_cost_per_mwh = calculate_imbalance_cost(
+    calculated_imbalance_per_mwh = calculate_imbalance_cost(
         weighted_ptf, weighted_smf, imbalance_params
     )
+
+    # Safety Guard: Imbalance floor (per-MWh bazlı)
+    RISK_FLOOR = 0.01
+    imbalance_cost_per_mwh = max(calculated_imbalance_per_mwh, weighted_ptf * RISK_FLOOR)
 
     # Enerji maliyeti = Ağırlıklı PTF + YEKDEM (satış fiyatı hesabı için)
     energy_cost_tl_per_mwh = weighted_ptf + yekdem_tl_per_mwh
@@ -191,17 +205,24 @@ def calculate_hourly_costs(
         total_sales += sales_price_tl
 
     # Toplamlar
-    total_gross_margin = total_sales - total_base_cost
+    total_consumption = weighted_result.total_consumption_kwh
 
-    # Bayi komisyonu = brüt marj × bayi yüzdesi / 100
-    dealer_commission = total_gross_margin * dealer_commission_pct / 100.0
+    # Dağıtım maliyeti
+    distribution_cost_total = distribution_unit_price_tl_per_kwh * total_consumption
+
+    # Dual Brüt Marj
+    gross_margin_energy = total_sales - total_base_cost
+    gross_margin_total = total_sales - total_base_cost - distribution_cost_total
+
+    # Safety Guard: Dealer commission cap — bayi payı enerji marjını aşamaz, negatif olamaz
+    raw_dealer_commission = gross_margin_energy * dealer_commission_pct / 100.0
+    dealer_commission = max(0.0, min(raw_dealer_commission, max(0.0, gross_margin_energy)))
 
     # Dengesizlik payı = dengesizlik_maliyeti_per_mwh × toplam_tüketim / 1000
-    total_consumption = weighted_result.total_consumption_kwh
     imbalance_share = imbalance_cost_per_mwh * total_consumption / 1000.0
 
-    # Net marj = brüt marj - bayi komisyonu - dengesizlik payı
-    total_net_margin = total_gross_margin - dealer_commission - imbalance_share
+    # Net marj = toplam brüt marj - bayi komisyonu - dengesizlik payı
+    net_margin = gross_margin_total - dealer_commission - imbalance_share
 
     # Tedarikçi gerçek maliyet = Ağırlıklı_PTF + YEKDEM + Dengesizlik
     supplier_real_cost = weighted_ptf + yekdem_tl_per_mwh + imbalance_cost_per_mwh
@@ -210,7 +231,16 @@ def calculate_hourly_costs(
         hour_costs=hour_costs,
         total_base_cost_tl=round(total_base_cost, 2),
         total_sales_revenue_tl=round(total_sales, 2),
-        total_gross_margin_tl=round(total_gross_margin, 2),
-        total_net_margin_tl=round(total_net_margin, 2),
+        # Dual margin fields
+        gross_margin_energy_total_tl=round(gross_margin_energy, 2),
+        gross_margin_total_total_tl=round(gross_margin_total, 2),
+        net_margin_total_tl=round(net_margin, 2),
+        # Cost breakdown
+        distribution_cost_total_tl=round(distribution_cost_total, 2),
+        imbalance_cost_total_tl=round(imbalance_share, 2),
+        dealer_commission_total_tl=round(dealer_commission, 2),
+        # Backward compat aliases
+        total_gross_margin_tl=round(gross_margin_energy, 2),
+        total_net_margin_tl=round(net_margin, 2),
         supplier_real_cost_tl_per_mwh=round(supplier_real_cost, 2),
     )

@@ -1,91 +1,90 @@
 ﻿import { useState, useCallback, useMemo, useEffect } from 'react';
 import { Upload, FileText, Zap, TrendingDown, AlertCircle, CheckCircle, Loader2, RefreshCw, Download, Settings } from 'lucide-react';
-import { fullProcess, downloadPdf, FullProcessResponse, pricingAnalyze, pricingGetTemplates, pricingDownloadPdf, pricingDownloadExcel, PricingAnalyzeResponse, normalizeInvoicePeriod } from './api';
+import { fullProcess, downloadPdf, FullProcessResponse, pricingAnalyze, pricingGetTemplates, pricingDownloadPdf, pricingDownloadExcel, PricingAnalyzeResponse, normalizeInvoicePeriod, API_BASE, TemplateItem } from './api';
 import AdminPanel from './AdminPanel';
 import { generateBayiRaporPdf } from './bayiRapor';
 
-// EPDK Dağıtım Tarifeleri — Dönem bazlı
-// validFrom: Bu tarife bu tarihten itibaren geçerli (YYYY-MM-DD)
-// Dönem seçimine göre doğru tarife otomatik uygulanır
+// EPDK Dağıtım Tarifeleri — Backend API'den çekilir
+// localStorage cache ile 24 saat TTL
 type TariffEntry = { key: string; label: string; price: number; group: string };
-type TariffPeriod = { validFrom: string; label: string; tariffs: TariffEntry[] };
 
-const TARIFF_PERIODS: TariffPeriod[] = [
-  {
-    validFrom: '2026-04-04',  // 4 Nisan 2026'dan itibaren
-    label: 'Nisan 2026+',
-    tariffs: [
-      // Excel: "EPDK TARİFE.xlsx" — 4 Nisan 2026 tarihinden itibaren geçerli
-      // kr/kWh → TL/kWh (÷100)
-      { key: 'dsk_sanayi_ct_og', label: 'DSK Sanayi ÇT OG', price: 1.070498, group: 'sanayi' },
-      { key: 'dsk_sanayi_tt_og', label: 'DSK Sanayi TT OG', price: 1.182457, group: 'sanayi' },
-      { key: 'dsk_sanayi_tt_ag', label: 'DSK Sanayi TT AG', price: 1.829503, group: 'sanayi' },
-      { key: 'dsk_ticarethane_ct_og', label: 'DSK Kamu/Özel ÇT OG', price: 1.668345, group: 'ticarethane' },
-      { key: 'dsk_ticarethane_tt_og', label: 'DSK Kamu/Özel TT OG', price: 2.081065, group: 'ticarethane' },
-      { key: 'dsk_ticarethane_tt_ag', label: 'DSK Kamu/Özel TT AG', price: 2.479368, group: 'ticarethane' },
-      { key: 'dsk_mesken_ct_og', label: 'DSK Mesken ÇT OG', price: 1.652488, group: 'mesken' },
-      { key: 'dsk_mesken_tt_og', label: 'DSK Mesken TT OG', price: 2.040402, group: 'mesken' },
-      { key: 'dsk_mesken_tt_ag', label: 'DSK Mesken TT AG', price: 2.424900, group: 'mesken' },
-      { key: 'dsk_mesken_sehit_gazi', label: 'DSK Mesken Şehit Gazi', price: 1.314667, group: 'mesken' },
-      { key: 'dsk_tarimsal_ct_og', label: 'DSK Tarımsal ÇT OG', price: 1.374008, group: 'tarimsal' },
-      { key: 'dsk_tarimsal_tt_og', label: 'DSK Tarımsal TT OG', price: 1.710785, group: 'tarimsal' },
-      { key: 'dsk_tarimsal_tt_ag', label: 'DSK Tarımsal TT AG', price: 2.037247, group: 'tarimsal' },
-      { key: 'dsk_aydinlatma_ct_og', label: 'DSK Aydınlatma ÇT OG', price: 1.601246, group: 'aydinlatma' },
-      { key: 'dsk_aydinlatma_tt_og', label: 'DSK Aydınlatma TT OG', price: 1.997432, group: 'aydinlatma' },
-      { key: 'dsk_aydinlatma_tt_ag', label: 'DSK Aydınlatma TT AG', price: 2.374690, group: 'aydinlatma' },
-    ],
-  },
-  {
-    validFrom: '2025-01-01',  // Ocak 2025 — Mart 2026 arası
-    label: 'Oca 2025 – Mar 2026',
-    tariffs: [
-      { key: 'dsk_sanayi_ct_og', label: 'DSK Sanayi ÇT OG', price: 0.81060, group: 'sanayi' },
-      { key: 'dsk_sanayi_tt_og', label: 'DSK Sanayi TT OG', price: 0.89537, group: 'sanayi' },
-      { key: 'dsk_sanayi_tt_ag', label: 'DSK Sanayi TT AG', price: 1.38532, group: 'sanayi' },
-      { key: 'dsk_ticarethane_ct_og', label: 'DSK Kamu/Özel ÇT OG', price: 1.26329, group: 'ticarethane' },
-      { key: 'dsk_ticarethane_tt_og', label: 'DSK Kamu/Özel TT OG', price: 1.57581, group: 'ticarethane' },
-      { key: 'dsk_ticarethane_tt_ag', label: 'DSK Kamu/Özel TT AG', price: 1.87741, group: 'ticarethane' },
-      { key: 'dsk_mesken_ct_og', label: 'DSK Mesken ÇT OG', price: 1.25129, group: 'mesken' },
-      { key: 'dsk_mesken_tt_og', label: 'DSK Mesken TT OG', price: 1.54502, group: 'mesken' },
-      { key: 'dsk_mesken_tt_ag', label: 'DSK Mesken TT AG', price: 1.83617, group: 'mesken' },
-      { key: 'dsk_mesken_sehit_gazi', label: 'DSK Mesken Şehit Gazi', price: 1.03557, group: 'mesken' },
-      { key: 'dsk_tarimsal_ct_og', label: 'DSK Tarımsal ÇT OG', price: 1.04042, group: 'tarimsal' },
-      { key: 'dsk_tarimsal_tt_og', label: 'DSK Tarımsal TT OG', price: 1.29543, group: 'tarimsal' },
-      { key: 'dsk_tarimsal_tt_ag', label: 'DSK Tarımsal TT AG', price: 1.54263, group: 'tarimsal' },
-      { key: 'dsk_aydinlatma_ct_og', label: 'DSK Aydınlatma ÇT OG', price: 1.21249, group: 'aydinlatma' },
-      { key: 'dsk_aydinlatma_tt_og', label: 'DSK Aydınlatma TT OG', price: 1.51248, group: 'aydinlatma' },
-      { key: 'dsk_aydinlatma_tt_ag', label: 'DSK Aydınlatma TT AG', price: 1.79815, group: 'aydinlatma' },
-    ],
-  },
-];
+const DIST_TARIFF_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 saat
+const DIST_TARIFF_CACHE_VERSION = 'v4'; // Çerkezköy OSB 0.604 düzeltildi
 
-// OSB tarifeleri (dönemden bağımsız — her OSB kendi tarifesini belirler)
-const OSB_TARIFFS: TariffEntry[] = [
-  // İkitelli: İletim 0,212 + Dağıtım 0,580532 = 0,79253 TL/kWh (Mart 2026)
-  { key: 'osb_ikitelli', label: 'OSB İkitelli (İletim+Dağıtım)', price: 0.79253, group: 'sanayi' },
-  // Çerkezköy: İletim 0,0996469 + Dağıtım 0,31537 = 0,41502 TL/kWh (Ocak 2026)
-  { key: 'osb_cerkezkoy', label: 'OSB Çerkezköy (İletim+Dağıtım)', price: 0.41502, group: 'sanayi' },
-];
-
-// Seçilen döneme göre geçerli EPDK tarifelerini döndür
-function getDistributionTariffsForPeriod(period: string): TariffEntry[] {
-  // period: "2026-04" formatında
-  // 4 Nisan 2026'dan itibaren yeni tarife → Nisan 2026 ve sonrası
-  const periodDate = period ? `${period}-15` : ''; // Ayın ortası referans
-  
-  let activeTariffs = TARIFF_PERIODS[TARIFF_PERIODS.length - 1].tariffs; // fallback: en eski
-  for (const tp of TARIFF_PERIODS) {
-    if (periodDate >= tp.validFrom) {
-      activeTariffs = tp.tariffs;
-      break;
+// localStorage cache'den tarife oku (TTL kontrolü ile)
+function getCachedTariffs(period: string): TariffEntry[] | null {
+  try {
+    const raw = localStorage.getItem(`dist_tariffs_${DIST_TARIFF_CACHE_VERSION}_${period}`);
+    if (!raw) return null;
+    const cached = JSON.parse(raw);
+    if (Date.now() - cached.timestamp > DIST_TARIFF_CACHE_TTL_MS) {
+      localStorage.removeItem(`dist_tariffs_${DIST_TARIFF_CACHE_VERSION}_${period}`);
+      return null;
     }
+    return cached.tariffs;
+  } catch {
+    return null;
   }
-  
-  return [
-    ...activeTariffs,
-    ...OSB_TARIFFS,
-    { key: 'custom', label: 'Manuel Giriş', price: 0, group: 'custom' },
-  ];
+}
+
+// localStorage cache'e tarife yaz
+function setCachedTariffs(period: string, tariffs: TariffEntry[]) {
+  try {
+    localStorage.setItem(`dist_tariffs_${DIST_TARIFF_CACHE_VERSION}_${period}`, JSON.stringify({
+      timestamp: Date.now(),
+      tariffs,
+    }));
+  } catch { /* localStorage dolu olabilir — yoksay */ }
+}
+
+// Backend API'den tarifeleri çek, cache + fallback ile
+async function fetchDistributionTariffs(period: string | null): Promise<TariffEntry[]> {
+  const cacheKey = period || '__current__';
+  // 1. Cache kontrol
+  const cached = getCachedTariffs(cacheKey);
+  if (cached) return cached;
+
+  // 2. API çağrısı
+  try {
+    const url = period
+      ? `${API_BASE}/api/pricing/distribution-tariffs?period=${encodeURIComponent(period)}`
+      : `${API_BASE}/api/pricing/distribution-tariffs`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const tariffs: TariffEntry[] = (data.tariffs || []).map((t: any) => ({
+      key: t.key,
+      label: t.label,
+      price: t.unit_price_tl_per_kwh,
+      group: t.tariff_group,
+    }));
+    // Manuel giriş seçeneği ekle
+    tariffs.push({ key: 'custom', label: 'Manuel Giriş', price: 0, group: 'custom' });
+    setCachedTariffs(cacheKey, tariffs);
+    return tariffs;
+  } catch {
+    // 3. Fallback: son bilinen tarife
+    const fallback = getCachedTariffs(cacheKey);
+    if (fallback) return fallback;
+    // 4. Hardcoded fallback — EPDK Nisan 2026 güncel tarifeler (kr/kWh → TL/kWh)
+    return [
+      { key: 'sanayi_og_cift_terim', label: 'Sanayi OG Çift Terim', price: 1.07050, group: 'sanayi' },
+      { key: 'sanayi_og_tek_terim', label: 'Sanayi OG Tek Terim', price: 1.18246, group: 'sanayi' },
+      { key: 'sanayi_ag_cift_terim', label: 'Sanayi AG Çift Terim', price: 1.58400, group: 'sanayi' },
+      { key: 'sanayi_ag_tek_terim', label: 'Sanayi AG Tek Terim', price: 1.82950, group: 'sanayi' },
+      { key: 'ticarethane_og_cift_terim', label: 'Ticarethane OG Çift Terim', price: 1.66835, group: 'ticarethane' },
+      { key: 'ticarethane_og_tek_terim', label: 'Ticarethane OG Tek Terim', price: 2.08106, group: 'ticarethane' },
+      { key: 'ticarethane_ag_cift_terim', label: 'Ticarethane AG Çift Terim', price: 2.17800, group: 'ticarethane' },
+      { key: 'ticarethane_ag_tek_terim', label: 'Ticarethane AG Tek Terim', price: 2.47936, group: 'ticarethane' },
+      { key: 'mesken_ag_tek_terim', label: 'Mesken AG Tek Terim', price: 2.42490, group: 'mesken' },
+      { key: 'tarimsal_og_cift_terim', label: 'Tarımsal OG Çift Terim', price: 1.37400, group: 'tarimsal' },
+      { key: 'tarimsal_ag_tek_terim', label: 'Tarımsal AG Tek Terim', price: 2.03600, group: 'tarimsal' },
+      { key: 'aydinlatma_ag_tek_terim', label: 'Aydınlatma AG Tek Terim', price: 2.37600, group: 'aydinlatma' },
+      { key: 'osb_cerkezkoy', label: 'Çerkezköy OSB', price: 0.60400, group: 'osb_cerkezkoy' },
+      { key: 'osb_ikitelli', label: 'İkitelli OSB', price: 0.81053, group: 'osb_ikitelli' },
+      { key: 'custom', label: 'Manuel Giriş', price: 0, group: 'custom' },
+    ];
+  }
 }
 
 // Son 24 ay için dönem seçenekleri oluştur
@@ -120,10 +119,10 @@ const PERIOD_OPTIONS = generatePeriodOptions();
 // Bayi Komisyonu = Baz Enerji × (bayiPuan / 100)
 // Gelka Net = Baz Enerji × ((toplam puan - bayiPuan) / 100)
 //
-// Örnek: katsayı 1.10, segment "Yüksek" (2p bayi)
-//   Toplam marj puanı: 10
-//   Bayi: 2 puan → Baz Enerji × 0.02
-//   Gelka: 8 puan → Baz Enerji × 0.08
+// Örnek: katsayı 1.15, segment "Yüksek" (3p bayi)
+//   Toplam marj puanı: 15
+//   Bayi: 3 puan → Baz Enerji × 0.03
+//   Gelka: 12 puan → Baz Enerji × 0.12
 
 interface BayiSegment {
   name: string;
@@ -137,14 +136,23 @@ const BAYI_SEGMENTS: BayiSegment[] = [
   { name: 'Özel Onay',   minMultiplier: 1.01, maxMultiplier: 1.03, bayiPoints: 0,   requiresApproval: true },
   { name: 'Sabit',       minMultiplier: 1.03, maxMultiplier: 1.06, bayiPoints: 1,   requiresApproval: false },
   { name: 'Artırılmış',  minMultiplier: 1.06, maxMultiplier: 1.09, bayiPoints: 1.5, requiresApproval: false },
-  { name: 'Yüksek',      minMultiplier: 1.09, maxMultiplier: 1.15, bayiPoints: 2,   requiresApproval: false },
-  { name: 'Premium',     minMultiplier: 1.15, maxMultiplier: 99,   bayiPoints: 3,   requiresApproval: false },
+  { name: 'Yüksek',      minMultiplier: 1.09, maxMultiplier: 1.12, bayiPoints: 2,   requiresApproval: false },
+  { name: 'Yüksek+',     minMultiplier: 1.12, maxMultiplier: 1.15, bayiPoints: 3,   requiresApproval: false },
+  { name: 'Premium',     minMultiplier: 1.15, maxMultiplier: 99,   bayiPoints: 4,   requiresApproval: false },
 ];
 
 function getBayiSegment(multiplier: number): BayiSegment | null {
   if (multiplier < 1.01) return null;
   return BAYI_SEGMENTS.find(s => multiplier >= s.minMultiplier && multiplier < s.maxMultiplier) || null;
 }
+
+// Risk Level Türkçe etiket mapping
+const RISK_LEVEL_LABELS: Record<string, string> = {
+  'low': 'Düşük',
+  'medium': 'Orta',
+  'high': 'Yüksek',
+  'very_high': 'Çok Yüksek',
+};
 
 function calculateBayiCommission(
   multiplier: number,
@@ -211,8 +219,19 @@ function App() {
   const [riskLoading, setRiskLoading] = useState(false);
   const [riskError, setRiskError] = useState<string | null>(null);
   const [riskResult, setRiskResult] = useState<PricingAnalyzeResponse | null>(null);
+  const [marginDetailOpen, setMarginDetailOpen] = useState(false);
   const [riskTemplateName, setRiskTemplateName] = useState('3_vardiya_sanayi');
-  const [riskTemplates, setRiskTemplates] = useState<Array<{name: string; display_name: string}>>([]);
+  const [riskTemplates, setRiskTemplates] = useState<TemplateItem[]>([]);
+  
+  // ── T1/T2/T3 Giriş Modu State'leri ──
+  type InputMode = 'template' | 't1t2t3';
+  const [inputMode, setInputMode] = useState<InputMode>('template');
+  const [t1Kwh, setT1Kwh] = useState<number>(0);
+  const [t2Kwh, setT2Kwh] = useState<number>(0);
+  const [t3Kwh, setT3Kwh] = useState<number>(0);
+  const [voltageLevel, setVoltageLevel] = useState<'ag' | 'og'>('og');
+  const totalT1T2T3 = t1Kwh + t2Kwh + t3Kwh;
+  const allT1T2T3Zero = totalT1T2T3 === 0;
   
   // PTF/YEKDEM kaynağı: true = DB'den otomatik, false = manuel override
   const [useReferencePrices, setUseReferencePrices] = useState(true);
@@ -220,10 +239,19 @@ function App() {
   // PTF/YEKDEM fiyat çekme durumu
   const [priceLoading, setPriceLoading] = useState(false);
   const [priceError, setPriceError] = useState<string | null>(null);
+  const [priceSaving, setPriceSaving] = useState(false);
+  const [priceSaved, setPriceSaved] = useState(false);
+  const [priceModified, setPriceModified] = useState(false); // kullanıcı elle değiştirdi mi
   
   // Dağıtım birim fiyatı (manuel override)
   const [distributionTariffKey, setDistributionTariffKey] = useState<string>('');
   const [customDistributionPrice, setCustomDistributionPrice] = useState<number>(0);
+  
+  // Teklif birim fiyat gösterim modu
+  // 'energy': (PTF + YEKDEM) × Katsayı — sadece enerji (default)
+  // 'combined': (PTF + YEKDEM) × Katsayı + Dağıtım — toplam kWh fiyatı
+  // 'detailed': PTF × Katsayı ayrı, YEKDEM ayrı satır
+  const [offerDisplayMode, setOfferDisplayMode] = useState<'energy' | 'combined' | 'detailed'>('energy');
   
   // BTV oranı: Sanayi %1, Ticarethane/Kamu/Özel %5
   const [btvRate, setBtvRate] = useState<number>(0.01);
@@ -259,17 +287,36 @@ function App() {
   
   // Çarpan seçenekleri
   const multiplierOptions = [
-    { value: 1.01, label: '1.01 (%1 kar)' },
-    { value: 1.02, label: '1.02 (%2 kar)' },
-    { value: 1.03, label: '1.03 (%3 kar)' },
-    { value: 1.05, label: '1.05 (%5 kar)' },
-    { value: 1.10, label: '1.10 (%10 kar)' },
-    { value: 1.15, label: '1.15 (%15 kar)' },
+    { value: 1.01, label: '1.01 (%1)' },
+    { value: 1.03, label: '1.03 (%3)' },
+    { value: 1.06, label: '1.06 (%6)' },
+    { value: 1.09, label: '1.09 (%9)' },
+    { value: 1.12, label: '1.12 (%12)' },
+    { value: 1.15, label: '1.15 (%15)' },
+    { value: 1.19, label: '1.19 (%19)' },
+    { value: 1.23, label: '1.23 (%23)' },
   ];
   
-  // Seçili döneme göre aktif EPDK tarifeleri
+  // Seçili döneme göre aktif EPDK tarifeleri — backend API'den çekilir
   const selectedPeriod = manualMode ? manualValues.invoice_period : (result?.extraction?.invoice_period || '');
-  const activeTariffs = useMemo(() => getDistributionTariffsForPeriod(selectedPeriod), [selectedPeriod]);
+  const [activeTariffs, setActiveTariffs] = useState<TariffEntry[]>([{ key: 'custom', label: 'Manuel Giriş', price: 0, group: 'custom' }]);
+  const [tariffWarning, setTariffWarning] = useState<string | null>(null);
+
+  // Dönem değiştiğinde tarifeleri API'den çek (cache + fallback)
+  useEffect(() => {
+    let cancelled = false;
+    setTariffWarning(null);
+    fetchDistributionTariffs(selectedPeriod || null).then(tariffs => {
+      if (!cancelled) {
+        setActiveTariffs(tariffs);
+        // Eğer sadece 'custom' varsa API'den veri gelmemiş demektir
+        if (tariffs.length <= 1) {
+          setTariffWarning('Dağıtım tarifeleri yüklenemedi — manuel giriş kullanın.');
+        }
+      }
+    });
+    return () => { cancelled = true; };
+  }, [selectedPeriod]);
   
   // Dağıtım birim fiyatını belirle (öncelik: manuel > tarife seçimi > backend)
   const getDistributionUnitPrice = useCallback(() => {
@@ -340,6 +387,11 @@ function App() {
       const gelka_net_profit_tl = supplier_profit_tl - bayi_commission_tl;
       const bayiPuanHesap = bayiResult.bayiPoints;
       
+      // Dual margin hesaplama (v3)
+      const gross_margin_energy = offer_energy_tl - (kwh * offerBasePrice);
+      const gross_margin_total = gross_margin_energy - offer_distribution_tl;
+      const net_margin = gross_margin_total - bayi_commission_tl;
+
       return {
         current_energy_tl,
         current_distribution_tl,
@@ -370,6 +422,10 @@ function App() {
         bayi_points: bayiResult.bayiPoints,
         gelka_points: bayiResult.gelkaPoints,
         total_margin_points: bayiResult.totalMarginPoints,
+        // Dual margin (v3)
+        gross_margin_energy_tl: gross_margin_energy,
+        gross_margin_total_tl: gross_margin_total,
+        net_margin_tl: net_margin,
       };
     }
     
@@ -436,6 +492,11 @@ function App() {
     const gelka_net_profit_tl = supplier_profit_tl - bayi_commission_tl;
     const bayiPuanHesap = bayiResult.bayiPoints;
     
+    // Dual margin hesaplama (v3)
+    const gross_margin_energy = offer_energy_tl - offer_energy_base;
+    const gross_margin_total = gross_margin_energy - offer_distribution_tl;
+    const net_margin = gross_margin_total - bayi_commission_tl;
+
     return {
       current_energy_tl,
       current_distribution_tl,
@@ -466,8 +527,21 @@ function App() {
       bayi_points: bayiResult.bayiPoints,
       gelka_points: bayiResult.gelkaPoints,
       total_margin_points: bayiResult.totalMarginPoints,
+      // Dual margin (v3)
+      gross_margin_energy_tl: gross_margin_energy,
+      gross_margin_total_tl: gross_margin_total,
+      net_margin_tl: net_margin,
     };
   }, [result?.extraction, result?.calculation, ptfPrice, yekdemPrice, multiplier, getDistributionUnitPrice, manualMode, manualValues, btvRate, vatRate, bayiEnabled, bayiOzelOnayPuan]);
+
+  // ── Risk Buffer hesaplama — türetilen değerler (state değil) ──
+  const selectedTemplate = useMemo(
+    () => riskTemplates.find(t => t.name === riskTemplateName) ?? null,
+    [riskTemplates, riskTemplateName]
+  );
+  const baseMarginPct = (multiplier - 1) * 100;
+  const riskBufferPct = selectedTemplate?.risk_buffer_pct ?? 0;
+  const recommendedMarginPct = baseMarginPct + riskBufferPct;
 
   // ── Risk Paneli: Dönem ve şablon listesi çek ──
   useEffect(() => {
@@ -480,12 +554,14 @@ function App() {
   // ── Risk Paneli: Auto-trigger (debounce 500ms) ──
   useEffect(() => {
     if (!riskPanelEnabled) return;
+    // T1/T2/T3 modunda tümü sıfırsa tetikleme
+    if (inputMode === 't1t2t3' && totalT1T2T3 === 0) return;
     const timer = setTimeout(() => {
       runRiskAnalysis();
     }, 500);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [riskPanelEnabled, multiplier, riskTemplateName, manualValues.invoice_period, manualValues.consumption_kwh, bayiEnabled]);
+  }, [riskPanelEnabled, multiplier, riskTemplateName, manualValues.invoice_period, manualValues.consumption_kwh, bayiEnabled, inputMode, t1Kwh, t2Kwh, t3Kwh, voltageLevel]);
 
   // ── Risk Paneli: Analiz çalıştır ──
   const runRiskAnalysis = useCallback(async () => {
@@ -496,10 +572,18 @@ function App() {
       return;
     }
     
-    const kwh = manualMode ? manualValues.consumption_kwh : (result?.extraction?.consumption_kwh?.value || 0);
-    if (kwh <= 0) {
-      setRiskError('Tüketim bilgisi bulunamadı.');
-      return;
+    // T1/T2/T3 modunda toplam sıfırsa çalıştırma
+    if (inputMode === 't1t2t3') {
+      if (totalT1T2T3 <= 0) {
+        setRiskError('En az bir zaman diliminde tüketim giriniz.');
+        return;
+      }
+    } else {
+      const kwh = manualMode ? manualValues.consumption_kwh : (result?.extraction?.consumption_kwh?.value || 0);
+      if (kwh <= 0) {
+        setRiskError('Tüketim bilgisi bulunamadı.');
+        return;
+      }
     }
 
     setRiskLoading(true);
@@ -507,7 +591,10 @@ function App() {
     setRiskResult(null);
 
     try {
-      const res = await pricingAnalyze({
+      const kwh = manualMode ? manualValues.consumption_kwh : (result?.extraction?.consumption_kwh?.value || 0);
+      
+      // T1/T2/T3 modunda farklı parametreler gönder
+      const reqParams: any = {
         period: normalizedPeriod,
         multiplier: multiplier,
         dealer_commission_pct: bayiEnabled ? (getBayiSegment(multiplier)?.bayiPoints || 0) : 0,
@@ -516,17 +603,30 @@ function App() {
           imbalance_cost_tl_per_mwh: 50.0,
           smf_based_imbalance_enabled: false,
         },
-        use_template: true,
-        template_name: riskTemplateName,
-        template_monthly_kwh: kwh,
-      });
+      };
+
+      if (inputMode === 't1t2t3') {
+        reqParams.use_template = false;
+        reqParams.t1_kwh = t1Kwh;
+        reqParams.t2_kwh = t2Kwh;
+        reqParams.t3_kwh = t3Kwh;
+        reqParams.template_monthly_kwh = totalT1T2T3;
+        reqParams.voltage_level = voltageLevel;
+      } else {
+        reqParams.use_template = true;
+        reqParams.template_name = riskTemplateName;
+        reqParams.template_monthly_kwh = kwh;
+        reqParams.voltage_level = voltageLevel;
+      }
+
+      const res = await pricingAnalyze(reqParams);
       setRiskResult(res);
     } catch (err: any) {
       setRiskError(err.message || 'Risk analizi başarısız.');
     } finally {
       setRiskLoading(false);
     }
-  }, [manualMode, manualValues, result, multiplier, bayiEnabled, riskTemplateName]);
+  }, [manualMode, manualValues, result, multiplier, bayiEnabled, riskTemplateName, inputMode, t1Kwh, t2Kwh, t3Kwh, totalT1T2T3, voltageLevel]);
 
   // Dağıtım bedeli otomatik hesaplama: dağıtım birim fiyatı × kWh
   useEffect(() => {
@@ -568,7 +668,7 @@ function App() {
       
       try {
         // DB'den PTF/YEKDEM fiyatlarını çek (auto_fetch=true ile EPİAŞ fallback aktif)
-        const res = await fetch(`http://127.0.0.1:8000/api/epias/prices/${period}`);
+        const res = await fetch(`${API_BASE}/api/epias/prices/${period}`);
         if (!res.ok) {
           const errBody = await res.json().catch(() => ({}));
           throw new Error(errBody.detail || `HTTP ${res.status}`);
@@ -581,6 +681,8 @@ function App() {
         if (response.yekdem_tl_per_mwh !== undefined && response.yekdem_tl_per_mwh !== null) {
           setYekdemPrice(response.yekdem_tl_per_mwh);
         }
+        setPriceModified(false);
+        setPriceSaved(false);
       } catch (err: any) {
         const errorMsg = err.response?.data?.detail || err.message || 'Fiyat çekilemedi';
         setPriceError(typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg));
@@ -639,6 +741,8 @@ function App() {
         yekdem_tl_per_mwh: yekdemPrice,
         agreement_multiplier: multiplier,
         use_reference_prices: useReferencePrices,
+        vat_rate: vatRate,
+        btv_rate: btvRate,
       });
       
       // Hesaplama hatası varsa göster
@@ -712,12 +816,18 @@ function App() {
       : manualValues.tariff_group;
     
     // Manuel modda veya OCR modda extraction oluştur
+    const distUnitForPdf = liveCalculation.distribution_unit_price || 0;
+    const pdfCurrentUnit = offerDisplayMode === 'combined' 
+      ? manualValues.current_unit_price + distUnitForPdf 
+      : manualValues.current_unit_price;
+    const pdfDistUnit = offerDisplayMode === 'combined' ? 0 : distUnitForPdf;
+    
     const extraction: any = manualMode ? {
       vendor: manualValues.vendor || 'Manuel Giriş',
       invoice_period: manualValues.invoice_period || '-',
       consumption_kwh: { value: manualValues.consumption_kwh, confidence: 1.0 },
-      current_active_unit_price_tl_per_kwh: { value: manualValues.current_unit_price, confidence: 1.0 },
-      distribution_unit_price_tl_per_kwh: { value: liveCalculation.distribution_unit_price, confidence: 1.0 },
+      current_active_unit_price_tl_per_kwh: { value: pdfCurrentUnit, confidence: 1.0 },
+      distribution_unit_price_tl_per_kwh: { value: pdfDistUnit, confidence: 1.0 },
       meta: { tariff_group_guess: selectedTariffLabel || 'Sanayi' },
     } : {
       ...result?.extraction,
@@ -747,14 +857,18 @@ function App() {
       await downloadPdf(
         extraction,
         {
-          current_energy_tl: liveCalculation.current_energy_tl,
-          current_distribution_tl: liveCalculation.current_distribution_tl,
+          current_energy_tl: offerDisplayMode === 'combined' 
+            ? liveCalculation.current_energy_tl + liveCalculation.current_distribution_tl 
+            : liveCalculation.current_energy_tl,
+          current_distribution_tl: offerDisplayMode === 'combined' ? 0 : liveCalculation.current_distribution_tl,
           current_btv_tl: liveCalculation.current_btv_tl,
           current_vat_matrah_tl: liveCalculation.current_vat_matrah_tl,
           current_vat_tl: liveCalculation.current_vat_tl,
           current_total_with_vat_tl: liveCalculation.current_total_with_vat_tl,
-          offer_energy_tl: liveCalculation.offer_energy_tl,
-          offer_distribution_tl: liveCalculation.offer_distribution_tl,
+          offer_energy_tl: offerDisplayMode === 'combined'
+            ? liveCalculation.offer_energy_tl + liveCalculation.offer_distribution_tl
+            : liveCalculation.offer_energy_tl,
+          offer_distribution_tl: offerDisplayMode === 'combined' ? 0 : liveCalculation.offer_distribution_tl,
           offer_btv_tl: liveCalculation.offer_btv_tl,
           offer_vat_matrah_tl: liveCalculation.offer_vat_matrah_tl,
           offer_vat_tl: liveCalculation.offer_vat_tl,
@@ -943,7 +1057,7 @@ function App() {
                       {priceLoading && <Loader2 className="w-3 h-3 inline ml-1 animate-spin text-primary-500" />}
                     </label>
                     {(() => {
-                      const ptfDisabled = useReferencePrices && !manualMode;
+                      const ptfDisabled = false; // Her zaman düzenlenebilir — dönem seçildiğinde otomatik dolar ama sonra elle değiştirilebilir
                       const ptfPresets = [
                         { label: 'Oca 25 — 2.508,80', value: 2508.80 },
                         { label: 'Şub 25 — 2.478,28', value: 2478.28 },
@@ -968,7 +1082,7 @@ function App() {
                             type="number"
                             className={`w-full px-2 py-1.5 pr-7 text-sm border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 focus:border-primary-500 outline-none ${ptfDisabled ? 'bg-gray-50' : ''} ${priceLoading ? 'animate-pulse' : ''}`}
                             value={ptfPrice || ''}
-                            onChange={(e) => setPtfPrice(e.target.value === '' ? 0 : parseFloat(e.target.value))}
+                            onChange={(e) => { setPtfPrice(e.target.value === '' ? 0 : parseFloat(e.target.value)); setPriceModified(true); setPriceSaved(false); }}
                             onFocus={(e) => { if (ptfPrice === 0) e.target.value = ''; }}
                             step="0.1"
                             disabled={ptfDisabled}
@@ -981,6 +1095,7 @@ function App() {
                                 onChange={(e) => {
                                   if (e.target.value) {
                                     setPtfPrice(parseFloat(e.target.value));
+                                    setPriceModified(true); setPriceSaved(false);
                                   }
                                 }}
                               >
@@ -1000,7 +1115,7 @@ function App() {
                   </div>
                   <div>
                     {(() => {
-                      const yekdemDisabled = !!(liveCalculation && !liveCalculation.include_yekdem && !manualMode) || (useReferencePrices && !manualMode);
+                      const yekdemDisabled = !!(liveCalculation && !liveCalculation.include_yekdem && !manualMode); // YEKDEM yoksa disabled, ama referans modunda bile düzenlenebilir
                       const yekdemVal = liveCalculation && !liveCalculation.include_yekdem && !manualMode ? 0 : yekdemPrice;
                       const yekdemPresets = [
                         { label: 'Oca 26 — 162,73', value: 162.73 },
@@ -1020,7 +1135,7 @@ function App() {
                               type="number"
                               className={`w-full px-2 py-1.5 pr-7 text-sm border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 focus:border-primary-500 outline-none ${yekdemDisabled ? 'bg-gray-100 text-gray-400' : ''}`}
                               value={yekdemVal || ''}
-                              onChange={(e) => setYekdemPrice(e.target.value === '' ? 0 : parseFloat(e.target.value))}
+                              onChange={(e) => { setYekdemPrice(e.target.value === '' ? 0 : parseFloat(e.target.value)); setPriceModified(true); setPriceSaved(false); }}
                               onFocus={(e) => { if (yekdemVal === 0) e.target.value = ''; }}
                               step="0.1"
                               disabled={yekdemDisabled}
@@ -1033,6 +1148,7 @@ function App() {
                                   onChange={(e) => {
                                     if (e.target.value) {
                                       setYekdemPrice(parseFloat(e.target.value));
+                                      setPriceModified(true); setPriceSaved(false);
                                     }
                                   }}
                                 >
@@ -1052,6 +1168,51 @@ function App() {
                     })()}
                   </div>
                 </div>
+                
+                {/* PTF/YEKDEM Kaydet Butonu — değer değiştirildiğinde görünür */}
+                {priceModified && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={priceSaving}
+                      onClick={async () => {
+                        const period = manualMode ? manualValues.invoice_period : (result?.extraction?.invoice_period || '');
+                        if (!period) return;
+                        setPriceSaving(true);
+                        try {
+                          await fetch(`${API_BASE}/api/epias/prices/${period}`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              ptf_tl_per_mwh: ptfPrice,
+                              yekdem_tl_per_mwh: yekdemPrice,
+                            }),
+                          });
+                          setPriceModified(false);
+                          setPriceSaved(true);
+                          setTimeout(() => setPriceSaved(false), 3000);
+                        } catch (err) {
+                          console.error('Fiyat kaydetme hatası:', err);
+                        } finally {
+                          setPriceSaving(false);
+                        }
+                      }}
+                      className="flex-1 px-2 py-1 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors disabled:opacity-50"
+                    >
+                      {priceSaving ? '⏳ Kaydediliyor...' : '💾 PTF/YEKDEM Kaydet'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setPriceModified(false); }}
+                      className="px-2 py-1 text-xs text-gray-500 hover:text-gray-700"
+                    >
+                      İptal
+                    </button>
+                  </div>
+                )}
+                {priceSaved && (
+                  <div className="text-xs text-green-600 font-medium">✅ Fiyatlar kaydedildi</div>
+                )}
                 
                 {/* Çarpan */}
                 <div>
@@ -1212,13 +1373,40 @@ function App() {
                   </div>
                   {riskPanelEnabled && (
                     <div className="space-y-2">
-                      {/* Şablon seçimi */}
-                      <div className="flex items-center gap-2">
-                        <select
-                          className="flex-1 px-2 py-1 text-xs border border-blue-200 rounded bg-blue-50 focus:ring-1 focus:ring-blue-500"
-                          value={riskTemplateName}
-                          onChange={(e) => setRiskTemplateName(e.target.value)}
+                      {/* Giriş Modu Seçici */}
+                      <div className="flex rounded-lg overflow-hidden border border-blue-200">
+                        <button
+                          type="button"
+                          onClick={() => { setInputMode('template'); setRiskResult(null); }}
+                          className={`flex-1 px-2 py-1 text-xs font-medium transition-colors ${
+                            inputMode === 'template'
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                          }`}
                         >
+                          Şablon Profili
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setInputMode('t1t2t3'); setRiskResult(null); }}
+                          className={`flex-1 px-2 py-1 text-xs font-medium transition-colors ${
+                            inputMode === 't1t2t3'
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                          }`}
+                        >
+                          Gerçek T1/T2/T3
+                        </button>
+                      </div>
+
+                      {/* Şablon Modu: Mevcut şablon seçimi */}
+                      {inputMode === 'template' && (
+                        <div className="flex items-center gap-2">
+                          <select
+                            className="flex-1 px-2 py-1 text-xs border border-blue-200 rounded bg-blue-50 focus:ring-1 focus:ring-blue-500"
+                            value={riskTemplateName}
+                            onChange={(e) => setRiskTemplateName(e.target.value)}
+                          >
                           {riskTemplates.length > 0 ? (
                             riskTemplates.map(t => (
                               <option key={t.name} value={t.name}>{t.display_name}</option>
@@ -1241,15 +1429,95 @@ function App() {
                             </>
                           )}
                         </select>
-                        <button
-                          type="button"
-                          onClick={runRiskAnalysis}
-                          disabled={riskLoading}
-                          className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 transition-colors"
-                        >
-                          {riskLoading ? '⏳ Analiz ediliyor...' : '🔍 Analiz'}
-                        </button>
-                      </div>
+                          <button
+                            type="button"
+                            onClick={runRiskAnalysis}
+                            disabled={riskLoading}
+                            className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                          >
+                            {riskLoading ? '⏳ Analiz ediliyor...' : '🔍 Analiz'}
+                          </button>
+                        </div>
+                      )}
+
+                      {/* T1/T2/T3 Modu: kWh giriş alanları */}
+                      {inputMode === 't1t2t3' && (
+                        <div className="space-y-1.5">
+                          <div className="grid grid-cols-3 gap-1.5">
+                            <div>
+                              <label className="text-[10px] text-gray-500 block mb-0.5">Gündüz / T1 (kWh)</label>
+                              <input
+                                type="number"
+                                className="w-full px-2 py-1 text-xs border border-blue-200 rounded bg-blue-50 focus:ring-1 focus:ring-blue-500"
+                                value={t1Kwh || ''}
+                                onChange={(e) => setT1Kwh(e.target.value === '' ? 0 : parseFloat(e.target.value) || 0)}
+                                onFocus={(e) => { if (t1Kwh === 0) e.target.value = ''; }}
+                                min="0"
+                                step="0.01"
+                                placeholder="0"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-gray-500 block mb-0.5">Puant / T2 (kWh)</label>
+                              <input
+                                type="number"
+                                className="w-full px-2 py-1 text-xs border border-blue-200 rounded bg-blue-50 focus:ring-1 focus:ring-blue-500"
+                                value={t2Kwh || ''}
+                                onChange={(e) => setT2Kwh(e.target.value === '' ? 0 : parseFloat(e.target.value) || 0)}
+                                onFocus={(e) => { if (t2Kwh === 0) e.target.value = ''; }}
+                                min="0"
+                                step="0.01"
+                                placeholder="0"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] text-gray-500 block mb-0.5">Gece / T3 (kWh)</label>
+                              <input
+                                type="number"
+                                className="w-full px-2 py-1 text-xs border border-blue-200 rounded bg-blue-50 focus:ring-1 focus:ring-blue-500"
+                                value={t3Kwh || ''}
+                                onChange={(e) => setT3Kwh(e.target.value === '' ? 0 : parseFloat(e.target.value) || 0)}
+                                onFocus={(e) => { if (t3Kwh === 0) e.target.value = ''; }}
+                                min="0"
+                                step="0.01"
+                                placeholder="0"
+                              />
+                            </div>
+                          </div>
+                          {/* Toplam + Gerilim Seviyesi */}
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-gray-600">
+                              Toplam: <span className="font-bold text-blue-700">{totalT1T2T3.toLocaleString('tr-TR', {minimumFractionDigits: 1})} kWh</span>
+                            </span>
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] text-gray-500">Gerilim:</span>
+                              <select
+                                className="px-1.5 py-0.5 text-xs border border-blue-200 rounded bg-blue-50 focus:ring-1 focus:ring-blue-500"
+                                value={voltageLevel}
+                                onChange={(e) => setVoltageLevel(e.target.value as 'ag' | 'og')}
+                              >
+                                <option value="og">OG (Orta Gerilim)</option>
+                                <option value="ag">AG (Alçak Gerilim)</option>
+                              </select>
+                            </div>
+                          </div>
+                          {/* Uyarı: tümü sıfır */}
+                          {allT1T2T3Zero && (
+                            <div className="text-xs text-amber-600 bg-amber-50 p-1 rounded">
+                              ⚠ En az bir zaman diliminde tüketim giriniz
+                            </div>
+                          )}
+                          {/* Analiz butonu */}
+                          <button
+                            type="button"
+                            onClick={runRiskAnalysis}
+                            disabled={riskLoading || allT1T2T3Zero}
+                            className="w-full px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                          >
+                            {riskLoading ? '⏳ Analiz ediliyor...' : '🔍 Analiz Et'}
+                          </button>
+                        </div>
+                      )}
 
                       {/* Hata mesajı */}
                       {riskError && (
@@ -1268,36 +1536,303 @@ function App() {
                       {/* Sonuçlar */}
                       {riskResult && (
                         <div className="space-y-1.5 bg-blue-50 p-2 rounded text-xs">
-                          {/* Güvenli katsayı + risk */}
+                          {/* T1/T2/T3 Dağılım Gösterimi */}
+                          {riskResult.time_zone_breakdown && (
+                            <div className="bg-white/60 p-1.5 rounded">
+                              <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs">
+                                {(['T1', 'T2', 'T3'] as const).map((zone) => {
+                                  const tz = riskResult.time_zone_breakdown?.[zone];
+                                  if (!tz) return null;
+                                  return (
+                                    <span key={zone} className="text-gray-700">
+                                      <span className="font-medium">{zone}:</span>{' '}
+                                      {tz.consumption_kwh.toLocaleString('tr-TR', {maximumFractionDigits: 0})} kWh
+                                      {' '}
+                                      <span className="text-gray-500">(%{tz.consumption_pct.toFixed(1)})</span>
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                              {/* Puant risk uyarıları */}
+                              {(() => {
+                                const t2pct = riskResult.time_zone_breakdown?.['T2']?.consumption_pct || 0;
+                                if (t2pct >= 55) return (
+                                  <div className="mt-1 text-xs text-red-700 bg-red-50 p-1 rounded font-medium">
+                                    🔴 Kritik puant yoğunlaşması — fiyatlama riski yüksek
+                                  </div>
+                                );
+                                if (t2pct >= 40) return (
+                                  <div className="mt-1 text-xs text-amber-700 bg-amber-50 p-1 rounded">
+                                    ⚠️ Puant tüketim oranı yüksek — enerji maliyeti artabilir
+                                  </div>
+                                );
+                                return null;
+                              })()}
+                            </div>
+                          )}
+
+                          {/* Dağıtım Bedeli */}
+                          {riskResult.distribution && (
+                            <div className="flex justify-between items-center">
+                              <span className="text-gray-600">Dağıtım Bedeli ({riskResult.distribution.voltage_level}):</span>
+                              <span className="font-medium text-gray-800">
+                                {riskResult.distribution.unit_price_tl_per_kwh.toFixed(2)} TL/kWh × {riskResult.distribution.total_kwh.toLocaleString('tr-TR', {maximumFractionDigits: 0})} kWh = {riskResult.distribution.total_tl.toLocaleString('tr-TR', {minimumFractionDigits: 2})} TL
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Risk Flags — LOSS_RISK (P1) ve UNPROFITABLE_OFFER (P2) */}
+                          {riskResult.pricing.risk_flags && riskResult.pricing.risk_flags.length > 0 && (() => {
+                            const hasLossRisk = riskResult.pricing.risk_flags.some((f: any) => f.type === 'LOSS_RISK');
+                            const hasUnprofitable = riskResult.pricing.risk_flags.some((f: any) => f.type === 'UNPROFITABLE_OFFER');
+                            return (
+                              <div className={`p-2 rounded text-xs font-medium ${
+                                hasLossRisk ? 'bg-red-100 text-red-800 border border-red-300' : 'bg-yellow-100 text-yellow-800 border border-yellow-300'
+                              }`}>
+                                {hasLossRisk && <div>⛔ ZARAR RİSKİ — Net marj negatif, teklif zarar üretir</div>}
+                                {hasUnprofitable && <div>⚠️ KÂRSIZ TEKLİF — Dağıtım dahil brüt marj negatif</div>}
+                              </div>
+                            );
+                          })()}
+
+                          {/* Dual Margin — Enerji Marjı / Toplam Etki / Net Marj */}
+                          {riskResult.pricing.gross_margin_energy_per_mwh !== undefined && (
+                            <div className="bg-white/60 p-1.5 rounded space-y-0.5">
+                              <div className="flex justify-between items-center">
+                                <span className="text-gray-600">Enerji Marjı:</span>
+                                <span className={`font-medium ${(riskResult.pricing.gross_margin_energy_per_mwh || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                  {(riskResult.pricing.gross_margin_energy_per_mwh || 0).toFixed(2)} TL/MWh
+                                </span>
+                              </div>
+                              <div className="flex justify-between items-center">
+                                <span className="text-gray-600">Toplam Etki:</span>
+                                <span className={`font-medium ${(riskResult.pricing.gross_margin_total_per_mwh || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                  {(riskResult.pricing.gross_margin_total_per_mwh || 0).toFixed(2)} TL/MWh
+                                </span>
+                              </div>
+                              <div className="flex justify-between items-center">
+                                <span className="text-gray-600">Net Marj:</span>
+                                <span className={`font-bold ${(riskResult.pricing.net_margin_per_mwh || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                  {(riskResult.pricing.net_margin_per_mwh || 0).toFixed(2)} TL/MWh
+                                </span>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Brüt Marj (toplam TL — backward compat) */}
                           <div className="flex justify-between items-center">
-                            <span className="text-gray-600">Güvenli Katsayı:</span>
-                            <span className="font-bold text-blue-700">×{riskResult.safe_multiplier.safe_multiplier.toFixed(3)}</span>
-                          </div>
-                          <div className="flex justify-between items-center">
-                            <span className="text-gray-600">Önerilen:</span>
-                            <span className="font-medium text-blue-600">×{riskResult.safe_multiplier.recommended_multiplier.toFixed(2)}</span>
-                          </div>
-                          <div className="flex justify-between items-center">
-                            <span className="text-gray-600">Risk Seviyesi:</span>
-                            <span className={`font-bold px-1.5 py-0.5 rounded text-white ${
-                              riskResult.risk_score.score === 'Düşük' ? 'bg-green-500' :
-                              riskResult.risk_score.score === 'Orta' ? 'bg-yellow-500' : 'bg-red-500'
-                            }`}>{riskResult.risk_score.score}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">Zarar Saati:</span>
-                            <span className="font-medium text-red-600">{riskResult.loss_map.total_loss_hours} saat</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">Net Marj:</span>
-                            <span className={`font-medium ${riskResult.pricing.total_net_margin_tl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                              {riskResult.pricing.total_net_margin_tl.toLocaleString('tr-TR', {minimumFractionDigits: 2})} TL
+                            <span className="text-gray-600">Brüt Marj (TL):</span>
+                            <span className={`font-bold ${riskResult.pricing.total_gross_margin_tl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                              {riskResult.pricing.total_gross_margin_tl.toLocaleString('tr-TR', {minimumFractionDigits: 2})} TL
+                              {riskResult.pricing.total_gross_margin_tl < 0 && <span className="ml-1 text-red-700 font-bold">Zarar</span>}
                             </span>
                           </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">Sapma:</span>
-                            <span className="font-medium">%{riskResult.risk_score.deviation_pct.toFixed(1)}</span>
-                          </div>
+
+                          {/* Risk Buffer Bilgi Kartı — yalnızca riskResult + şablon seçili */}
+                          {selectedTemplate && (
+                            <div className="bg-white/60 p-1.5 rounded space-y-1">
+                              <div className="text-xs font-medium text-gray-700">
+                                📊 Baz Marj: %{baseMarginPct.toFixed(1)} | Risk Tamponu: %{riskBufferPct.toFixed(1)} | Önerilen: %{recommendedMarginPct.toFixed(1)}
+                              </div>
+                              {riskBufferPct === 0 && (
+                                <div className="text-xs text-gray-500">Tampon: %0 (düşük riskli profil)</div>
+                              )}
+                              {baseMarginPct < recommendedMarginPct && (
+                                <div className="text-xs text-amber-700 bg-amber-50 p-1 rounded font-medium">
+                                  ⚠️ Seçilen katsayı önerilen marjın altında — risk tamponu karşılanmıyor
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Template Profil Bilgisi — şablon seçildiğinde T1/T2/T3 + risk seviyesi */}
+                          {selectedTemplate && (
+                            <div className="bg-white/60 p-1.5 rounded space-y-0.5">
+                              <div className="text-xs text-gray-700">
+                                📋 T1: %{selectedTemplate.t1_pct} | T2: %{selectedTemplate.t2_pct} | T3: %{selectedTemplate.t3_pct}
+                              </div>
+                              <div className="text-xs text-gray-700">
+                                Risk Seviyesi: <span className="font-medium">{RISK_LEVEL_LABELS[selectedTemplate.risk_level] ?? selectedTemplate.risk_level}</span>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Marj Gerçekliği Karar Kartı */}
+                          {riskResult.margin_reality ? (() => {
+                            const mr = riskResult.margin_reality;
+                            const decisionColors: Record<string, string> = {
+                              'TEKLİF UYGUN': 'bg-green-50 text-green-700 border-green-200',
+                              'FİYAT ARTIR': 'bg-amber-50 text-amber-700 border-amber-200',
+                              'TEKLİF VERME': 'bg-red-50 text-red-700 border-red-200',
+                              'FİYAT DÜŞÜR': 'bg-blue-50 text-blue-700 border-blue-200',
+                            };
+                            const decisionBadgeColors: Record<string, string> = {
+                              'TEKLİF UYGUN': 'bg-green-600',
+                              'FİYAT ARTIR': 'bg-amber-500',
+                              'TEKLİF VERME': 'bg-red-600',
+                              'FİYAT DÜŞÜR': 'bg-blue-600',
+                            };
+                            const aggressColors: Record<string, string> = {
+                              'YOK': 'bg-gray-100 text-gray-600',
+                              'DÜŞÜK': 'bg-green-100 text-green-700',
+                              'ORTA': 'bg-amber-100 text-amber-700',
+                              'YÜKSEK': 'bg-red-100 text-red-700',
+                            };
+                            return (
+                              <>
+                                {/* Ana Karar Kartı */}
+                                <div className={`p-2.5 rounded-lg border ${decisionColors[mr.pricing_decision] || 'bg-gray-50 text-gray-700 border-gray-200'}`}>
+                                  <div className="flex items-center justify-between mb-1.5">
+                                    <span className={`px-2 py-0.5 rounded text-xs font-bold text-white ${decisionBadgeColors[mr.pricing_decision] || 'bg-gray-500'}`}>
+                                      {mr.pricing_decision}
+                                    </span>
+                                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${aggressColors[mr.pricing_aggressiveness] || 'bg-gray-100 text-gray-600'}`}>
+                                      Agresiflik: {mr.pricing_aggressiveness}
+                                    </span>
+                                  </div>
+                                  {/* Özet satır */}
+                                  <div className="text-xs font-medium mb-2">
+                                    %{mr.nominal_margin_pct.toFixed(1)} sattın → gerçekte %{mr.real_margin_pct.toFixed(1)} kazandın → ×{mr.required_multiplier_for_target.toFixed(3)} ile fiyatla
+                                  </div>
+                                  {mr.pricing_decision_reason && (
+                                    <div className="text-[10px] opacity-80 mb-2">{mr.pricing_decision_reason}</div>
+                                  )}
+                                  {/* Manuel vs Gerçek Marj */}
+                                  <div className="flex items-center gap-2 text-xs mb-1.5">
+                                    <div className="flex-1 text-center p-1 bg-white/50 rounded">
+                                      <div className="text-[10px] text-gray-500">Manuel Marj</div>
+                                      <div className="font-bold">%{mr.nominal_margin_pct.toFixed(1)}</div>
+                                    </div>
+                                    <span className="text-lg">→</span>
+                                    <div className="flex-1 text-center p-1 bg-white/50 rounded">
+                                      <div className="text-[10px] text-gray-500">Gerçek Marj</div>
+                                      <div className={`font-bold ${mr.real_margin_pct >= 0 ? 'text-green-700' : 'text-red-700'}`}>%{mr.real_margin_pct.toFixed(1)}</div>
+                                    </div>
+                                  </div>
+                                  {/* Marj Sapması */}
+                                  <div className="flex justify-between items-center text-xs mb-1">
+                                    <span>Marj Sapması:</span>
+                                    <span className={`font-bold ${mr.margin_deviation_pct <= 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                      %{mr.margin_deviation_pct.toFixed(1)} ({mr.margin_deviation_tl.toLocaleString('tr-TR', {minimumFractionDigits: 0, maximumFractionDigits: 0})} TL)
+                                    </span>
+                                  </div>
+                                  {/* Tahmini Kâr */}
+                                  <div className="flex justify-between items-center text-xs mb-1">
+                                    <span>Tahmini Kâr:</span>
+                                    <span className={`font-bold ${mr.real_margin_tl >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                                      {mr.real_margin_tl.toLocaleString('tr-TR', {minimumFractionDigits: 2})} TL
+                                    </span>
+                                  </div>
+                                  {/* Önerilen Katsayı + Uygula */}
+                                  <div className="flex justify-between items-center text-xs mt-2 pt-1.5 border-t border-current/10">
+                                    <span>Önerilen Katsayı:</span>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="font-bold text-sm">×{mr.required_multiplier_for_target.toFixed(3)}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => setMultiplier(riskResult!.margin_reality!.required_multiplier_for_target)}
+                                        className="px-2 py-0.5 text-[10px] font-medium bg-white/80 border border-current/20 rounded hover:bg-white transition-colors"
+                                      >
+                                        Uygula
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Detay Bölümü (açılır/kapanır) */}
+                                <div className="bg-white/60 rounded">
+                                  <button
+                                    type="button"
+                                    onClick={() => setMarginDetailOpen(!marginDetailOpen)}
+                                    className="w-full flex items-center justify-between px-2 py-1 text-xs text-gray-600 hover:text-gray-800 transition-colors"
+                                  >
+                                    <span className="font-medium">📊 Marj Detayları</span>
+                                    <span className="text-[10px]">{marginDetailOpen ? '▲ Kapat' : '▼ Aç'}</span>
+                                  </button>
+                                  {marginDetailOpen && (
+                                    <div className="px-2 pb-2 space-y-1 text-xs">
+                                      <div className="flex justify-between">
+                                        <span className="text-gray-600">Efektif Katsayı:</span>
+                                        <span className="font-medium">×{mr.effective_multiplier.toFixed(3)} <span className="text-gray-400">(Δ {mr.multiplier_delta >= 0 ? '+' : ''}{mr.multiplier_delta.toFixed(3)})</span></span>
+                                      </div>
+                                      <div className="flex justify-between">
+                                        <span className="text-gray-600">Başabaş Katsayı:</span>
+                                        <span className="font-medium">×{mr.break_even_multiplier.toFixed(3)}</span>
+                                      </div>
+                                      <div className="flex justify-between">
+                                        <span className="text-gray-600">Güvenli Katsayı:</span>
+                                        <span className="font-medium text-blue-700">×{mr.safe_multiplier.toFixed(3)}</span>
+                                      </div>
+                                      <div className="flex justify-between">
+                                        <span className="text-gray-600">Negatif Marj Saatleri:</span>
+                                        <span className="font-medium text-red-600">{mr.negative_margin_hours} / {mr.total_hours} saat</span>
+                                      </div>
+                                      <div className="flex justify-between">
+                                        <span className="text-gray-600">Pozitif Marj Toplamı:</span>
+                                        <span className="font-medium text-green-600">{mr.positive_margin_total_tl.toLocaleString('tr-TR', {minimumFractionDigits: 2})} TL</span>
+                                      </div>
+                                      <div className="flex justify-between">
+                                        <span className="text-gray-600">Negatif Marj Toplamı:</span>
+                                        <span className="font-medium text-red-600">{mr.negative_margin_total_tl.toLocaleString('tr-TR', {minimumFractionDigits: 2})} TL</span>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Eski risk bilgileri — küçük yardımcı */}
+                                <div className="bg-white/40 p-1.5 rounded space-y-0.5 text-[10px] text-gray-500">
+                                  <div className="flex justify-between">
+                                    <span>Risk Seviyesi:</span>
+                                    <span className={`font-medium px-1 py-0.5 rounded text-white text-[9px] ${
+                                      riskResult.risk_score.score === 'Düşük' ? 'bg-green-500' :
+                                      riskResult.risk_score.score === 'Orta' ? 'bg-yellow-500' : 'bg-red-500'
+                                    }`}>{riskResult.risk_score.score}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span>Zarar Saati:</span>
+                                    <span className="font-medium text-red-500">{riskResult.loss_map.total_loss_hours} saat</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span>Sapma:</span>
+                                    <span className="font-medium">%{riskResult.risk_score.deviation_pct.toFixed(1)}</span>
+                                  </div>
+                                </div>
+                              </>
+                            );
+                          })() : (
+                            <>
+                              {/* Fallback: eski güvenli katsayı + risk gösterimi (margin_reality yoksa) */}
+                              <div className="flex justify-between items-center">
+                                <span className="text-gray-600">Güvenli Katsayı:</span>
+                                <span className="font-bold text-blue-700">×{riskResult.safe_multiplier.safe_multiplier.toFixed(3)}</span>
+                              </div>
+                              <div className="flex justify-between items-center">
+                                <span className="text-gray-600">Önerilen:</span>
+                                <span className="font-medium text-blue-600">×{riskResult.safe_multiplier.recommended_multiplier.toFixed(2)}</span>
+                              </div>
+                              <div className="flex justify-between items-center">
+                                <span className="text-gray-600">Risk Seviyesi:</span>
+                                <span className={`font-bold px-1.5 py-0.5 rounded text-white ${
+                                  riskResult.risk_score.score === 'Düşük' ? 'bg-green-500' :
+                                  riskResult.risk_score.score === 'Orta' ? 'bg-yellow-500' : 'bg-red-500'
+                                }`}>{riskResult.risk_score.score}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-gray-600">Zarar Saati:</span>
+                                <span className="font-medium text-red-600">{riskResult.loss_map.total_loss_hours} saat</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-gray-600">Net Marj:</span>
+                                <span className={`font-medium ${riskResult.pricing.total_net_margin_tl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                  {riskResult.pricing.total_net_margin_tl.toLocaleString('tr-TR', {minimumFractionDigits: 2})} TL
+                                </span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-gray-600">Sapma:</span>
+                                <span className="font-medium">%{riskResult.risk_score.deviation_pct.toFixed(1)}</span>
+                              </div>
+                            </>
+                          )}
 
                           {/* Uyarılar */}
                           {riskResult.warnings.filter(w => w.message).map((w, i) => (
@@ -1329,10 +1864,22 @@ function App() {
                                   const period = manualMode ? manualValues.invoice_period : (result?.extraction?.invoice_period || '');
                                   const np = normalizeInvoicePeriod(period || '') || '';
                                   const kwh = manualMode ? manualValues.consumption_kwh : (result?.extraction?.consumption_kwh?.value || 0);
-                                  const blob = await pricingDownloadPdf({
+                                  const reqParams: any = {
                                     period: np, multiplier, dealer_commission_pct: bayiEnabled ? (getBayiSegment(multiplier)?.bayiPoints || 0) : 0,
-                                    use_template: true, template_name: riskTemplateName, template_monthly_kwh: kwh,
-                                  }, 'internal');
+                                  };
+                                  if (inputMode === 't1t2t3') {
+                                    reqParams.use_template = false;
+                                    reqParams.t1_kwh = t1Kwh;
+                                    reqParams.t2_kwh = t2Kwh;
+                                    reqParams.t3_kwh = t3Kwh;
+                                    reqParams.template_monthly_kwh = totalT1T2T3;
+                                    reqParams.voltage_level = voltageLevel;
+                                  } else {
+                                    reqParams.use_template = true;
+                                    reqParams.template_name = riskTemplateName;
+                                    reqParams.template_monthly_kwh = kwh;
+                                  }
+                                  const blob = await pricingDownloadPdf(reqParams, 'internal');
                                   const url = URL.createObjectURL(blob);
                                   const a = document.createElement('a'); a.href = url;
                                   a.download = `risk_analiz_${np}.pdf`; a.click();
@@ -1350,10 +1897,22 @@ function App() {
                                   const period = manualMode ? manualValues.invoice_period : (result?.extraction?.invoice_period || '');
                                   const np = normalizeInvoicePeriod(period || '') || '';
                                   const kwh = manualMode ? manualValues.consumption_kwh : (result?.extraction?.consumption_kwh?.value || 0);
-                                  const blob = await pricingDownloadExcel({
+                                  const reqParams: any = {
                                     period: np, multiplier, dealer_commission_pct: bayiEnabled ? (getBayiSegment(multiplier)?.bayiPoints || 0) : 0,
-                                    use_template: true, template_name: riskTemplateName, template_monthly_kwh: kwh,
-                                  });
+                                  };
+                                  if (inputMode === 't1t2t3') {
+                                    reqParams.use_template = false;
+                                    reqParams.t1_kwh = t1Kwh;
+                                    reqParams.t2_kwh = t2Kwh;
+                                    reqParams.t3_kwh = t3Kwh;
+                                    reqParams.template_monthly_kwh = totalT1T2T3;
+                                    reqParams.voltage_level = voltageLevel;
+                                  } else {
+                                    reqParams.use_template = true;
+                                    reqParams.template_name = riskTemplateName;
+                                    reqParams.template_monthly_kwh = kwh;
+                                  }
+                                  const blob = await pricingDownloadExcel(reqParams);
                                   const url = URL.createObjectURL(blob);
                                   const a = document.createElement('a'); a.href = url;
                                   a.download = `risk_analiz_${np}.xlsx`; a.click();
@@ -1399,6 +1958,8 @@ function App() {
                         // Diğer tüm gruplar: %5
                         if (tariff.key === 'osb_ikitelli') {
                           setBtvRate(0);  // Belediye sınırları dışı OSB
+                        } else if (tariff.key === 'osb_cerkezkoy') {
+                          setBtvRate(0.05);  // Çerkezköy OSB — belediye sınırları içi, %5 BTV
                         } else if (tariff.group === 'sanayi') {
                           setBtvRate(0.01);
                         } else if (tariff.group !== 'custom') {
@@ -1417,19 +1978,57 @@ function App() {
                     }}
                   >
                     <option value="">Faturadan (Otomatik)</option>
-                    {activeTariffs.map((tariff) => (
-                      <option key={tariff.key} value={tariff.key}>
-                        {tariff.label} {tariff.key !== 'custom' ? `— ${(tariff.price * 1000).toFixed(2)} kr/kWh` : ''}
-                      </option>
-                    ))}
+                    <option value="custom">✏️ Manuel Giriş</option>
+                    {(() => {
+                      const tariffs = activeTariffs.filter(t => t.key !== 'custom');
+                      if (tariffs.length === 0) return null;
+                      
+                      // Grup bazlı ayır
+                      const groupLabels: Record<string, string> = {
+                        sanayi: '⚡ Sanayi',
+                        ticarethane: '🏪 Ticarethane',
+                        mesken: '🏠 Mesken',
+                        tarimsal: '🌾 Tarımsal',
+                        aydinlatma: '💡 Aydınlatma',
+                        kamu_ozel: '🏛️ Kamu/Özel',
+                        osb_cerkezkoy: '🏭 Çerkezköy OSB',
+                        osb_ikitelli: '🏭 İkitelli OSB',
+                      };
+                      
+                      // Grupları belirle
+                      const groups: Record<string, typeof tariffs> = {};
+                      tariffs.forEach(t => {
+                        const g = t.group || 'diger';
+                        if (!groups[g]) groups[g] = [];
+                        groups[g].push(t);
+                      });
+                      
+                      // Sıralama: sanayi, osb'ler, ticarethane, mesken, tarimsal, aydinlatma, kamu
+                      const order = ['sanayi', 'osb_cerkezkoy', 'osb_ikitelli', 'ticarethane', 'mesken', 'tarimsal', 'aydinlatma', 'kamu_ozel'];
+                      const sortedGroups = Object.keys(groups).sort((a, b) => {
+                        const ia = order.indexOf(a);
+                        const ib = order.indexOf(b);
+                        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+                      });
+                      
+                      return sortedGroups.map(g => (
+                        <optgroup key={g} label={groupLabels[g] || g}>
+                          {groups[g].map(tariff => (
+                            <option key={tariff.key} value={tariff.key}>
+                              {tariff.label} — {(tariff.price * 1000).toFixed(2)} kr/kWh
+                            </option>
+                          ))}
+                        </optgroup>
+                      ));
+                    })()}
                   </select>
                   
                   {distributionTariffKey === 'custom' && (
                     <input
                       type="number"
                       className="w-full mt-1 px-2 py-1.5 text-sm border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 focus:border-primary-500 outline-none"
-                      placeholder="1.836166"
-                      value={customDistributionPrice}
+                      placeholder="Birim fiyat TL/kWh (örn: 1.07050)"
+                      value={customDistributionPrice || ''}
                       onChange={(e) => setCustomDistributionPrice(e.target.value === '' ? 0 : parseFloat(e.target.value) || 0)}
                       step="0.000001"
                       min="0"
@@ -1440,6 +2039,18 @@ function App() {
                     <div className="text-xs text-gray-500 mt-1 space-y-0.5">
                       <p>Birim Fiyat: <span className="font-medium text-gray-700">{(liveCalculation.distribution_unit_price * 1000).toFixed(2)} kr/kWh</span></p>
                       <p>Dağıtım Bedeli: <span className="font-medium text-gray-900">{formatNumber(liveCalculation.offer_distribution_tl)} TL</span></p>
+                    </div>
+                  )}
+                  {tariffWarning && (
+                    <div className="text-xs text-amber-700 bg-amber-50 p-1.5 rounded mt-1">
+                      ⚠ {tariffWarning}
+                      <button
+                        type="button"
+                        className="ml-2 underline font-medium hover:text-amber-900"
+                        onClick={() => setDistributionTariffKey('custom')}
+                      >
+                        Manuel giriş yap →
+                      </button>
                     </div>
                   )}
                 </div>
@@ -1694,7 +2305,7 @@ function App() {
                             current_total_with_vat_tl: result.calculation?.current_total_with_vat_tl || 0,
                             vendor: result.extraction.vendor || '',
                             invoice_period: result.extraction.invoice_period || '',
-                            tariff_group: result.extraction.meta?.tariff_group_guess || 'Sanayi',
+                            tariff_group: (result.extraction as any)?.meta?.tariff_group_guess || 'Sanayi',
                           });
                         }
                         setManualMode(!manualMode);
@@ -1820,18 +2431,30 @@ function App() {
                           <div>
                             <label className="text-xs text-gray-500 block mb-1">Dağıtım Bedeli</label>
                             <input
-                              type="text"
-                              className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 bg-gray-50"
+                              type="number"
+                              className={`w-full px-2 py-1 text-xs border rounded focus:ring-1 focus:ring-primary-500 ${
+                                getDistributionUnitPrice() > 0 && manualValues.consumption_kwh > 0
+                                  ? 'border-gray-200 bg-gray-50'
+                                  : 'border-blue-300 bg-white'
+                              }`}
                               value={(() => {
                                 const distPrice = getDistributionUnitPrice();
                                 const kwh = manualValues.consumption_kwh;
                                 if (distPrice > 0 && kwh > 0) {
-                                  return formatNumber(distPrice * kwh);
+                                  return (distPrice * kwh).toFixed(2);
                                 }
-                                return manualValues.current_distribution_tl ? formatNumber(manualValues.current_distribution_tl) : '';
+                                return manualValues.current_distribution_tl || '';
                               })()}
-                              readOnly
-                              title="Dağıtım birim fiyatı × kWh otomatik hesaplanır"
+                              onChange={(e) => {
+                                const val = e.target.value === '' ? 0 : parseFloat(e.target.value) || 0;
+                                setManualValues(prev => ({...prev, current_distribution_tl: val}));
+                              }}
+                              readOnly={getDistributionUnitPrice() > 0 && manualValues.consumption_kwh > 0}
+                              title={getDistributionUnitPrice() > 0 && manualValues.consumption_kwh > 0
+                                ? "Dağıtım birim fiyatı × kWh otomatik hesaplanır"
+                                : "Dağıtım bedeli TL olarak girin"}
+                              step="0.01"
+                              min="0"
                             />
                           </div>
                           <div>
@@ -1938,9 +2561,9 @@ function App() {
                       ) : (
                         <>
                           <span className="text-gray-500">Kaynak: 
-                            {result.calculation?.meta_distribution_source?.startsWith('epdk_tariff') ? (
+                            {result?.calculation?.meta_distribution_source?.startsWith('epdk_tariff') ? (
                               <span className="text-primary-600 ml-1">EPDK</span>
-                            ) : result.calculation?.meta_distribution_source === 'extracted_from_invoice' ? (
+                            ) : result?.calculation?.meta_distribution_source === 'extracted_from_invoice' ? (
                               <span className="text-gray-600 ml-1">Faturadan</span>
                             ) : (
                               <span className="text-amber-600 ml-1">Manuel</span>
@@ -1965,7 +2588,7 @@ function App() {
                             <span className="text-amber-700">Tüketim ve toplam giriniz</span>
                           </>
                         )
-                      ) : result.validation.is_ready_for_pricing ? (
+                      ) : result?.validation?.is_ready_for_pricing ? (
                         <>
                           <CheckCircle className="w-4 h-4 text-green-500" />
                           <span className="text-green-700 font-medium">Analiz başarılı</span>
@@ -1973,39 +2596,39 @@ function App() {
                       ) : (
                         <>
                           <AlertCircle className="w-4 h-4 text-amber-500" />
-                          <span className="text-amber-700">Eksik: {result.validation.missing_fields.join(', ')}</span>
+                          <span className="text-amber-700">Eksik: {result?.validation?.missing_fields?.join(', ') ?? ''}</span>
                         </>
                       )}
                     </div>
                   </div>
-                  {result.calculation?.meta_distribution_mismatch_warning && (
+                  {result?.calculation?.meta_distribution_mismatch_warning && (
                     <div className="mt-1 p-1 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
-                      ⚠️ {result.calculation.meta_distribution_mismatch_warning}
+                      ⚠️ {result?.calculation?.meta_distribution_mismatch_warning}
                     </div>
                   )}
                   
                   {/* Hesap Detayı - Debug Panel */}
-                  {result.debug_meta && (
+                  {result?.debug_meta && (
                     <details className="mt-2 pt-2 border-t border-gray-100">
                       <summary className="cursor-pointer text-xs font-medium text-gray-500 hover:text-gray-900 flex items-center gap-1">
                         <span>🔍 Hesap Detayı</span>
                         <span className="text-xs text-gray-400">(trace: {result?.debug_meta.trace_id || result?.meta?.trace_id})</span>
-                        {result.quality_score && (
+                        {result?.quality_score && (
                           <span className={`ml-1 px-1 py-0.5 rounded text-xs font-medium ${
                             result?.quality_score.grade === 'OK' ? 'bg-green-100 text-green-700' :
-                            result.quality_score.grade === 'CHECK' ? 'bg-yellow-100 text-yellow-700' :
+                            result?.quality_score.grade === 'CHECK' ? 'bg-yellow-100 text-yellow-700' :
                             'bg-red-100 text-red-700'
                           }`}>
-                            {result.quality_score.score} {result.quality_score.grade}
+                            {result?.quality_score.score} {result?.quality_score.grade}
                           </span>
                         )}
                       </summary>
                       <div className="mt-2 p-2 bg-gray-50 rounded text-xs space-y-1">
-                        {result.quality_score && result.quality_score.flags.length > 0 && (
+                        {result?.quality_score && result?.quality_score.flags.length > 0 && (
                           <div className="pb-1 border-b border-gray-200">
                             <span className="text-gray-600 font-medium">Bayraklar:</span>
                             <div className="mt-1 flex flex-wrap gap-1">
-                              {result.quality_score.flag_details.map((flag, i) => (
+                              {result?.quality_score.flag_details.map((flag, i) => (
                                 <span key={i} className={`inline-flex items-center px-1 py-0.5 rounded text-xs ${
                                   flag.severity === 'S1' ? 'bg-red-100 text-red-700' :
                                   flag.severity === 'S2' ? 'bg-orange-100 text-orange-700' :
@@ -2023,12 +2646,12 @@ function App() {
                           <div><span className="text-gray-500">Dönem:</span> <span className="font-mono">{result?.debug_meta.pricing_period || result?.calculation?.meta_pricing_period || '-'}</span></div>
                           <div><span className="text-gray-500">Kaynak:</span> <span className={`font-medium ${result?.debug_meta.pricing_source === 'reference' ? 'text-primary-600' : 'text-amber-600'}`}>{result?.debug_meta.pricing_source || '-'}</span></div>
                           <div><span className="text-gray-500">PTF:</span> <span className="font-mono">{result?.debug_meta.ptf_tl_per_mwh || 0}</span></div>
-                          <div><span className="text-gray-500">YEKDEM:</span> <span className="font-mono">{result.debug_meta.yekdem_tl_per_mwh || 0}</span></div>
+                          <div><span className="text-gray-500">YEKDEM:</span> <span className="font-mono">{result?.debug_meta?.yekdem_tl_per_mwh || 0}</span></div>
                         </div>
                         
-                        {result.debug_meta.warnings && result.debug_meta.warnings.length > 0 && (
+                        {result?.debug_meta?.warnings && result?.debug_meta?.warnings.length > 0 && (
                           <div className="pt-1 border-t border-gray-200 text-amber-600">
-                            ⚠️ {result.debug_meta.warnings.join(', ')}
+                            ⚠️ {result?.debug_meta?.warnings.join(', ')}
                           </div>
                         )}
                       </div>
@@ -2061,6 +2684,29 @@ function App() {
                     </button>
                   </div>
                   
+                  {/* Teklif Birim Fiyat Gösterim Modu */}
+                  <div className="flex items-center gap-1 mb-2">
+                    <span className="text-[10px] text-gray-500 mr-1">Birim Fiyat:</span>
+                    <button
+                      type="button"
+                      onClick={() => setOfferDisplayMode('energy')}
+                      className={`px-2 py-0.5 text-[10px] rounded transition-colors ${
+                        offerDisplayMode === 'energy' ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      Enerji (PTF+YEKDEM)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOfferDisplayMode('combined')}
+                      className={`px-2 py-0.5 text-[10px] rounded transition-colors ${
+                        offerDisplayMode === 'combined' ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      Toplam (PTF+YEKDEM+Dağıtım)
+                    </button>
+                  </div>
+                  
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="border-b border-gray-200">
@@ -2071,16 +2717,36 @@ function App() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {manualMode && manualValues.current_unit_price > 0 && (
-                        <tr className="bg-blue-50/50">
-                          <td className="py-1 px-2 text-gray-600 italic">Birim Aktif Enerji (TL/kWh)</td>
-                          <td className="py-1 px-2 text-right text-blue-700 font-medium">{manualValues.current_unit_price.toLocaleString('tr-TR', {minimumFractionDigits: 4, maximumFractionDigits: 4})}</td>
-                          <td className="py-1 px-2 text-right text-primary-700 font-medium">{((ptfPrice / 1000 + (liveCalculation.include_yekdem ? yekdemPrice / 1000 : 0)) * multiplier).toLocaleString('tr-TR', {minimumFractionDigits: 4, maximumFractionDigits: 4})}</td>
-                          <td className={`py-1 px-2 text-right font-medium ${manualValues.current_unit_price > (ptfPrice / 1000 + (liveCalculation.include_yekdem ? yekdemPrice / 1000 : 0)) * multiplier ? 'text-green-600' : 'text-red-600'}`}>
-                            {(manualValues.current_unit_price - (ptfPrice / 1000 + (liveCalculation.include_yekdem ? yekdemPrice / 1000 : 0)) * multiplier).toLocaleString('tr-TR', {minimumFractionDigits: 4, maximumFractionDigits: 4})}
-                          </td>
-                        </tr>
-                      )}
+                      {manualMode && manualValues.current_unit_price > 0 && (() => {
+                        const distUnitPrice = liveCalculation.distribution_unit_price || 0;
+                        const energyOfferPrice = ((ptfPrice / 1000 + (liveCalculation.include_yekdem ? yekdemPrice / 1000 : 0)) * multiplier);
+                        
+                        let offerPrice: number;
+                        let label: string;
+                        let currentPrice = manualValues.current_unit_price;
+                        
+                        if (offerDisplayMode === 'combined') {
+                          // Toplam: PTF + YEKDEM + Dağıtım hepsi bir arada
+                          offerPrice = energyOfferPrice + distUnitPrice;
+                          label = 'Birim Fiyat — Toplam (TL/kWh)';
+                          currentPrice = manualValues.current_unit_price + distUnitPrice;
+                        } else {
+                          // Enerji: sadece PTF + YEKDEM (dağıtım ayrı satır)
+                          offerPrice = energyOfferPrice;
+                          label = 'Birim Aktif Enerji (TL/kWh)';
+                        }
+                        
+                        return (
+                          <tr className="bg-blue-50/50">
+                            <td className="py-1 px-2 text-gray-600 italic">{label}</td>
+                            <td className="py-1 px-2 text-right text-blue-700 font-medium">{currentPrice.toLocaleString('tr-TR', {minimumFractionDigits: 4, maximumFractionDigits: 4})}</td>
+                            <td className="py-1 px-2 text-right text-primary-700 font-medium">{offerPrice.toLocaleString('tr-TR', {minimumFractionDigits: 4, maximumFractionDigits: 4})}</td>
+                            <td className={`py-1 px-2 text-right font-medium ${currentPrice > offerPrice ? 'text-green-600' : 'text-red-600'}`}>
+                              {(currentPrice - offerPrice).toLocaleString('tr-TR', {minimumFractionDigits: 4, maximumFractionDigits: 4})}
+                            </td>
+                          </tr>
+                        );
+                      })()}
                       <tr>
                         <td className="py-1 px-2 text-gray-700">Enerji Bedeli</td>
                         <td className="py-1 px-2 text-right text-gray-900">{formatCurrency(liveCalculation.current_energy_tl)}</td>

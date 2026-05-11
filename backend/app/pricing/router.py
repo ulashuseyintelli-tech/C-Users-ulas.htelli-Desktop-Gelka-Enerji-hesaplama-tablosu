@@ -22,7 +22,7 @@ import logging
 import os
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -82,6 +82,7 @@ from .models import (
     DataQualityReport,
     PeriodComparison,
     RiskLevel,
+    DistributionInfo,
 )
 from .schemas import (
     HourlyMarketPrice,
@@ -109,11 +110,13 @@ from .risk_calculator import (
     generate_offer_warning,
     check_risk_safe_multiplier_coherence,
 )
+from .margin_reality import calculate_margin_reality
 from .yekdem_service import create_or_update_yekdem, get_yekdem, list_yekdem
 from .consumption_service import save_consumption_profile
 from .profile_templates import (
     seed_profile_templates,
     generate_hourly_consumption,
+    generate_t1t2t3_consumption,
     BUILTIN_TEMPLATES,
 )
 from .pricing_cache import (
@@ -131,9 +134,42 @@ logger = logging.getLogger(__name__)
 pricing_router = APIRouter(prefix="/api/pricing", tags=["pricing"])
 
 
+from ..distribution_tariffs import get_distribution_unit_price as _lookup_dist_tariff
+from ..distribution_tariffs import get_all_tariffs as _get_all_tariffs
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Yardımcı Fonksiyonlar
 # ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _calculate_distribution_info(
+    voltage_level: str,
+    total_kwh: float,
+    tariff_group: str = "sanayi",
+    term_type: str = "çift_terim",
+) -> DistributionInfo | None:
+    """Dağıtım bedeli hesapla — voltage_level (AG/OG) bazlı.
+
+    Mevcut distribution_tariffs.py modülündeki EPDK tarife tablosunu kullanır.
+    Varsayılan: Sanayi, Çift Terim (en yaygın senaryo).
+    """
+    vl = voltage_level.upper() if voltage_level else "OG"
+    if vl not in ("AG", "OG"):
+        vl = "OG"
+
+    lookup = _lookup_dist_tariff(tariff_group, vl, term_type)
+    if not lookup.success or lookup.unit_price is None:
+        return None
+
+    total_tl = round(total_kwh * lookup.unit_price, 2)
+    return DistributionInfo(
+        voltage_level=vl,
+        unit_price_tl_per_kwh=lookup.unit_price,
+        total_kwh=round(total_kwh, 2),
+        total_tl=total_tl,
+        tariff_key=lookup.tariff_key,
+    )
 
 
 def _load_market_records(
@@ -196,13 +232,31 @@ def _get_or_generate_consumption(
     use_template: Optional[bool],
     template_name: Optional[str],
     template_monthly_kwh: Optional[float],
+    t1_kwh: Optional[float] = None,
+    t2_kwh: Optional[float] = None,
+    t3_kwh: Optional[float] = None,
 ) -> list[ParsedConsumptionRecord]:
-    """Tüketim verisi al: DB'den veya şablondan üret."""
+    """Tüketim verisi al: T1/T2/T3'den, şablondan veya DB'den.
+
+    ⚠️ KRİTİK: Öncelik sırası kesin ve değiştirilemez
+    Priority 1: T1/T2/T3 (override — fatura verisi varsa esas alınır)
+    Priority 2: Template (şablon profili)
+    Priority 3: DB historical (müşteri geçmiş profili)
+    """
+    # Priority 1: T1/T2/T3 (override — fatura verisi varsa esas alınır)
+    t1 = t1_kwh or 0
+    t2 = t2_kwh or 0
+    t3 = t3_kwh or 0
+    if (t1_kwh is not None or t2_kwh is not None or t3_kwh is not None) and (t1 + t2 + t3) > 0:
+        return generate_t1t2t3_consumption(t1, t2, t3, period)
+
+    # Priority 2: Template
     if use_template and template_name and template_monthly_kwh:
         return generate_hourly_consumption(
-            template_name, template_monthly_kwh, period,
+            template_name, template_monthly_kwh, period, db,
         )
 
+    # Priority 3: DB historical
     if customer_id:
         records = _load_consumption_records(db, customer_id, period)
         if records:
@@ -430,30 +484,44 @@ def analyze(
     consumption_records = _get_or_generate_consumption(
         db, period, req.customer_id,
         req.use_template, req.template_name, req.template_monthly_kwh,
+        t1_kwh=req.t1_kwh, t2_kwh=req.t2_kwh, t3_kwh=req.t3_kwh,
     )
 
-    # 3. YEKDEM
+    # 3. YEKDEM — graceful fallback when missing
+    warnings = []
     yekdem_record = get_yekdem(db, period)
     if not yekdem_record:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "error": "yekdem_not_found",
-                "message": f"{period} dönemi için YEKDEM bedeli bulunamadı.",
-            },
-        )
-    yekdem = yekdem_record.yekdem_tl_per_mwh
+        yekdem = 0.0
+        warnings.append({
+            "type": "critical_missing_data",
+            "severity": "high",
+            "impact": "pricing_accuracy_low",
+            "message": (
+                f"{period} dönemi için YEKDEM verisi bulunamadı, "
+                f"hesaplama 0 YEKDEM ile yapıldı."
+            ),
+            "yekdem_unit_price": 0,
+        })
+    else:
+        yekdem = yekdem_record.yekdem_tl_per_mwh
 
     # 4. Ağırlıklı fiyat hesapla
     weighted = calculate_weighted_prices(market_records, consumption_records)
 
-    # 5. Saatlik maliyet hesapla
+    # 5. Saatlik maliyet hesapla — distribution entegrasyonu
+    dist_info = _calculate_distribution_info(
+        voltage_level=req.voltage_level or "og",
+        total_kwh=weighted.total_consumption_kwh,
+    )
+    dist_unit_price = dist_info.unit_price_tl_per_kwh if dist_info else 0.0
+
     hourly_result = calculate_hourly_costs(
         market_records, consumption_records,
         yekdem_tl_per_mwh=yekdem,
         multiplier=req.multiplier,
         imbalance_params=req.imbalance_params,
         dealer_commission_pct=req.dealer_commission_pct,
+        distribution_unit_price_tl_per_kwh=dist_unit_price,
     )
 
     # 6. Zaman dilimi dağılımı
@@ -507,8 +575,7 @@ def analyze(
         ],
     )
 
-    # 11. Uyarılar
-    warnings = []
+    # 11. Uyarılar (warnings list initialized before YEKDEM check)
     offer_warning = generate_offer_warning(
         req.multiplier, safe_result.safe_multiplier,
         safe_result.recommended_multiplier, risk.score,
@@ -533,27 +600,91 @@ def analyze(
         ),
     )
 
-    # 13. Fiyatlama özeti
+    # 13. Fiyatlama özeti — dual price, dual margin, risk flags
     total_consumption = weighted.total_consumption_kwh
-    sales_price_per_mwh = round(energy_cost * req.multiplier, 2)
-    gross_margin_per_mwh = round(sales_price_per_mwh - supplier_cost.total_cost_tl_per_mwh, 2)
-    dealer_per_mwh = round(gross_margin_per_mwh * req.dealer_commission_pct / 100, 2)
-    net_margin_per_mwh = round(gross_margin_per_mwh - dealer_per_mwh, 2)
+    dist_per_mwh = dist_unit_price * 1000  # TL/kWh → TL/MWh
+
+    sales_energy_price_per_mwh = round(energy_cost * req.multiplier, 2)
+    sales_effective_price_per_mwh = round(sales_energy_price_per_mwh + dist_per_mwh, 2)
+
+    gross_margin_energy_per_mwh = round(sales_energy_price_per_mwh - energy_cost, 2)
+    gross_margin_total_per_mwh = round(sales_energy_price_per_mwh - energy_cost - dist_per_mwh, 2)
+
+    dealer_per_mwh = round(
+        hourly_result.dealer_commission_total_tl / (total_consumption / 1000.0), 2
+    ) if total_consumption > 0 else 0.0
+    imbalance_per_mwh = round(
+        hourly_result.imbalance_cost_total_tl / (total_consumption / 1000.0), 2
+    ) if total_consumption > 0 else 0.0
+
+    net_margin_per_mwh = round(
+        gross_margin_total_per_mwh - dealer_per_mwh - imbalance_per_mwh, 2
+    )
+
+    # Risk flags (priority ordered: P1 > P2, both can coexist)
+    risk_flags: list[dict] = []
+    if hourly_result.net_margin_total_tl < 0:
+        risk_flags.append({
+            "type": "LOSS_RISK",
+            "priority": 1,
+            "message": "Net marj negatif — teklif zarar üretir",
+        })
+    if gross_margin_total_per_mwh < 0:
+        risk_flags.append({
+            "type": "UNPROFITABLE_OFFER",
+            "priority": 2,
+            "message": "Toplam brüt marj negatif — dağıtım dahil maliyet satışı aşıyor",
+        })
 
     pricing = PricingSummary(
         multiplier=req.multiplier,
-        sales_price_tl_per_mwh=sales_price_per_mwh,
-        gross_margin_tl_per_mwh=gross_margin_per_mwh,
-        dealer_commission_tl_per_mwh=dealer_per_mwh,
-        net_margin_tl_per_mwh=net_margin_per_mwh,
+        # Dual sales price
+        sales_energy_price_per_mwh=sales_energy_price_per_mwh,
+        sales_effective_price_per_mwh=sales_effective_price_per_mwh,
+        # Dual margin (per MWh)
+        gross_margin_energy_per_mwh=gross_margin_energy_per_mwh,
+        gross_margin_total_per_mwh=gross_margin_total_per_mwh,
+        net_margin_per_mwh=net_margin_per_mwh,
+        # Cost breakdown (per MWh)
+        distribution_cost_per_mwh=round(dist_per_mwh, 2),
+        imbalance_cost_per_mwh=imbalance_per_mwh,
+        dealer_commission_per_mwh=dealer_per_mwh,
+        # Risk flags
+        risk_flags=risk_flags,
+        # Totals (TL)
         total_sales_tl=hourly_result.total_sales_revenue_tl,
         total_cost_tl=hourly_result.total_base_cost_tl,
         total_gross_margin_tl=hourly_result.total_gross_margin_tl,
-        total_dealer_commission_tl=round(
-            hourly_result.total_gross_margin_tl * req.dealer_commission_pct / 100, 2
-        ),
+        total_dealer_commission_tl=hourly_result.dealer_commission_total_tl,
         total_net_margin_tl=hourly_result.total_net_margin_tl,
+        # Backward compat aliases
+        sales_price_tl_per_mwh=sales_energy_price_per_mwh,
+        gross_margin_tl_per_mwh=gross_margin_energy_per_mwh,
+        dealer_commission_tl_per_mwh=dealer_per_mwh,
+        net_margin_tl_per_mwh=net_margin_per_mwh,
     )
+
+    # ── 14. Nominal vs Gerçek Marj Analizi ─────────────────────────────
+    try:
+        hourly_ptf_list = [e.ptf_tl_per_mwh for e in hourly_result.hour_costs]
+        hourly_kwh_list = [e.consumption_kwh for e in hourly_result.hour_costs]
+        hourly_ts_list = [f"{e.date} {e.hour:02d}:00" for e in hourly_result.hour_costs]
+        hourly_tz_list = [e.time_zone.value for e in hourly_result.hour_costs]
+
+        margin_reality_result = calculate_margin_reality(
+            offer_ptf_tl_per_mwh=weighted.weighted_ptf_tl_per_mwh,
+            yekdem_tl_per_mwh=yekdem,
+            multiplier=req.multiplier,
+            hourly_ptf_prices=hourly_ptf_list,
+            hourly_consumption_kwh=hourly_kwh_list,
+            hourly_timestamps=hourly_ts_list,
+            hourly_time_zones=hourly_tz_list,
+            include_yekdem=True,
+        )
+        margin_reality_dict = margin_reality_result.model_dump()
+    except Exception as e:
+        logger.warning("margin_reality calculation failed (non-critical): %s", e)
+        margin_reality_dict = None
 
     response = AnalyzeResponse(
         period=period,
@@ -565,6 +696,8 @@ def analyze(
         loss_map=loss_map,
         risk_score=risk,
         safe_multiplier=safe_result,
+        distribution=dist_info,
+        margin_reality=margin_reality_dict,
         warnings=warnings,
         data_quality=DataQualityReport(),
         cache_hit=False,
@@ -618,15 +751,13 @@ def simulate(
 
     yekdem_record = get_yekdem(db, period)
     if not yekdem_record:
-        raise HTTPException(
-            status_code=404,
-            detail={"error": "yekdem_not_found",
-                    "message": f"{period} dönemi için YEKDEM bedeli bulunamadı."},
-        )
+        yekdem_value = 0.0
+    else:
+        yekdem_value = yekdem_record.yekdem_tl_per_mwh
 
     rows = run_simulation(
         market_records, consumption_records,
-        yekdem_tl_per_mwh=yekdem_record.yekdem_tl_per_mwh,
+        yekdem_tl_per_mwh=yekdem_value,
         imbalance_params=req.imbalance_params,
         dealer_commission_pct=req.dealer_commission_pct,
         multiplier_start=req.multiplier_start,
@@ -641,7 +772,7 @@ def simulate(
     )
     safe_result = calculate_safe_multiplier(
         [pd],
-        yekdem_tl_per_mwh=yekdem_record.yekdem_tl_per_mwh,
+        yekdem_tl_per_mwh=yekdem_value,
         imbalance_params=req.imbalance_params,
         dealer_commission_pct=req.dealer_commission_pct,
     )
@@ -682,10 +813,9 @@ def compare(
 
         yekdem_record = get_yekdem(db, period)
         if not yekdem_record:
-            missing_periods.append(period)
-            continue
-
-        yekdem = yekdem_record.yekdem_tl_per_mwh
+            yekdem = 0.0  # Graceful fallback — include period with yekdem=0
+        else:
+            yekdem = yekdem_record.yekdem_tl_per_mwh
 
         # Hesapla
         weighted = calculate_weighted_prices(market_records, consumption_records)
@@ -831,8 +961,24 @@ def list_yekdem_endpoint(
 
 @pricing_router.get("/templates")
 def list_templates(db: Session = Depends(get_db)):
-    """Profil şablonları listesi."""
+    """Profil şablonları listesi — T1/T2/T3 oranları ve risk metadata dahil."""
     templates = db.query(ProfileTemplate).all()
+
+    # BUILTIN_TEMPLATES'ten metadata lookup
+    builtin_map = {t.name: t for t in BUILTIN_TEMPLATES}
+
+    def _template_item(name, display_name, description):
+        bt = builtin_map.get(name)
+        return {
+            "name": name,
+            "display_name": display_name,
+            "description": description or "",
+            "t1_pct": bt.t1_pct if bt else 40,
+            "t2_pct": bt.t2_pct if bt else 25,
+            "t3_pct": bt.t3_pct if bt else 35,
+            "risk_level": bt.risk_level if bt else "medium",
+            "risk_buffer_pct": bt.risk_buffer_pct if bt else 2,
+        }
 
     # DB'de yoksa in-memory listeden döndür
     if not templates:
@@ -840,11 +986,7 @@ def list_templates(db: Session = Depends(get_db)):
             "status": "ok",
             "count": len(BUILTIN_TEMPLATES),
             "items": [
-                {
-                    "name": t.name,
-                    "display_name": t.display_name,
-                    "description": t.description or "",
-                }
+                _template_item(t.name, t.display_name, t.description)
                 for t in BUILTIN_TEMPLATES
             ],
         }
@@ -853,11 +995,7 @@ def list_templates(db: Session = Depends(get_db)):
         "status": "ok",
         "count": len(templates),
         "items": [
-            {
-                "name": t.name,
-                "display_name": t.display_name,
-                "description": t.description or "",
-            }
+            _template_item(t.name, t.display_name, t.description)
             for t in templates
         ],
     }
@@ -906,6 +1044,94 @@ def list_periods(db: Session = Depends(get_db)):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Bayi Segment Endpoint'i (Public — frontend doğrulaması için)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Bayi Komisyon Segmentleri — PUAN PAYLAŞIMI MODELİ (tek doğru kaynak)
+BAYI_SEGMENTS = [
+    {"name": "Özel Onay",  "min_multiplier": 1.01, "max_multiplier": 1.03, "bayi_points": 0,   "requires_approval": True},
+    {"name": "Sabit",      "min_multiplier": 1.03, "max_multiplier": 1.06, "bayi_points": 1,   "requires_approval": False},
+    {"name": "Artırılmış", "min_multiplier": 1.06, "max_multiplier": 1.09, "bayi_points": 1.5, "requires_approval": False},
+    {"name": "Yüksek",     "min_multiplier": 1.09, "max_multiplier": 1.12, "bayi_points": 2,   "requires_approval": False},
+    {"name": "Yüksek+",    "min_multiplier": 1.12, "max_multiplier": 1.15, "bayi_points": 3,   "requires_approval": False},
+    {"name": "Premium",    "min_multiplier": 1.15, "max_multiplier": 99,   "bayi_points": 4,   "requires_approval": False},
+]
+
+
+@pricing_router.get("/bayi-segments")
+def list_bayi_segments():
+    """Bayi komisyon segmentlerini listele — frontend doğrulaması için.
+
+    Frontend bu endpoint'i kullanarak segment tanımlarını backend ile senkronize eder.
+    """
+    return {
+        "status": "ok",
+        "count": len(BAYI_SEGMENTS),
+        "segments": BAYI_SEGMENTS,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Dağıtım Tarife Endpoint'leri (Public — admin key gerekmez)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@pricing_router.get("/distribution-tariffs")
+def list_distribution_tariffs_public(
+    period: Optional[str] = Query(
+        default=None,
+        description="Dönem (YYYY-MM). Belirtilmezse en güncel tarife döner.",
+    ),
+):
+    """EPDK dağıtım tarifelerini listele — public endpoint (admin key gerekmez).
+
+    Frontend bu endpoint'i kullanarak dönem bazlı tarifeleri çeker.
+    """
+    tariffs = _get_all_tariffs(period)
+    return {
+        "status": "ok",
+        "period": period,
+        "count": len(tariffs),
+        "tariffs": tariffs,
+    }
+
+
+@pricing_router.get("/distribution-tariffs/lookup")
+def lookup_distribution_tariff_public(
+    voltage: str = Query(
+        ..., description="Gerilim seviyesi: AG veya OG",
+    ),
+    group: str = Query(
+        default="sanayi", description="Tarife grubu: sanayi, ticarethane, mesken, vb.",
+    ),
+    term: str = Query(
+        default="çift_terim", description="Terim tipi: tek_terim veya çift_terim (TT/ÇT)",
+    ),
+    period: Optional[str] = Query(
+        default=None,
+        description="Dönem (YYYY-MM). Belirtilmezse en güncel tarife döner.",
+    ),
+):
+    """Tek dağıtım tarifesi lookup — public endpoint (admin key gerekmez).
+
+    Frontend bu endpoint'i kullanarak belirli bir tarife kombinasyonunu sorgular.
+    """
+    result = _lookup_dist_tariff(group, voltage, term, period)
+    return {
+        "status": "ok",
+        "success": result.success,
+        "unit_price_tl_per_kwh": result.unit_price,
+        "tariff_key": result.tariff_key,
+        "normalized": {
+            "group": result.normalized_group,
+            "voltage": result.normalized_voltage,
+            "term": result.normalized_term,
+        },
+        "error_message": result.error_message,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Rapor Endpoint'leri
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -935,6 +1161,7 @@ def report_pdf(
         _get_or_generate_consumption(
             db, req.period, req.customer_id,
             req.use_template, req.template_name, req.template_monthly_kwh,
+            t1_kwh=req.t1_kwh, t2_kwh=req.t2_kwh, t3_kwh=req.t3_kwh,
         ),
         yekdem_tl_per_mwh=analysis_dict.get("supplier_cost", {}).get("yekdem_tl_per_mwh", 0),
         imbalance_params=req.imbalance_params,
@@ -948,6 +1175,7 @@ def report_pdf(
         _get_or_generate_consumption(
             db, req.period, req.customer_id,
             req.use_template, req.template_name, req.template_monthly_kwh,
+            t1_kwh=req.t1_kwh, t2_kwh=req.t2_kwh, t3_kwh=req.t3_kwh,
         ),
         yekdem_tl_per_mwh=analysis_dict.get("supplier_cost", {}).get("yekdem_tl_per_mwh", 0),
         multiplier=req.multiplier,
@@ -991,6 +1219,7 @@ def report_excel(
         _get_or_generate_consumption(
             db, req.period, req.customer_id,
             req.use_template, req.template_name, req.template_monthly_kwh,
+            t1_kwh=req.t1_kwh, t2_kwh=req.t2_kwh, t3_kwh=req.t3_kwh,
         ),
         yekdem_tl_per_mwh=analysis_dict.get("supplier_cost", {}).get("yekdem_tl_per_mwh", 0),
         imbalance_params=req.imbalance_params,
@@ -1004,6 +1233,7 @@ def report_excel(
         _get_or_generate_consumption(
             db, req.period, req.customer_id,
             req.use_template, req.template_name, req.template_monthly_kwh,
+            t1_kwh=req.t1_kwh, t2_kwh=req.t2_kwh, t3_kwh=req.t3_kwh,
         ),
         yekdem_tl_per_mwh=analysis_dict.get("supplier_cost", {}).get("yekdem_tl_per_mwh", 0),
         multiplier=req.multiplier,

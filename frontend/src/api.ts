@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE = 'http://127.0.0.1:8000';
+export const API_BASE = 'http://127.0.0.1:8000';
 
 export const api = axios.create({
   baseURL: API_BASE,
@@ -117,6 +117,8 @@ export async function fullProcess(
     yekdem_tl_per_mwh?: number;
     agreement_multiplier?: number;
     use_reference_prices?: boolean;
+    vat_rate?: number;
+    btv_rate?: number;
   }
 ): Promise<FullProcessResponse> {
   const formData = new FormData();
@@ -137,6 +139,12 @@ export async function fullProcess(
   }
   if (params.agreement_multiplier) {
     queryParams.append('agreement_multiplier', params.agreement_multiplier.toString());
+  }
+  if (params.vat_rate !== undefined) {
+    queryParams.append('vat_rate', params.vat_rate.toString());
+  }
+  if (params.btv_rate !== undefined) {
+    queryParams.append('btv_rate', params.btv_rate.toString());
   }
   
   const response = await api.post(`/full-process?${queryParams.toString()}`, formData, {
@@ -747,6 +755,10 @@ export interface PricingAnalyzeRequest {
   use_template?: boolean;
   template_name?: string;
   template_monthly_kwh?: number;
+  t1_kwh?: number;
+  t2_kwh?: number;
+  t3_kwh?: number;
+  voltage_level?: 'ag' | 'og';
 }
 
 export interface PricingRiskResult {
@@ -795,17 +807,80 @@ export interface PricingAnalyzeResponse {
     multiplier: number;
     sales_price_tl_per_mwh: number;
     gross_margin_tl_per_mwh: number;
+    dealer_commission_tl_per_mwh: number;
     net_margin_tl_per_mwh: number;
     total_sales_tl: number;
     total_cost_tl: number;
     total_gross_margin_tl: number;
+    total_dealer_commission_tl: number;
     total_net_margin_tl: number;
+    // Dual sales price (v3)
+    sales_energy_price_per_mwh?: number;
+    sales_effective_price_per_mwh?: number;
+    // Dual margin (v3)
+    gross_margin_energy_per_mwh?: number;
+    gross_margin_total_per_mwh?: number;
+    net_margin_per_mwh?: number;
+    // Cost breakdown (v3)
+    distribution_cost_per_mwh?: number;
+    imbalance_cost_per_mwh?: number;
+    dealer_commission_per_mwh?: number;
+    // Risk flags (v3)
+    risk_flags?: Array<{ type: string; priority: number; message: string }>;
+    // Customer savings (v3)
+    customer_savings_per_mwh?: number;
+    customer_reference_price_per_mwh?: number;
+    customer_reference_price_source?: string;
   };
+  distribution?: {
+    voltage_level: string;
+    unit_price_tl_per_kwh: number;
+    total_kwh: number;
+    total_tl: number;
+    tariff_key?: string;
+  };
+  time_zone_breakdown?: Record<string, {
+    label: string;
+    consumption_kwh: number;
+    consumption_pct: number;
+    weighted_ptf_tl_per_mwh: number;
+    weighted_smf_tl_per_mwh: number;
+    total_cost_tl: number;
+  }>;
   loss_map: PricingLossMap;
   risk_score: PricingRiskResult;
   safe_multiplier: PricingSafeMultiplier;
   warnings: Array<{ type: string; message: string }>;
   cache_hit: boolean;
+  margin_reality?: {
+    verdict: string;
+    pricing_decision: string;
+    pricing_decision_reason: string;
+    pricing_aggressiveness: string;
+    multiplier: number;
+    effective_multiplier: number;
+    nominal_margin_pct: number;
+    real_margin_pct: number;
+    margin_deviation_pct: number;
+    margin_deviation_tl: number;
+    real_margin_on_revenue_pct: number;
+    multiplier_delta: number;
+    real_margin_tl: number;
+    nominal_margin_tl: number;
+    negative_margin_hours: number;
+    positive_margin_total_tl: number;
+    negative_margin_total_tl: number;
+    total_hours: number;
+    break_even_multiplier: number;
+    safe_multiplier: number;
+    target_margin_pct: number;
+    required_multiplier_for_target: number;
+    total_offer_tl: number;
+    total_cost_tl: number;
+    total_consumption_kwh: number;
+    worst_hours: Array<{ hour: string; ptf_tl_per_mwh: number; consumption_kwh: number; cost_tl: number; margin_tl: number }>;
+    best_hours: Array<{ hour: string; ptf_tl_per_mwh: number; consumption_kwh: number; cost_tl: number; margin_tl: number }>;
+  } | null;
 }
 
 export interface PricingPeriodsResponse {
@@ -814,10 +889,21 @@ export interface PricingPeriodsResponse {
   yekdem_periods: string[];
 }
 
+export interface TemplateItem {
+  name: string;
+  display_name: string;
+  description: string;
+  t1_pct: number;      // Gündüz 06:00-16:59 tüketim dağılım %
+  t2_pct: number;      // Puant  17:00-21:59 tüketim dağılım %
+  t3_pct: number;      // Gece   22:00-05:59 tüketim dağılım %
+  risk_level: string;   // "low" | "medium" | "high" | "very_high"
+  risk_buffer_pct: number;  // Önerilen katsayıya eklenecek risk tamponu %
+}
+
 export interface PricingTemplatesResponse {
   status: string;
   count: number;
-  items: Array<{ name: string; display_name: string; description: string }>;
+  items: TemplateItem[];
 }
 
 /**

@@ -246,8 +246,8 @@ def calculate_offer(
     # Faturadan okunan dağıtım birim fiyatı
     extracted_dist_unit_price = extraction.distribution_unit_price_tl_per_kwh.value if extraction.distribution_unit_price_tl_per_kwh and extraction.distribution_unit_price_tl_per_kwh.value else 0
     
-    # EPDK tarifesinden hesapla (teklif için)
-    tariff_lookup: TariffLookupResult = get_distribution_unit_price_from_extraction(extraction)
+    # EPDK tarifesinden hesapla (teklif için) — dönem bazlı tarife seçimi
+    tariff_lookup: TariffLookupResult = get_distribution_unit_price_from_extraction(extraction, period=invoice_period)
     epdk_dist_unit_price = tariff_lookup.unit_price if tariff_lookup.success else None
     
     # MEVCUT FATURA için dağıtım birim fiyatı: FATURADAN OKUNAN DEĞER

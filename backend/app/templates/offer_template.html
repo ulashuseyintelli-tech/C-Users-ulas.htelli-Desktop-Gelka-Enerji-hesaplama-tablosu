@@ -193,9 +193,9 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 <!-- Teklif Parametreleri -->
 <table>
 <colgroup><col style="width:25%"><col style="width:25%"><col style="width:25%"><col style="width:25%"></colgroup>
+<tr><th>Mevcut Birim Fiyat</th><td>{{ current_unit_price | number(4) }} TL/kWh</td><th>Teklif Birim Fiyat</th><td>{{ offer_unit_price | number(4) }} TL/kWh</td></tr>
+<tr><th>Anlaşma Çarpanı</th><td>{{ agreement_multiplier | number(2) }}</td><th>Birim Fiyat Farkı</th><td>{{ (current_unit_price - offer_unit_price) | number(4) }} TL/kWh</td></tr>
 <tr><th>Ağırlıklı PTF</th><td>{{ weighted_ptf | number(2) }} TL/MWh</td><th>YEKDEM</th><td>{{ yekdem | number(2) }} TL/MWh</td></tr>
-<tr><th>Anlaşma Çarpanı</th><td>{{ agreement_multiplier | number(2) }}</td><th>Teklif Birim Fiyat</th><td>{{ offer_unit_price | number(4) }} TL/kWh</td></tr>
-<tr><th>Mevcut Birim Fiyat</th><td>{{ current_unit_price | number(4) }} TL/kWh</td><th>Birim Fiyat Farkı</th><td>{{ (current_unit_price - offer_unit_price) | number(4) }} TL/kWh</td></tr>
 </table>
 
 <!-- Fatura Bilgileri -->
@@ -204,6 +204,7 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 <colgroup><col style="width:25%"><col style="width:25%"><col style="width:25%"><col style="width:25%"></colgroup>
 <tr><th>Tedarikçi</th><td>{{ vendor or 'Manuel Giriş' }}</td><th>Dönem</th><td>{{ invoice_period or '-' }}</td></tr>
 <tr><th>Tüketim</th><td>{{ consumption_kwh | number }} kWh</td><th>Tarife Grubu</th><td>{{ tariff_group }}</td></tr>
+<tr><th>Dağıtım Birim Fiyatı</th><td>{{ (distribution_unit_price * 1000) | number(2) }} kr/kWh</td><th>KDV Oranı</th><td>%{{ (calc.meta_vat_rate * 100) | number(0) if calc.meta_vat_rate else '20' }}</td></tr>
 </table>
 
 <!-- Sonuç -->

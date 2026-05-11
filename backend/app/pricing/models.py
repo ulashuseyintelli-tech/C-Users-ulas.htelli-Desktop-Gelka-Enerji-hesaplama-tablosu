@@ -12,7 +12,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -127,12 +127,56 @@ class HourlyCostEntry(BaseModel):
 
 
 class HourlyCostResult(BaseModel):
-    """Saatlik maliyet hesaplama sonucu — tüm saatlerin toplu özeti."""
+    """Saatlik maliyet hesaplama sonucu — tüm saatlerin toplu özeti.
+
+    Dual Margin Model (v3):
+      - gross_margin_energy_total_tl: Satış - (PTF + YEKDEM) — enerji brüt marjı
+      - gross_margin_total_total_tl: Satış - (PTF + YEKDEM + Dağıtım) — toplam brüt marj
+      - total_gross_margin_tl: backward-compat alias → gross_margin_energy_total_tl
+      - total_net_margin_tl: backward-compat alias → net_margin_total_tl
+    """
     hour_costs: list[HourlyCostEntry] = Field(description="Her saat için maliyet detayı")
     total_base_cost_tl: float = Field(description="Toplam baz maliyet (TL)")
     total_sales_revenue_tl: float = Field(description="Toplam satış geliri (TL)")
-    total_gross_margin_tl: float = Field(description="Toplam brüt marj (TL)")
-    total_net_margin_tl: float = Field(description="Toplam net marj (TL)")
+
+    # Dual Margin (total TL)
+    gross_margin_energy_total_tl: float = Field(
+        default=0.0,
+        description="Enerji brüt marjı (TL) = Satış - (PTF + YEKDEM)",
+    )
+    gross_margin_total_total_tl: float = Field(
+        default=0.0,
+        description="Toplam brüt marj (TL) = Satış - (PTF + YEKDEM + Dağıtım)",
+    )
+    net_margin_total_tl: float = Field(
+        default=0.0,
+        description="Net marj (TL) = Toplam brüt marj - bayi - dengesizlik",
+    )
+
+    # Cost breakdown (total TL)
+    distribution_cost_total_tl: float = Field(
+        default=0.0,
+        description="Toplam dağıtım maliyeti (TL)",
+    )
+    imbalance_cost_total_tl: float = Field(
+        default=0.0,
+        description="Toplam dengesizlik maliyeti (TL)",
+    )
+    dealer_commission_total_tl: float = Field(
+        default=0.0,
+        description="Toplam bayi komisyonu (TL)",
+    )
+
+    # Backward compat aliases
+    total_gross_margin_tl: float = Field(
+        default=0.0,
+        description="Backward compat: Toplam brüt marj (TL) → gross_margin_energy_total_tl",
+    )
+    total_net_margin_tl: float = Field(
+        default=0.0,
+        description="Backward compat: Toplam net marj (TL) → net_margin_total_tl",
+    )
+
     supplier_real_cost_tl_per_mwh: float = Field(
         description="Tedarikçi gerçek maliyet (TL/MWh) = Ağırlıklı_PTF + YEKDEM + Dengesizlik",
     )
@@ -284,6 +328,46 @@ class AnalyzeRequest(BaseModel):
         default=None, ge=0,
         description="Şablon aylık toplam tüketim (kWh)",
     )
+    t1_kwh: Optional[float] = Field(
+        default=None, ge=0,
+        description="Gündüz (T1) tüketimi (kWh). use_template=false ile birlikte kullanılır.",
+    )
+    t2_kwh: Optional[float] = Field(
+        default=None, ge=0,
+        description="Puant (T2) tüketimi (kWh). use_template=false ile birlikte kullanılır.",
+    )
+    t3_kwh: Optional[float] = Field(
+        default=None, ge=0,
+        description="Gece (T3) tüketimi (kWh). use_template=false ile birlikte kullanılır.",
+    )
+    voltage_level: Optional[str] = Field(
+        default="og",
+        description="Gerilim seviyesi: 'ag' (Alçak Gerilim) veya 'og' (Orta Gerilim). Dağıtım bedeli hesaplamasında kullanılır.",
+    )
+
+    @model_validator(mode="after")
+    def check_t1t2t3_total(self) -> "AnalyzeRequest":
+        """use_template=false/None ve T1/T2/T3 alanları verilmişse toplam > 0 olmalı."""
+        # use_template=True ise T1/T2/T3 alanları yoksayılır — geriye uyumluluk
+        if self.use_template is True:
+            return self
+
+        t1 = self.t1_kwh or 0
+        t2 = self.t2_kwh or 0
+        t3 = self.t3_kwh or 0
+
+        # En az bir T1/T2/T3 alanı verilmişse toplam > 0 kontrolü yap
+        any_provided = (
+            self.t1_kwh is not None
+            or self.t2_kwh is not None
+            or self.t3_kwh is not None
+        )
+        if any_provided and (t1 + t2 + t3) <= 0:
+            raise ValueError(
+                "Toplam tüketim sıfır olamaz. En az bir zaman diliminde tüketim giriniz."
+            )
+
+        return self
 
 
 class SimulateRequest(BaseModel):
@@ -385,17 +469,113 @@ class SupplierCostSummary(BaseModel):
 
 
 class PricingSummary(BaseModel):
-    """Fiyatlama özeti — analiz yanıtında kullanılır."""
+    """Fiyatlama özeti — analiz yanıtında kullanılır.
+
+    Dual Price Model (v3):
+      - sales_energy_price_per_mwh: (PTF + YEKDEM) × katsayı
+      - sales_effective_price_per_mwh: enerji fiyatı + dağıtım
+    Dual Margin Model (v3):
+      - gross_margin_energy_per_mwh / gross_margin_total_per_mwh
+      - net_margin_per_mwh: tam formül (tüm giderler dahil)
+    Backward compat aliases:
+      - sales_price_tl_per_mwh → sales_energy_price_per_mwh
+      - gross_margin_tl_per_mwh → gross_margin_energy_per_mwh
+      - net_margin_tl_per_mwh → net_margin_per_mwh
+      - dealer_commission_tl_per_mwh → dealer_commission_per_mwh
+    """
     multiplier: float
-    sales_price_tl_per_mwh: float
-    gross_margin_tl_per_mwh: float
-    dealer_commission_tl_per_mwh: float
-    net_margin_tl_per_mwh: float
+
+    # Dual Sales Price (per MWh)
+    sales_energy_price_per_mwh: float = Field(
+        default=0.0,
+        description="Enerji satış fiyatı (TL/MWh) = (PTF + YEKDEM) × katsayı",
+    )
+    sales_effective_price_per_mwh: float = Field(
+        default=0.0,
+        description="Efektif toplam fiyat (TL/MWh) = enerji fiyatı + dağıtım",
+    )
+
+    # Dual Margin (per MWh)
+    gross_margin_energy_per_mwh: float = Field(
+        default=0.0,
+        description="Enerji brüt marjı (TL/MWh) = satış - (PTF + YEKDEM)",
+    )
+    gross_margin_total_per_mwh: float = Field(
+        default=0.0,
+        description="Toplam brüt marj (TL/MWh) = satış - (PTF + YEKDEM + dağıtım)",
+    )
+    net_margin_per_mwh: float = Field(
+        default=0.0,
+        description="Net marj (TL/MWh) = toplam brüt marj - bayi - dengesizlik",
+    )
+
+    # Cost breakdown (per MWh)
+    distribution_cost_per_mwh: float = Field(
+        default=0.0,
+        description="Dağıtım maliyeti (TL/MWh)",
+    )
+    imbalance_cost_per_mwh: float = Field(
+        default=0.0,
+        description="Dengesizlik maliyeti (TL/MWh)",
+    )
+    dealer_commission_per_mwh: float = Field(
+        default=0.0,
+        description="Bayi komisyonu (TL/MWh)",
+    )
+
+    # Customer savings + source metadata
+    customer_savings_per_mwh: Optional[float] = Field(
+        default=None,
+        description="Müşteri tasarrufu (TL/MWh) = referans fiyat - efektif fiyat",
+    )
+    customer_reference_price_per_mwh: Optional[float] = Field(
+        default=None,
+        description="Müşteri referans fiyatı (TL/MWh)",
+    )
+    customer_reference_price_source: Optional[str] = Field(
+        default=None,
+        description="Referans fiyat kaynağı: 'invoice' | 'manual_input' | 'market_estimate'",
+    )
+
+    # Risk flags (priority ordered: P1 > P2, both can coexist)
+    risk_flags: list[dict] = Field(
+        default_factory=list,
+        description="Risk bayrakları: P1 LOSS_RISK, P2 UNPROFITABLE_OFFER",
+    )
+
+    # Totals (TL)
     total_sales_tl: float
     total_cost_tl: float
     total_gross_margin_tl: float
     total_dealer_commission_tl: float
     total_net_margin_tl: float
+
+    # Backward compat aliases
+    sales_price_tl_per_mwh: float = Field(
+        default=0.0,
+        description="Backward compat → sales_energy_price_per_mwh",
+    )
+    gross_margin_tl_per_mwh: float = Field(
+        default=0.0,
+        description="Backward compat → gross_margin_energy_per_mwh",
+    )
+    dealer_commission_tl_per_mwh: float = Field(
+        default=0.0,
+        description="Backward compat → dealer_commission_per_mwh",
+    )
+    net_margin_tl_per_mwh: float = Field(
+        default=0.0,
+        description="Backward compat → net_margin_per_mwh",
+    )
+
+
+class DistributionInfo(BaseModel):
+    """Dağıtım bedeli bilgisi — analiz yanıtında kullanılır."""
+    voltage_level: str = Field(description="Gerilim seviyesi: AG veya OG")
+    unit_price_tl_per_kwh: float = Field(description="Dağıtım birim fiyatı (TL/kWh)")
+    total_kwh: float = Field(description="Toplam tüketim (kWh)")
+    total_tl: float = Field(description="Toplam dağıtım bedeli (TL)")
+    tariff_key: Optional[str] = Field(default=None, description="EPDK tarife anahtarı")
 
 
 class AnalyzeResponse(BaseModel):
@@ -412,6 +592,14 @@ class AnalyzeResponse(BaseModel):
     loss_map: LossMapSummary
     risk_score: RiskScoreResult
     safe_multiplier: SafeMultiplierResult
+    distribution: Optional[DistributionInfo] = Field(
+        default=None,
+        description="Dağıtım bedeli bilgisi (voltage_level verildiğinde hesaplanır)",
+    )
+    margin_reality: Optional[dict] = Field(
+        default=None,
+        description="Nominal vs Gerçek Marj Analizi — ana karar motoru",
+    )
     warnings: list[dict] = Field(default_factory=list)
     data_quality: DataQualityReport
     cache_hit: bool = Field(default=False)

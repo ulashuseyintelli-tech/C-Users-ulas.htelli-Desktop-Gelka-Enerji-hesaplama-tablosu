@@ -312,7 +312,10 @@ class TestHourlyCosts:
         assert len(loss_hours) >= 1
 
     def test_dealer_commission(self):
-        """Bayi komisyonu brüt marjdan düşülür."""
+        """Bayi komisyonu brüt marjdan düşülür.
+
+        Safety guard: imbalance floor = PTF * 0.01 = 2000 * 0.01 = 20 TL/MWh.
+        """
         market = [_market("2025-01-01", 10, 2000.0, 2100.0)]
         consumption = [_consumption("2025-01-01", 10, 1000.0)]
         params = ImbalanceParams(forecast_error_rate=0.0)
@@ -327,14 +330,19 @@ class TestHourlyCosts:
 
         # base_cost = 1000 × (2000+370) / 1000 = 2370.0
         # sales = 1000 × (2000+370) × 1.10 / 1000 = 2607.0
-        # gross_margin = 2607.0 - 2370.0 = 237.0
+        # gross_margin_energy = 2607.0 - 2370.0 = 237.0
         # dealer_commission = 237.0 × 5 / 100 = 11.85
-        # net_margin = 237.0 - 11.85 - 0 = 225.15
+        # imbalance_floor = 2000 * 0.01 = 20 TL/MWh → 20 * 1000/1000 = 20 TL
+        # net_margin = 237.0 (gross_total, dist=0) - 11.85 - 20.0 = 205.15
         assert result.total_gross_margin_tl == pytest.approx(237.0)
-        assert result.total_net_margin_tl == pytest.approx(225.15)
+        assert result.total_net_margin_tl == pytest.approx(205.15)
 
     def test_supplier_real_cost(self):
-        """Tedarikçi gerçek maliyet = Ağırlıklı_PTF + YEKDEM + Dengesizlik."""
+        """Tedarikçi gerçek maliyet = Ağırlıklı_PTF + YEKDEM + Dengesizlik.
+
+        Safety guard: imbalance floor = PTF * 0.01 = 2000 * 0.01 = 20 TL/MWh.
+        Calculated imbalance = 50 * 0.05 = 2.5, floor = 20 → uses 20.
+        """
         market = [_market("2025-01-01", 10, 2000.0, 2100.0)]
         consumption = [_consumption("2025-01-01", 10, 100.0)]
         params = ImbalanceParams(
@@ -350,8 +358,8 @@ class TestHourlyCosts:
             imbalance_params=params,
         )
 
-        # supplier_real_cost = 2000 + 370 + 2.5 = 2372.5
-        assert result.supplier_real_cost_tl_per_mwh == pytest.approx(2372.5)
+        # supplier_real_cost = 2000 + 370 + max(2.5, 2000*0.01) = 2000 + 370 + 20 = 2390
+        assert result.supplier_real_cost_tl_per_mwh == pytest.approx(2390.0)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

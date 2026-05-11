@@ -254,8 +254,8 @@ class TariffSimulator:
         Returns:
             TariffSimulationResult veya None (tarife bulunamazsa)
         """
-        # Dağıtım birim fiyatını al
-        tariff_lookup = self._get_distribution_rate(scenario)
+        # Dağıtım birim fiyatını al — dönem bazlı
+        tariff_lookup = self._get_distribution_rate(scenario, period=input.period)
         if not tariff_lookup.success:
             logger.warning(f"Tarife bulunamadı: {scenario.key}")
             return None
@@ -312,8 +312,8 @@ class TariffSimulator:
             total_cost_tl=round(total_cost_tl, 2) if total_cost_tl else None
         )
     
-    def _get_distribution_rate(self, scenario: TariffScenario) -> TariffLookupResult:
-        """Dağıtım birim fiyatını al"""
+    def _get_distribution_rate(self, scenario: TariffScenario, period: Optional[str] = None) -> TariffLookupResult:
+        """Dağıtım birim fiyatını al — dönem bazlı tarife seçimi"""
         # Tarife grubunu normalize et
         tariff_group = scenario.tariff_group.value
         if tariff_group in ["ticarethane", "mesken", "aydinlatma"]:
@@ -322,7 +322,8 @@ class TariffSimulator:
         return get_distribution_unit_price(
             tariff_group=tariff_group,
             voltage_level=scenario.voltage_level.value,
-            term_type=scenario.term_type.value
+            term_type=scenario.term_type.value,
+            period=period,
         )
 
 

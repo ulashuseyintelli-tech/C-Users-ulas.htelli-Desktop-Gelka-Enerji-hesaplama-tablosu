@@ -829,13 +829,13 @@ def _generate_pdf_reportlab(
     elements.append(Spacer(1, 0.05*cm))
     
     # Teklif Parametreleri - Maliyet tablosunun hemen altında
-    offer_unit_price = (params.weighted_ptf_tl_per_mwh / 1000 + params.yekdem_tl_per_mwh / 1000) * params.agreement_multiplier
+    offer_unit_price = calculation.offer_energy_tl / consumption if consumption > 0 else (params.weighted_ptf_tl_per_mwh / 1000 + params.yekdem_tl_per_mwh / 1000) * params.agreement_multiplier
     current_unit_price = calculation.current_energy_tl / consumption if consumption > 0 else 0
     
     param_data = [
+        ["Mevcut Birim Fiyat", f"{fmt_num(current_unit_price, 4)} TL/kWh", "Teklif Birim Fiyat", f"{fmt_num(offer_unit_price, 4)} TL/kWh"],
+        ["Anlaşma Çarpanı", fmt_num(params.agreement_multiplier), "Birim Fiyat Farkı", f"{fmt_num(current_unit_price - offer_unit_price, 4)} TL/kWh"],
         ["Ağırlıklı PTF", f"{fmt_num(params.weighted_ptf_tl_per_mwh)} TL/MWh", "YEKDEM", f"{fmt_num(params.yekdem_tl_per_mwh)} TL/MWh"],
-        ["Anlaşma Çarpanı", fmt_num(params.agreement_multiplier), "Teklif Birim Fiyat", f"{fmt_num(offer_unit_price, 4)} TL/kWh"],
-        ["Mevcut Birim Fiyat", f"{fmt_num(current_unit_price, 4)} TL/kWh", "Birim Fiyat Farkı", f"{fmt_num(current_unit_price - offer_unit_price, 4)} TL/kWh"],
     ]
     # 4 eşit sütun
     t = Table(param_data, colWidths=[col4, col4, col4, col4])

@@ -437,7 +437,11 @@ _CORS_ORIGINS_ENV = os.getenv("CORS_ALLOWED_ORIGINS", "")  # comma-separated
 _cors_origins: list[str] = (
     [o.strip() for o in _CORS_ORIGINS_ENV.split(",") if o.strip()]
     if _CORS_ORIGINS_ENV
-    else ["http://localhost:3000", "http://127.0.0.1:3000"]  # dev — explicit, asla "*"
+    else [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "null",  # Electron production: file:// protocol sends Origin: null
+    ]
 )
 _cors_env = os.getenv("ENV", "development").lower()
 
@@ -947,6 +951,8 @@ async def full_process(
     yekdem_tl_per_mwh: Optional[float] = Query(default=None, description="YEKDEM (TL/MWh) - boş bırakılırsa DB'den çekilir"),
     agreement_multiplier: float = 1.01,
     use_reference_prices: bool = Query(default=True, description="True: DB'den çek, False: verilen değerleri kullan"),
+    vat_rate: float = Query(default=0.20, description="KDV oranı (0.20 = %20, 0.10 = %10 tarımsal sulama)"),
+    btv_rate: float = Query(default=0.01, description="BTV oranı (0.01 = %1 sanayi, 0.05 = %5 ticari)"),
     fast_mode: bool = Query(default=False, description="Hızlı mod: gpt-4o-mini (varsayılan: false - gpt-4o kullan)"),
     debug: bool = Query(default=False, description="Debug modu: LLM raw output dahil"),
     db: Session = Depends(get_db)
@@ -1286,7 +1292,9 @@ async def full_process(
                 weighted_ptf_tl_per_mwh=weighted_ptf_tl_per_mwh,
                 yekdem_tl_per_mwh=yekdem_tl_per_mwh,
                 agreement_multiplier=agreement_multiplier,
-                use_reference_prices=use_reference_prices
+                use_reference_prices=use_reference_prices,
+                vat_rate=vat_rate,
+                btv_rate=btv_rate,
             )
             try:
                 calculation = calculate_offer(extraction, params, db=db)
@@ -4530,6 +4538,52 @@ async def get_prices_with_epias_fallback(
         "source": prices.source,
         "source_description": source_desc,
         "is_locked": prices.is_locked
+    }
+
+
+@app.post("/api/epias/prices/{period}")
+async def save_period_prices(
+    period: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Dönem için PTF/YEKDEM fiyatlarını kaydet (admin key gerektirmez).
+    
+    Frontend'den doğrudan çağrılır — kullanıcı PTF/YEKDEM değerini
+    düzenleyip kaydettiğinde bu endpoint'e POST yapılır.
+    
+    JSON Body:
+        ptf_tl_per_mwh: PTF değeri (TL/MWh)
+        yekdem_tl_per_mwh: YEKDEM değeri (TL/MWh)
+    """
+    from .market_prices import upsert_market_prices
+    
+    body = await request.json()
+    ptf = body.get("ptf_tl_per_mwh")
+    yekdem = body.get("yekdem_tl_per_mwh")
+    
+    if ptf is None and yekdem is None:
+        raise HTTPException(status_code=422, detail="ptf_tl_per_mwh veya yekdem_tl_per_mwh gerekli")
+    
+    result = upsert_market_prices(
+        db=db,
+        period=period,
+        ptf_tl_per_mwh=ptf if ptf is not None else 0,
+        yekdem_tl_per_mwh=yekdem if yekdem is not None else 0,
+        source="manual_override",
+    )
+    
+    success, message = result
+    if not success:
+        raise HTTPException(status_code=422, detail=message)
+    
+    return {
+        "status": "ok",
+        "period": period,
+        "ptf_tl_per_mwh": ptf,
+        "yekdem_tl_per_mwh": yekdem,
+        "message": message,
     }
 
 

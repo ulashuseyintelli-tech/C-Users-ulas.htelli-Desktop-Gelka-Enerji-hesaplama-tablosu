@@ -40,69 +40,137 @@ class TariffLookupResult:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# EPDK DAĞITIM TARİFELERİ (Şubat 2026)
+# EPDK DAĞITIM TARİFELERİ — DÖNEM BAZLI
 # ═══════════════════════════════════════════════════════════════════════════════
-# Bu tablo EPDK tarafından belirlenir ve periyodik olarak güncellenir.
-# Kaynak: EPDK Elektrik Piyasası Tarifeler Yönetmeliği
-# Son güncelleme: 2026-02
+# EPDK tarifeleri periyodik olarak güncellenir.
+# Fatura dönemi (period) hangi tarife dönemine düşüyorsa o fiyat uygulanır.
+#
+# Dönem kuralı:
+#   period < "2026-04"  → Şubat 2026 tarifeleri (eski)
+#   period >= "2026-04" → Nisan 2026 tarifeleri (yeni, ~%32 zam)
+#
+# Birimler: TL/kWh (Excel'deki kr/kWh × 10 = TL/MWh, / 1000 = TL/kWh)
+# ═══════════════════════════════════════════════════════════════════════════════
 
-DISTRIBUTION_TARIFFS = [
-    # ═══════════════════════════════════════════════════════════════════════════
-    # İSK - İletim Sistemi Kullanıcısı (dağıtım bedeli yok)
-    # ═══════════════════════════════════════════════════════════════════════════
-    DistributionTariff("isk_sanayi", "iletim", "iletim", 0.00000),   # İSK Sanayi (İletim)
-    
-    # ═══════════════════════════════════════════════════════════════════════════
-    # OG (Orta Gerilim) - Çift Terim (ÇT)
-    # ═══════════════════════════════════════════════════════════════════════════
-    DistributionTariff("sanayi", "OG", "çift_terim", 0.81060),       # DSK Sanayi ÇT OG
-    DistributionTariff("ticarethane", "OG", "çift_terim", 1.26329),  # DSK Ticarethane ÇT OG
-    DistributionTariff("mesken", "OG", "çift_terim", 1.25129),       # DSK Mesken ÇT OG
-    DistributionTariff("aydinlatma", "OG", "çift_terim", 1.21249),   # DSK Aydınlatma ÇT OG
-    DistributionTariff("tarimsal", "OG", "çift_terim", 1.04042),     # DSK Tarımsal ÇT OG
-    
-    # ═══════════════════════════════════════════════════════════════════════════
-    # OG (Orta Gerilim) - Tek Terim (TT)
-    # ═══════════════════════════════════════════════════════════════════════════
-    DistributionTariff("sanayi", "OG", "tek_terim", 0.89537),        # DSK Sanayi TT OG
-    DistributionTariff("ticarethane", "OG", "tek_terim", 1.57581),   # DSK Ticarethane TT OG
-    DistributionTariff("mesken", "OG", "tek_terim", 1.54502),        # DSK Mesken TT OG
-    DistributionTariff("aydinlatma", "OG", "tek_terim", 1.51248),    # DSK Aydınlatma TT OG
-    DistributionTariff("tarimsal", "OG", "tek_terim", 1.29543),      # DSK Tarımsal TT OG
-    
-    # ═══════════════════════════════════════════════════════════════════════════
-    # AG (Alçak Gerilim) - Tek Terim (TT)
-    # ═══════════════════════════════════════════════════════════════════════════
-    DistributionTariff("sanayi", "AG", "tek_terim", 1.38532),        # DSK Sanayi TT AG
-    DistributionTariff("ticarethane", "AG", "tek_terim", 1.87741),   # DSK Ticarethane TT AG
-    DistributionTariff("mesken", "AG", "tek_terim", 1.83617),        # DSK Mesken TT AG
-    DistributionTariff("mesken_sehit_gazi", "AG", "tek_terim", 1.03557),  # DSK Mesken Şehit Gazi
-    DistributionTariff("tarimsal", "AG", "tek_terim", 1.54263),      # DSK Tarımsal TT AG
-    DistributionTariff("aydinlatma", "AG", "tek_terim", 1.79815),    # DSK Aydınlatma TT AG
-    
-    # ═══════════════════════════════════════════════════════════════════════════
-    # AG (Alçak Gerilim) - Çift Terim (ÇT) - Görüntüde yok, tahmini değerler
-    # ═══════════════════════════════════════════════════════════════════════════
-    DistributionTariff("sanayi", "AG", "çift_terim", 1.20),          # Tahmini
-    DistributionTariff("ticarethane", "AG", "çift_terim", 1.65),     # Tahmini
-    DistributionTariff("mesken", "AG", "çift_terim", 1.60),          # Tahmini
-    DistributionTariff("tarimsal", "AG", "çift_terim", 1.35),        # Tahmini
-    DistributionTariff("aydinlatma", "AG", "çift_terim", 1.55),      # Tahmini
-    
-    # ═══════════════════════════════════════════════════════════════════════════
-    # Geriye uyumluluk için kamu_ozel alias'ları (ticarethane ile eşleşir)
-    # ═══════════════════════════════════════════════════════════════════════════
-    DistributionTariff("kamu_ozel", "OG", "çift_terim", 1.26329),    # = ticarethane OG ÇT
-    DistributionTariff("kamu_ozel", "OG", "tek_terim", 1.57581),     # = ticarethane OG TT
-    DistributionTariff("kamu_ozel", "AG", "tek_terim", 1.87741),     # = ticarethane AG TT
-    DistributionTariff("kamu_ozel", "AG", "çift_terim", 1.65),       # = ticarethane AG ÇT (tahmini)
+# Şubat 2026 tarifeleri (period < 2026-04 için geçerli)
+_TARIFFS_FEB_2026: list[DistributionTariff] = [
+    # İSK
+    DistributionTariff("isk_sanayi", "iletim", "iletim", 0.00000),
+    # OG ÇT
+    DistributionTariff("sanayi", "OG", "çift_terim", 0.81060),
+    DistributionTariff("ticarethane", "OG", "çift_terim", 1.26329),
+    DistributionTariff("mesken", "OG", "çift_terim", 1.25129),
+    DistributionTariff("aydinlatma", "OG", "çift_terim", 1.21249),
+    DistributionTariff("tarimsal", "OG", "çift_terim", 1.04042),
+    # OG TT
+    DistributionTariff("sanayi", "OG", "tek_terim", 0.89537),
+    DistributionTariff("ticarethane", "OG", "tek_terim", 1.57581),
+    DistributionTariff("mesken", "OG", "tek_terim", 1.54502),
+    DistributionTariff("aydinlatma", "OG", "tek_terim", 1.51248),
+    DistributionTariff("tarimsal", "OG", "tek_terim", 1.29543),
+    # AG TT
+    DistributionTariff("sanayi", "AG", "tek_terim", 1.38532),
+    DistributionTariff("ticarethane", "AG", "tek_terim", 1.87741),
+    DistributionTariff("mesken", "AG", "tek_terim", 1.83617),
+    DistributionTariff("mesken_sehit_gazi", "AG", "tek_terim", 1.03557),
+    DistributionTariff("tarimsal", "AG", "tek_terim", 1.54263),
+    DistributionTariff("aydinlatma", "AG", "tek_terim", 1.79815),
+    # AG ÇT (tahmini)
+    DistributionTariff("sanayi", "AG", "çift_terim", 1.20),
+    DistributionTariff("ticarethane", "AG", "çift_terim", 1.65),
+    DistributionTariff("mesken", "AG", "çift_terim", 1.60),
+    DistributionTariff("tarimsal", "AG", "çift_terim", 1.35),
+    DistributionTariff("aydinlatma", "AG", "çift_terim", 1.55),
+    # kamu_ozel alias
+    DistributionTariff("kamu_ozel", "OG", "çift_terim", 1.26329),
+    DistributionTariff("kamu_ozel", "OG", "tek_terim", 1.57581),
+    DistributionTariff("kamu_ozel", "AG", "tek_terim", 1.87741),
+    DistributionTariff("kamu_ozel", "AG", "çift_terim", 1.65),
 ]
 
-# Hızlı lookup için dict
-_TARIFF_LOOKUP: dict[str, float] = {
-    f"{t.tariff_group}/{t.voltage_level}/{t.term_type}": t.unit_price_tl_per_kwh
-    for t in DISTRIBUTION_TARIFFS
-}
+# Nisan 2026 tarifeleri (period >= 2026-04 için geçerli, ~%32 zam)
+_TARIFFS_APR_2026: list[DistributionTariff] = [
+    # İSK
+    DistributionTariff("isk_sanayi", "iletim", "iletim", 0.00000),
+    # OG ÇT
+    DistributionTariff("sanayi", "OG", "çift_terim", 1.07050),
+    DistributionTariff("ticarethane", "OG", "çift_terim", 1.66835),
+    DistributionTariff("mesken", "OG", "çift_terim", 1.65248),
+    DistributionTariff("aydinlatma", "OG", "çift_terim", 1.60100),  # tahmini %32
+    DistributionTariff("tarimsal", "OG", "çift_terim", 1.37400),
+    # OG TT
+    DistributionTariff("sanayi", "OG", "tek_terim", 1.18246),
+    DistributionTariff("ticarethane", "OG", "tek_terim", 2.08106),
+    DistributionTariff("mesken", "OG", "tek_terim", 2.04040),
+    DistributionTariff("aydinlatma", "OG", "tek_terim", 1.99700),   # tahmini %32
+    DistributionTariff("tarimsal", "OG", "tek_terim", 1.71078),
+    # AG TT
+    DistributionTariff("sanayi", "AG", "tek_terim", 1.82950),
+    DistributionTariff("ticarethane", "AG", "tek_terim", 2.47936),
+    DistributionTariff("mesken", "AG", "tek_terim", 2.42490),
+    DistributionTariff("mesken_sehit_gazi", "AG", "tek_terim", 1.36700),  # tahmini %32
+    DistributionTariff("tarimsal", "AG", "tek_terim", 2.03600),     # tahmini %32
+    DistributionTariff("aydinlatma", "AG", "tek_terim", 2.37600),   # tahmini %32
+    # AG ÇT (tahmini)
+    DistributionTariff("sanayi", "AG", "çift_terim", 1.58400),      # tahmini %32
+    DistributionTariff("ticarethane", "AG", "çift_terim", 2.17800),  # tahmini %32
+    DistributionTariff("mesken", "AG", "çift_terim", 2.11200),      # tahmini %32
+    DistributionTariff("tarimsal", "AG", "çift_terim", 1.78200),    # tahmini %32
+    DistributionTariff("aydinlatma", "AG", "çift_terim", 2.04600),  # tahmini %32
+    # kamu_ozel alias
+    DistributionTariff("kamu_ozel", "OG", "çift_terim", 1.66835),
+    DistributionTariff("kamu_ozel", "OG", "tek_terim", 2.08106),
+    DistributionTariff("kamu_ozel", "AG", "tek_terim", 2.47936),
+    DistributionTariff("kamu_ozel", "AG", "çift_terim", 2.17800),
+    # OSB tarifeleri (özel bölge — kendi dağıtım bedelleri)
+    # Çerkezköy: Tüm kalemler kWh'ye bölünmüş toplam = 0.604 TL/kWh
+    # (Sabit 3681/23910 + Değişken 0.135 + Tek Terim DB 0.315 = ~0.604)
+    DistributionTariff("osb_cerkezkoy", "OG", "tek_terim", 0.60400),  # Çerkezköy OSB toplam
+    # İkitelli: İletim (0.23) + OSB Dağıtım (0.580532) = 0.810532 TL/kWh
+    DistributionTariff("osb_ikitelli", "OG", "tek_terim", 0.81053),   # İkitelli OSB toplam
+]
+
+# Dönem → tarife tablosu eşleştirmesi
+# Tuple: (başlangıç_period_inclusive, tarife_listesi)
+# Sıralama: en yeni önce — ilk eşleşen kullanılır
+_TARIFF_PERIODS: list[tuple[str, list[DistributionTariff]]] = [
+    ("2026-04", _TARIFFS_APR_2026),   # Nisan 2026+ → yeni tarifeler
+    ("2000-01", _TARIFFS_FEB_2026),   # Önceki tüm dönemler → Şubat 2026 tarifeleri
+]
+
+
+def _get_tariffs_for_period(period: Optional[str] = None) -> list[DistributionTariff]:
+    """Dönem bazlı tarife tablosunu döndür.
+
+    Args:
+        period: "YYYY-MM" formatında dönem. None ise en güncel tarife kullanılır.
+
+    Returns:
+        İlgili dönemin DistributionTariff listesi.
+    """
+    if period is None:
+        return _TARIFFS_APR_2026  # varsayılan: en güncel
+
+    for start_period, tariffs in _TARIFF_PERIODS:
+        if period >= start_period:
+            return tariffs
+
+    return _TARIFFS_FEB_2026  # fallback
+
+
+def _build_lookup(tariffs: list[DistributionTariff]) -> dict[str, float]:
+    """Tarife listesinden hızlı lookup dict oluştur."""
+    return {
+        f"{t.tariff_group}/{t.voltage_level}/{t.term_type}": t.unit_price_tl_per_kwh
+        for t in tariffs
+    }
+
+
+# Geriye uyumluluk: period parametresi olmayan çağrılar için varsayılan tablo
+# (eski kod DISTRIBUTION_TARIFFS ve _TARIFF_LOOKUP kullanıyor olabilir)
+DISTRIBUTION_TARIFFS = _TARIFFS_APR_2026
+
+_TARIFF_LOOKUP: dict[str, float] = _build_lookup(DISTRIBUTION_TARIFFS)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -275,15 +343,21 @@ def parse_tariff_string(tariff_string: str) -> Tuple[str, str, str]:
 def get_distribution_unit_price(
     tariff_group: str,
     voltage_level: str,
-    term_type: str
+    term_type: str,
+    period: Optional[str] = None,
 ) -> TariffLookupResult:
     """
     Tarife bilgilerine göre dağıtım birim fiyatını döndür.
+    
+    Dönem bazlı tarife seçimi:
+      period < "2026-04"  → Şubat 2026 tarifeleri
+      period >= "2026-04" → Nisan 2026 tarifeleri (~%32 zam)
     
     Args:
         tariff_group: Raw tarife grubu (normalize edilecek)
         voltage_level: Raw gerilim seviyesi (normalize edilecek)
         term_type: Raw terim tipi (normalize edilecek)
+        period: Fatura dönemi "YYYY-MM" (None ise en güncel tarife)
     
     Returns:
         TariffLookupResult - success, unit_price, error_message içerir
@@ -317,11 +391,13 @@ def get_distribution_unit_price(
             error_message=error_msg
         )
     
-    # Tabloda ara
-    unit_price = _TARIFF_LOOKUP.get(tariff_key)
+    # Dönem bazlı tarife tablosunu seç
+    tariffs = _get_tariffs_for_period(period)
+    lookup = _build_lookup(tariffs)
+    unit_price = lookup.get(tariff_key)
     
     if unit_price is None:
-        error_msg = f"Tarife tablosunda bulunamadı: {tariff_key}"
+        error_msg = f"Tarife tablosunda bulunamadı: {tariff_key} (dönem: {period or 'güncel'})"
         logger.warning(f"EPDK tarife lookup başarısız: {error_msg}")
         return TariffLookupResult(
             success=False,
@@ -333,7 +409,8 @@ def get_distribution_unit_price(
             error_message=error_msg
         )
     
-    logger.info(f"EPDK tarife lookup başarılı: {tariff_key} → {unit_price:.6f} TL/kWh")
+    period_label = f"Nisan 2026+" if period and period >= "2026-04" else "Şubat 2026"
+    logger.info(f"EPDK tarife lookup başarılı: {tariff_key} → {unit_price:.6f} TL/kWh (tarife dönemi: {period_label})")
     return TariffLookupResult(
         success=True,
         unit_price=unit_price,
@@ -358,7 +435,7 @@ def get_distribution_from_tariff_string(tariff_string: str) -> TariffLookupResul
     return get_distribution_unit_price(group, voltage, term)
 
 
-def get_distribution_unit_price_from_extraction(extraction) -> TariffLookupResult:
+def get_distribution_unit_price_from_extraction(extraction, period: Optional[str] = None) -> TariffLookupResult:
     """
     Extraction sonucundan tarife bilgilerini alıp dağıtım birim fiyatını döndür.
     
@@ -368,6 +445,7 @@ def get_distribution_unit_price_from_extraction(extraction) -> TariffLookupResul
     
     Args:
         extraction: InvoiceExtraction objesi
+        period: Fatura dönemi "YYYY-MM" (None ise en güncel tarife)
     
     Returns:
         TariffLookupResult
@@ -391,30 +469,38 @@ def get_distribution_unit_price_from_extraction(extraction) -> TariffLookupResul
         if term_type == "unknown":
             term_type = extraction.meta.term_type_guess or "unknown"
     
-    logger.debug(f"Extraction'dan tarife bilgisi: group={tariff_group}, voltage={voltage_level}, term={term_type}")
+    # 3. Extraction'dan dönem bilgisi (fallback)
+    if period is None and hasattr(extraction, 'invoice_period') and extraction.invoice_period:
+        period = extraction.invoice_period
     
-    return get_distribution_unit_price(tariff_group, voltage_level, term_type)
+    logger.debug(f"Extraction'dan tarife bilgisi: group={tariff_group}, voltage={voltage_level}, term={term_type}, period={period}")
+    
+    return get_distribution_unit_price(tariff_group, voltage_level, term_type, period=period)
 
 
 def calculate_distribution_amount(
     total_kwh: float,
     tariff_group: str,
     voltage_level: str,
-    term_type: str
+    term_type: str,
+    period: Optional[str] = None,
 ) -> Tuple[Optional[float], TariffLookupResult]:
     """
     Toplam kWh ve tarife bilgilerinden dağıtım bedelini hesapla.
+    
+    Dönem bazlı tarife seçimi otomatik yapılır.
     
     Args:
         total_kwh: Toplam tüketim (kWh)
         tariff_group: Tarife grubu
         voltage_level: Gerilim seviyesi
         term_type: Terim tipi
+        period: Fatura dönemi "YYYY-MM" (None ise en güncel tarife)
     
     Returns:
         (distribution_amount_tl, lookup_result)
     """
-    lookup = get_distribution_unit_price(tariff_group, voltage_level, term_type)
+    lookup = get_distribution_unit_price(tariff_group, voltage_level, term_type, period=period)
     
     if not lookup.success or lookup.unit_price is None:
         return (None, lookup)
@@ -429,10 +515,15 @@ def calculate_distribution_amount(
 # YARDIMCI FONKSİYONLAR
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def get_all_tariffs() -> list[dict]:
+def get_all_tariffs(period: Optional[str] = None) -> list[dict]:
     """
     Tüm tarifeleri liste olarak döndür (UI için).
+    
+    Args:
+        period: Fatura dönemi "YYYY-MM". None ise en güncel tarife.
     """
+    tariffs = _get_tariffs_for_period(period)
+    
     group_labels = {
         "sanayi": "Sanayi",
         "ticarethane": "Ticarethane",
@@ -441,6 +532,8 @@ def get_all_tariffs() -> list[dict]:
         "tarimsal": "Tarımsal",
         "aydinlatma": "Aydınlatma",
         "kamu_ozel": "Kamu ve Özel Sektör",
+        "osb_cerkezkoy": "Çerkezköy OSB",
+        "osb_ikitelli": "İkitelli OSB",
     }
     
     return [
@@ -454,7 +547,7 @@ def get_all_tariffs() -> list[dict]:
             "unit_price_tl_per_kwh": t.unit_price_tl_per_kwh,
             "label": f"{group_labels.get(t.tariff_group, t.tariff_group.title())} {t.voltage_level} {'Tek' if t.term_type == 'tek_terim' else 'Çift'} Terim"
         }
-        for t in DISTRIBUTION_TARIFFS
+        for t in tariffs
     ]
 
 
@@ -463,7 +556,8 @@ def validate_distribution_against_table(
     tariff_group: str,
     voltage_level: str,
     term_type: str,
-    tolerance_percent: float = 5.0
+    tolerance_percent: float = 5.0,
+    period: Optional[str] = None,
 ) -> Tuple[bool, Optional[str]]:
     """
     Faturadan okunan dağıtım birim fiyatını EPDK tablosuyla karşılaştır.
@@ -472,11 +566,12 @@ def validate_distribution_against_table(
         extracted_unit_price: Faturadan okunan birim fiyat
         tariff_group, voltage_level, term_type: Tarife bilgileri
         tolerance_percent: Kabul edilebilir fark yüzdesi
+        period: Fatura dönemi "YYYY-MM" (None ise en güncel tarife)
     
     Returns:
         (is_valid, warning_message)
     """
-    lookup = get_distribution_unit_price(tariff_group, voltage_level, term_type)
+    lookup = get_distribution_unit_price(tariff_group, voltage_level, term_type, period=period)
     
     if not lookup.success or lookup.unit_price is None:
         return (True, None)  # Karşılaştırma yapılamıyor, geç
