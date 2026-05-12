@@ -1,0 +1,755 @@
+{
+  "_meta": {
+    "script": "01_inventory_endpoints.py",
+    "scanned_root": "backend/app",
+    "file_count": 156,
+    "endpoint_count": 91,
+    "router_prefixes": {
+      "router": "/pdf",
+      "pricing_router": "/api/pricing"
+    },
+    "include_router_prefixes": {
+      "pricing_router": ""
+    },
+    "spot_check": {
+      "/api/pricing/analyze": true,
+      "/api/epias/prices/{period}": true,
+      "/api/full-process": false
+    },
+    "router_endpoint_counts": {
+      "app": 73,
+      "router": 3,
+      "pricing_router": 15
+    }
+  },
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/metrics",
+      "function": "prometheus_metrics",
+      "file": "backend/app/main.py",
+      "line": 474,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/telemetry/events",
+      "function": "ingest_telemetry_events",
+      "file": "backend/app/main.py",
+      "line": 542,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/health",
+      "function": "health",
+      "file": "backend/app/main.py",
+      "line": 616,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/health/ready",
+      "function": "health_ready",
+      "file": "backend/app/main.py",
+      "line": 621,
+      "router": "app"
+    },
+    {
+      "method": "DELETE",
+      "path": "/cache",
+      "function": "clear_cache",
+      "file": "backend/app/main.py",
+      "line": 761,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/analyze-invoice",
+      "function": "analyze_invoice",
+      "file": "backend/app/main.py",
+      "line": 776,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/calculate-offer",
+      "function": "calculate_offer_endpoint",
+      "file": "backend/app/main.py",
+      "line": 906,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/full-process",
+      "function": "full_process",
+      "file": "backend/app/main.py",
+      "line": 947,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/customers",
+      "function": "create_customer",
+      "file": "backend/app/main.py",
+      "line": 1419,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/customers",
+      "function": "list_customers",
+      "file": "backend/app/main.py",
+      "line": 1452,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/customers/{customer_id}",
+      "function": "get_customer",
+      "file": "backend/app/main.py",
+      "line": 1486,
+      "router": "app"
+    },
+    {
+      "method": "PUT",
+      "path": "/customers/{customer_id}",
+      "function": "update_customer",
+      "file": "backend/app/main.py",
+      "line": 1517,
+      "router": "app"
+    },
+    {
+      "method": "DELETE",
+      "path": "/customers/{customer_id}",
+      "function": "delete_customer",
+      "file": "backend/app/main.py",
+      "line": 1552,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/offers",
+      "function": "create_offer",
+      "file": "backend/app/main.py",
+      "line": 1569,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/offers",
+      "function": "list_offers",
+      "file": "backend/app/main.py",
+      "line": 1612,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/offers/{offer_id}",
+      "function": "get_offer",
+      "file": "backend/app/main.py",
+      "line": 1649,
+      "router": "app"
+    },
+    {
+      "method": "PUT",
+      "path": "/offers/{offer_id}/status",
+      "function": "update_offer_status",
+      "file": "backend/app/main.py",
+      "line": 1686,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/offers/{offer_id}/generate-pdf",
+      "function": "generate_pdf_for_offer",
+      "file": "backend/app/main.py",
+      "line": 1788,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/offers/{offer_id}/download",
+      "function": "download_offer_pdf",
+      "file": "backend/app/main.py",
+      "line": 1856,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/offers/{offer_id}/generate-html",
+      "function": "generate_html_for_offer",
+      "file": "backend/app/main.py",
+      "line": 1934,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/generate-pdf-direct",
+      "function": "generate_pdf_direct",
+      "file": "backend/app/main.py",
+      "line": 1962,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/generate-pdf-simple",
+      "function": "generate_pdf_simple",
+      "file": "backend/app/main.py",
+      "line": 1988,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/generate-html-direct",
+      "function": "generate_html_direct",
+      "file": "backend/app/main.py",
+      "line": 2260,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/stats",
+      "function": "get_statistics",
+      "file": "backend/app/main.py",
+      "line": 2282,
+      "router": "app"
+    },
+    {
+      "method": "PATCH",
+      "path": "/extraction/patch-fields",
+      "function": "patch_extraction_fields",
+      "file": "backend/app/main.py",
+      "line": 2311,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/extraction/apply-suggested-fixes",
+      "function": "apply_suggested_fixes",
+      "file": "backend/app/main.py",
+      "line": 2361,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/invoices",
+      "function": "upload_invoice",
+      "file": "backend/app/main.py",
+      "line": 2413,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/invoices/{invoice_id}/extract",
+      "function": "extract_invoice",
+      "file": "backend/app/main.py",
+      "line": 2603,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/invoices/{invoice_id}/validate",
+      "function": "validate_invoice",
+      "file": "backend/app/main.py",
+      "line": 2683,
+      "router": "app"
+    },
+    {
+      "method": "PATCH",
+      "path": "/invoices/{invoice_id}/fields",
+      "function": "patch_invoice_fields",
+      "file": "backend/app/main.py",
+      "line": 2714,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/invoices/{invoice_id}",
+      "function": "get_invoice",
+      "file": "backend/app/main.py",
+      "line": 2759,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/invoices",
+      "function": "list_invoices",
+      "file": "backend/app/main.py",
+      "line": 2787,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/invoices/{invoice_id}/download",
+      "function": "download_invoice_file",
+      "file": "backend/app/main.py",
+      "line": 2820,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/invoices/{invoice_id}/process",
+      "function": "process_invoice_async",
+      "file": "backend/app/main.py",
+      "line": 2904,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/jobs/{job_id}",
+      "function": "get_job_status",
+      "file": "backend/app/main.py",
+      "line": 2982,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/invoices/{invoice_id}/jobs",
+      "function": "get_invoice_jobs",
+      "file": "backend/app/main.py",
+      "line": 3024,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/jobs",
+      "function": "list_all_jobs",
+      "file": "backend/app/main.py",
+      "line": 3046,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/webhooks",
+      "function": "create_webhook",
+      "file": "backend/app/main.py",
+      "line": 3111,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/webhooks",
+      "function": "list_webhooks",
+      "file": "backend/app/main.py",
+      "line": 3164,
+      "router": "app"
+    },
+    {
+      "method": "DELETE",
+      "path": "/webhooks/{webhook_id}",
+      "function": "delete_webhook",
+      "file": "backend/app/main.py",
+      "line": 3190,
+      "router": "app"
+    },
+    {
+      "method": "PUT",
+      "path": "/webhooks/{webhook_id}/toggle",
+      "function": "toggle_webhook",
+      "file": "backend/app/main.py",
+      "line": 3214,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/audit-logs",
+      "function": "list_audit_logs",
+      "file": "backend/app/main.py",
+      "line": 3246,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/audit-logs/stats",
+      "function": "get_audit_stats",
+      "file": "backend/app/main.py",
+      "line": 3301,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/market-prices",
+      "function": "list_market_prices",
+      "file": "backend/app/main.py",
+      "line": 3340,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/market-prices/history",
+      "function": "get_price_history",
+      "file": "backend/app/main.py",
+      "line": 3449,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/market-prices/legacy",
+      "function": "deprecated_list_market_prices_legacy",
+      "file": "backend/app/main.py",
+      "line": 3537,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/market-prices/deprecation-stats",
+      "function": "get_deprecation_stats",
+      "file": "backend/app/main.py",
+      "line": 3602,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/market-prices/{period}",
+      "function": "get_market_price",
+      "file": "backend/app/main.py",
+      "line": 3622,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/market-prices",
+      "function": "upsert_market_price",
+      "file": "backend/app/main.py",
+      "line": 3662,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/market-prices/{period}/lock",
+      "function": "lock_market_price",
+      "file": "backend/app/main.py",
+      "line": 3855,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/market-prices/{period}/unlock",
+      "function": "unlock_market_price",
+      "file": "backend/app/main.py",
+      "line": 3889,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/market-prices/import/preview",
+      "function": "import_preview",
+      "file": "backend/app/main.py",
+      "line": 3929,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/market-prices/import/apply",
+      "function": "import_apply",
+      "file": "backend/app/main.py",
+      "line": 4045,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-prices/{price_type}/{period}",
+      "function": "get_market_price_for_calculation",
+      "file": "backend/app/main.py",
+      "line": 4179,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/market-prices/form",
+      "function": "deprecated_upsert_market_price_form",
+      "file": "backend/app/main.py",
+      "line": 4320,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/api/epias/sync/{period}",
+      "function": "sync_period_from_epias",
+      "file": "backend/app/main.py",
+      "line": 4445,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/api/epias/prices/{period}",
+      "function": "get_prices_with_epias_fallback",
+      "file": "backend/app/main.py",
+      "line": 4503,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/api/epias/prices/{period}",
+      "function": "save_period_prices",
+      "file": "backend/app/main.py",
+      "line": 4544,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/api/epias/missing-periods",
+      "function": "get_missing_periods",
+      "file": "backend/app/main.py",
+      "line": 4590,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/epias/sync-all",
+      "function": "sync_all_missing_from_epias",
+      "file": "backend/app/main.py",
+      "line": 4619,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/distribution-tariffs",
+      "function": "list_distribution_tariffs",
+      "file": "backend/app/main.py",
+      "line": 4692,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/distribution-tariffs/lookup",
+      "function": "lookup_distribution_tariff",
+      "file": "backend/app/main.py",
+      "line": 4733,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/distribution-tariffs/parse",
+      "function": "parse_tariff_string",
+      "file": "backend/app/main.py",
+      "line": 4763,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/incidents",
+      "function": "list_incidents",
+      "file": "backend/app/main.py",
+      "line": 4788,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/incidents/{incident_id}",
+      "function": "get_incident",
+      "file": "backend/app/main.py",
+      "line": 4823,
+      "router": "app"
+    },
+    {
+      "method": "PATCH",
+      "path": "/admin/incidents/{incident_id}",
+      "function": "update_incident",
+      "file": "backend/app/main.py",
+      "line": 4857,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/incidents/stats",
+      "function": "get_incident_stats",
+      "file": "backend/app/main.py",
+      "line": 4900,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/system-health",
+      "function": "get_system_health",
+      "file": "backend/app/main.py",
+      "line": 4944,
+      "router": "app"
+    },
+    {
+      "method": "PATCH",
+      "path": "/admin/incidents/{incident_id}/feedback",
+      "function": "submit_incident_feedback",
+      "file": "backend/app/main.py",
+      "line": 4993,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/feedback-stats",
+      "function": "get_feedback_stats",
+      "file": "backend/app/main.py",
+      "line": 5061,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/ops/kill-switches",
+      "function": "list_kill_switches",
+      "file": "backend/app/main.py",
+      "line": 5130,
+      "router": "app"
+    },
+    {
+      "method": "PUT",
+      "path": "/admin/ops/kill-switches/{switch_name}",
+      "function": "update_kill_switch",
+      "file": "backend/app/main.py",
+      "line": 5143,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/ops/status",
+      "function": "get_ops_status",
+      "file": "backend/app/main.py",
+      "line": 5157,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/pdf/jobs",
+      "function": "create_pdf_job",
+      "file": "backend/app/pdf_api.py",
+      "line": 122,
+      "router": "router"
+    },
+    {
+      "method": "GET",
+      "path": "/pdf/jobs/{job_id}",
+      "function": "get_pdf_job_status",
+      "file": "backend/app/pdf_api.py",
+      "line": 196,
+      "router": "router"
+    },
+    {
+      "method": "GET",
+      "path": "/pdf/jobs/{job_id}/download",
+      "function": "download_pdf",
+      "file": "backend/app/pdf_api.py",
+      "line": 219,
+      "router": "router"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/upload-market-data",
+      "function": "upload_market_data",
+      "file": "backend/app/pricing/router.py",
+      "line": 283,
+      "router": "pricing_router"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/upload-consumption",
+      "function": "upload_consumption",
+      "file": "backend/app/pricing/router.py",
+      "line": 387,
+      "router": "pricing_router"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/analyze",
+      "function": "analyze",
+      "file": "backend/app/pricing/router.py",
+      "line": 443,
+      "router": "pricing_router"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/simulate",
+      "function": "simulate",
+      "file": "backend/app/pricing/router.py",
+      "line": 730,
+      "router": "pricing_router"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/compare",
+      "function": "compare",
+      "file": "backend/app/pricing/router.py",
+      "line": 787,
+      "router": "pricing_router"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/yekdem",
+      "function": "upsert_yekdem",
+      "file": "backend/app/pricing/router.py",
+      "line": 893,
+      "router": "pricing_router"
+    },
+    {
+      "method": "GET",
+      "path": "/api/pricing/yekdem/{period}",
+      "function": "get_yekdem_endpoint",
+      "file": "backend/app/pricing/router.py",
+      "line": 918,
+      "router": "pricing_router"
+    },
+    {
+      "method": "GET",
+      "path": "/api/pricing/yekdem",
+      "function": "list_yekdem_endpoint",
+      "file": "backend/app/pricing/router.py",
+      "line": 937,
+      "router": "pricing_router"
+    },
+    {
+      "method": "GET",
+      "path": "/api/pricing/templates",
+      "function": "list_templates",
+      "file": "backend/app/pricing/router.py",
+      "line": 962,
+      "router": "pricing_router"
+    },
+    {
+      "method": "GET",
+      "path": "/api/pricing/periods",
+      "function": "list_periods",
+      "file": "backend/app/pricing/router.py",
+      "line": 1004,
+      "router": "pricing_router"
+    },
+    {
+      "method": "GET",
+      "path": "/api/pricing/bayi-segments",
+      "function": "list_bayi_segments",
+      "file": "backend/app/pricing/router.py",
+      "line": 1061,
+      "router": "pricing_router"
+    },
+    {
+      "method": "GET",
+      "path": "/api/pricing/distribution-tariffs",
+      "function": "list_distribution_tariffs_public",
+      "file": "backend/app/pricing/router.py",
+      "line": 1079,
+      "router": "pricing_router"
+    },
+    {
+      "method": "GET",
+      "path": "/api/pricing/distribution-tariffs/lookup",
+      "function": "lookup_distribution_tariff_public",
+      "file": "backend/app/pricing/router.py",
+      "line": 1099,
+      "router": "pricing_router"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/report/pdf",
+      "function": "report_pdf",
+      "file": "backend/app/pricing/router.py",
+      "line": 1139,
+      "router": "pricing_router"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/report/excel",
+      "function": "report_excel",
+      "file": "backend/app/pricing/router.py",
+      "line": 1202,
+      "router": "pricing_router"
+    }
+  ]
+}

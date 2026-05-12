@@ -1,0 +1,474 @@
+{
+  "_meta": {
+    "script": "07_sot_matrix_archaeology.py",
+    "inputs": [
+      ".kiro/specs/codebase-audit-cleanup/artifacts/phase1_db_inventory.json",
+      ".kiro/specs/codebase-audit-cleanup/artifacts/phase1_imports.json",
+      ".kiro/specs/codebase-audit-cleanup/artifacts/phase2_invoice_flow_sources.json",
+      ".kiro/specs/codebase-audit-cleanup/artifacts/phase3_duplications.json"
+    ],
+    "counts": {
+      "sot_matrix_rows": 5,
+      "archaeology_tables": 3,
+      "archaeology_modules": 15,
+      "with_introduced_at": 18,
+      "used_in_production": 4
+    }
+  },
+  "sot_matrix": [
+    {
+      "domain": "ptf",
+      "concept": "saatlik PTF (TL/MWh)",
+      "canonical_source": "hourly_market_prices",
+      "canonical_writer": "admin EPİAŞ sync / pricing_router",
+      "readers": [
+        "pricing_router::analyze / simulate / compare / report",
+        "main.py::epias endpoints"
+      ],
+      "deprecated": [
+        "market_reference_prices (legacy manuel mod)"
+      ],
+      "migration_status": "parallel_unresolved",
+      "evidence_refs": [
+        "artifacts/phase1_db_inventory.json (F-PTF auto-flag)",
+        "artifacts/phase2_invoice_flow_sources.json (market_reference_prices x9 ref, hourly_market_prices x2 ref)"
+      ],
+      "delegated_to_spec": "ptf-sot-unification",
+      "severity": "P0"
+    },
+    {
+      "domain": "yekdem",
+      "concept": "aylık YEKDEM (TL/MWh)",
+      "canonical_source": "monthly_yekdem_prices",
+      "canonical_writer": "admin sync / bulk import",
+      "readers": [
+        "calculator::calculate_offer (dolaylı)",
+        "validator::validate_extraction (dolaylı)"
+      ],
+      "deprecated": [
+        "market_reference_prices (legacy YEKDEM rows — 39 eksik dönem)"
+      ],
+      "migration_status": "legacy_rows_exist",
+      "evidence_refs": [
+        "artifacts/phase1_db_inventory.json (cross-source YEKDEM)",
+        "artifacts/phase2_invoice_flow_sources.json (monthly_yekdem_prices x4 ref)"
+      ],
+      "delegated_to_spec": "yekdem-legacy-migration",
+      "severity": "P1"
+    },
+    {
+      "domain": "invoice_validation",
+      "concept": "fatura ekstraksiyon doğrulaması",
+      "canonical_source": "app.validator::validate_extraction",
+      "canonical_writer": "main.py handler'ları (analyze-invoice, full-process, ...)",
+      "readers": [
+        "/analyze-invoice",
+        "/full-process",
+        "/extraction/patch-fields",
+        "/extraction/apply-suggested-fixes",
+        "/invoices/{id}/validate",
+        "/invoices/{id}/extract"
+      ],
+      "deprecated": [],
+      "unconnected_alternative": [
+        "app.invoice.validation.validator::validate",
+        "app.invoice.validation.enforcement::apply_enforcement",
+        "app.invoice.validation.shadow::shadow_validate_hook"
+      ],
+      "migration_status": "new_stack_dead",
+      "evidence_refs": [
+        "artifacts/phase2_invoice_flow_sources.json (verdict=DEAD)",
+        "artifacts/phase1_imports.json (invoice.validation.* alive_from_tests_only)"
+      ],
+      "delegated_to_spec": "invoice-validation-prod-hardening",
+      "severity": "P1"
+    },
+    {
+      "domain": "pdf_jobs",
+      "concept": "async PDF üretim job akışı",
+      "canonical_source": null,
+      "canonical_writer": null,
+      "readers": [],
+      "deprecated": [],
+      "unconnected_alternative": [
+        "app.pdf_api.router (3 endpoint: POST /pdf/jobs, GET /pdf/jobs/{id}, GET /pdf/jobs/{id}/download)"
+      ],
+      "migration_status": "router_unregistered",
+      "evidence_refs": [
+        "artifacts/phase1_imports.json (orphan_routers: 'router' @ /pdf)",
+        "artifacts/phase2_endpoint_mapping.json (3 BE_ONLY /pdf/*)"
+      ],
+      "delegated_to_spec": "pdf-render-worker",
+      "severity": "P1"
+    },
+    {
+      "domain": "fe_admin_market_prices",
+      "concept": "admin market-prices FE adapter",
+      "canonical_source": "frontend/src/market-prices/marketPricesApi.ts",
+      "canonical_writer": "admin panel components (MarketPricesTab, UpsertFormModal, BulkImportWizard)",
+      "readers": [
+        "hooks/useMarketPricesList.ts",
+        "hooks/useUpsertMarketPrice.ts",
+        "hooks/useBulkImportPreview.ts",
+        "hooks/useBulkImportApply.ts",
+        "hooks/useAuditHistory.ts"
+      ],
+      "deprecated": [
+        "frontend/src/api.ts::getMarketPrices",
+        "frontend/src/api.ts::getMarketPrice",
+        "frontend/src/api.ts::upsertMarketPrice",
+        "frontend/src/api.ts::lockMarketPrice"
+      ],
+      "migration_status": "dual_active",
+      "evidence_refs": [
+        "artifacts/phase2_endpoint_mapping.json (dual_fe_client x3)"
+      ],
+      "delegated_to_spec": "pricing-consistency-fixes",
+      "severity": "P2"
+    }
+  ],
+  "archaeology": [
+    {
+      "artifact_type": "module",
+      "artifact": "backend/app/canonical_extractor.py",
+      "role": "orphan (A6 fully-dead)",
+      "introduced_at": {
+        "sha": "3804397a8f1b3cdb15e2b9592f50622768265cae",
+        "date": "2026-01-18",
+        "author": "Gelka Dev",
+        "message": "Sprint 8.9.1: Production Ready - PILOT_ENABLED + post_deploy_check"
+      },
+      "last_modified": {
+        "sha": "e113705a7943ce55b2ca140641cf6e19e6a36dc4",
+        "date": "2026-02-28",
+        "author": "Gelka Dev",
+        "message": "Phase F: enforcement engine + wiring + 12 tests (54 total, 0 failed)"
+      },
+      "used_in_production": false,
+      "usage_reason": "orphan (A6)"
+    },
+    {
+      "artifact_type": "module",
+      "artifact": "backend/app/core/__init__.py",
+      "role": "orphan (A6 fully-dead)",
+      "introduced_at": {
+        "sha": "3804397a8f1b3cdb15e2b9592f50622768265cae",
+        "date": "2026-01-18",
+        "author": "Gelka Dev",
+        "message": "Sprint 8.9.1: Production Ready - PILOT_ENABLED + post_deploy_check"
+      },
+      "last_modified": {
+        "sha": "3804397a8f1b3cdb15e2b9592f50622768265cae",
+        "date": "2026-01-18",
+        "author": "Gelka Dev",
+        "message": "Sprint 8.9.1: Production Ready - PILOT_ENABLED + post_deploy_check"
+      },
+      "used_in_production": false,
+      "usage_reason": "orphan (A6)"
+    },
+    {
+      "artifact_type": "module",
+      "artifact": "backend/app/fast_extractor.py",
+      "role": "orphan (A6 fully-dead)",
+      "introduced_at": {
+        "sha": "3804397a8f1b3cdb15e2b9592f50622768265cae",
+        "date": "2026-01-18",
+        "author": "Gelka Dev",
+        "message": "Sprint 8.9.1: Production Ready - PILOT_ENABLED + post_deploy_check"
+      },
+      "last_modified": {
+        "sha": "3804397a8f1b3cdb15e2b9592f50622768265cae",
+        "date": "2026-01-18",
+        "author": "Gelka Dev",
+        "message": "Sprint 8.9.1: Production Ready - PILOT_ENABLED + post_deploy_check"
+      },
+      "used_in_production": false,
+      "usage_reason": "orphan (A6)"
+    },
+    {
+      "artifact_type": "module",
+      "artifact": "backend/app/guards/__init__.py",
+      "role": "orphan (A6 fully-dead)",
+      "introduced_at": {
+        "sha": "be109052a2bd428a9b51b5a997519de71e6ac17b",
+        "date": "2026-02-14",
+        "author": "Gelka Dev",
+        "message": "14.02.2026 2"
+      },
+      "last_modified": {
+        "sha": "be109052a2bd428a9b51b5a997519de71e6ac17b",
+        "date": "2026-02-14",
+        "author": "Gelka Dev",
+        "message": "14.02.2026 2"
+      },
+      "used_in_production": false,
+      "usage_reason": "orphan (A6)"
+    },
+    {
+      "artifact_type": "module",
+      "artifact": "backend/app/invoice/__init__.py",
+      "role": "orphan (A6 fully-dead)",
+      "introduced_at": {
+        "sha": "3ec2f433c8fb54311a2491b1c59a3b9c6be2ea6e",
+        "date": "2026-02-28",
+        "author": "Gelka Dev",
+        "message": "28.02.2026"
+      },
+      "last_modified": {
+        "sha": "3ec2f433c8fb54311a2491b1c59a3b9c6be2ea6e",
+        "date": "2026-02-28",
+        "author": "Gelka Dev",
+        "message": "28.02.2026"
+      },
+      "used_in_production": false,
+      "usage_reason": "orphan (A6)"
+    },
+    {
+      "artifact_type": "module",
+      "artifact": "backend/app/invoice/validation/__init__.py",
+      "role": "yeni stack paket girişi",
+      "introduced_at": {
+        "sha": "3ec2f433c8fb54311a2491b1c59a3b9c6be2ea6e",
+        "date": "2026-02-28",
+        "author": "Gelka Dev",
+        "message": "28.02.2026"
+      },
+      "last_modified": {
+        "sha": "80f61bc77e5502245c23bf52318f21da8a204e86",
+        "date": "2026-02-28",
+        "author": "Gelka Dev",
+        "message": "29.02.2026"
+      },
+      "used_in_production": false,
+      "usage_reason": "alive_from_tests_only; A7 verdict=DEAD"
+    },
+    {
+      "artifact_type": "module",
+      "artifact": "backend/app/invoice/validation/enforcement.py",
+      "role": "yeni stack enforcement",
+      "introduced_at": {
+        "sha": "e113705a7943ce55b2ca140641cf6e19e6a36dc4",
+        "date": "2026-02-28",
+        "author": "Gelka Dev",
+        "message": "Phase F: enforcement engine + wiring + 12 tests (54 total, 0 failed)"
+      },
+      "last_modified": {
+        "sha": "80f61bc77e5502245c23bf52318f21da8a204e86",
+        "date": "2026-02-28",
+        "author": "Gelka Dev",
+        "message": "29.02.2026"
+      },
+      "used_in_production": false,
+      "usage_reason": "alive_from_tests_only; A7 verdict=DEAD"
+    },
+    {
+      "artifact_type": "module",
+      "artifact": "backend/app/invoice/validation/shadow.py",
+      "role": "yeni stack shadow hook",
+      "introduced_at": {
+        "sha": "e113705a7943ce55b2ca140641cf6e19e6a36dc4",
+        "date": "2026-02-28",
+        "author": "Gelka Dev",
+        "message": "Phase F: enforcement engine + wiring + 12 tests (54 total, 0 failed)"
+      },
+      "last_modified": {
+        "sha": "80f61bc77e5502245c23bf52318f21da8a204e86",
+        "date": "2026-02-28",
+        "author": "Gelka Dev",
+        "message": "29.02.2026"
+      },
+      "used_in_production": false,
+      "usage_reason": "alive_from_tests_only; A7 verdict=DEAD"
+    },
+    {
+      "artifact_type": "module",
+      "artifact": "backend/app/invoice/validation/validator.py",
+      "role": "yeni stack validator",
+      "introduced_at": {
+        "sha": "3ec2f433c8fb54311a2491b1c59a3b9c6be2ea6e",
+        "date": "2026-02-28",
+        "author": "Gelka Dev",
+        "message": "28.02.2026"
+      },
+      "last_modified": {
+        "sha": "80f61bc77e5502245c23bf52318f21da8a204e86",
+        "date": "2026-02-28",
+        "author": "Gelka Dev",
+        "message": "29.02.2026"
+      },
+      "used_in_production": false,
+      "usage_reason": "alive_from_tests_only; A7 verdict=DEAD"
+    },
+    {
+      "artifact_type": "module",
+      "artifact": "backend/app/pdf_api.py",
+      "role": "orphan router (dead)",
+      "introduced_at": {
+        "sha": "b0c0048c26e8ad8c33fed8d34d7941b2c3e8f698",
+        "date": "2026-02-19",
+        "author": "Gelka Dev",
+        "message": "18.02.2026"
+      },
+      "last_modified": {
+        "sha": "b0c0048c26e8ad8c33fed8d34d7941b2c3e8f698",
+        "date": "2026-02-19",
+        "author": "Gelka Dev",
+        "message": "18.02.2026"
+      },
+      "used_in_production": false,
+      "usage_reason": "orphan router; include_router çağrılmamış (A6)"
+    },
+    {
+      "artifact_type": "module",
+      "artifact": "backend/app/pricing/__init__.py",
+      "role": "orphan (A6 fully-dead)",
+      "introduced_at": {
+        "sha": "83f1d3b1a215223ade418adaf22a1e910c48470e",
+        "date": "2026-05-01",
+        "author": "Gelka Dev",
+        "message": "feat: Pricing Risk Engine + frontend entegrasyon + bayi puan modeli"
+      },
+      "last_modified": {
+        "sha": "83f1d3b1a215223ade418adaf22a1e910c48470e",
+        "date": "2026-05-01",
+        "author": "Gelka Dev",
+        "message": "feat: Pricing Risk Engine + frontend entegrasyon + bayi puan modeli"
+      },
+      "used_in_production": false,
+      "usage_reason": "orphan (A6)"
+    },
+    {
+      "artifact_type": "module",
+      "artifact": "backend/app/pricing/excel_formatter.py",
+      "role": "orphan (A6 fully-dead)",
+      "introduced_at": {
+        "sha": "83f1d3b1a215223ade418adaf22a1e910c48470e",
+        "date": "2026-05-01",
+        "author": "Gelka Dev",
+        "message": "feat: Pricing Risk Engine + frontend entegrasyon + bayi puan modeli"
+      },
+      "last_modified": {
+        "sha": "83f1d3b1a215223ade418adaf22a1e910c48470e",
+        "date": "2026-05-01",
+        "author": "Gelka Dev",
+        "message": "feat: Pricing Risk Engine + frontend entegrasyon + bayi puan modeli"
+      },
+      "used_in_production": false,
+      "usage_reason": "orphan (A6)"
+    },
+    {
+      "artifact_type": "module",
+      "artifact": "backend/app/rq_worker.py",
+      "role": "orphan (A6 fully-dead)",
+      "introduced_at": {
+        "sha": "3804397a8f1b3cdb15e2b9592f50622768265cae",
+        "date": "2026-01-18",
+        "author": "Gelka Dev",
+        "message": "Sprint 8.9.1: Production Ready - PILOT_ENABLED + post_deploy_check"
+      },
+      "last_modified": {
+        "sha": "3804397a8f1b3cdb15e2b9592f50622768265cae",
+        "date": "2026-01-18",
+        "author": "Gelka Dev",
+        "message": "Sprint 8.9.1: Production Ready - PILOT_ENABLED + post_deploy_check"
+      },
+      "used_in_production": false,
+      "usage_reason": "orphan (A6)"
+    },
+    {
+      "artifact_type": "module",
+      "artifact": "backend/app/seed_market_prices.py",
+      "role": "orphan (A6 fully-dead)",
+      "introduced_at": {
+        "sha": "1b5df64dfe8d954215307aa1bf66d82315dc6a1d",
+        "date": "2026-02-06",
+        "author": "Gelka Dev",
+        "message": "06.02.2026"
+      },
+      "last_modified": {
+        "sha": "1b5df64dfe8d954215307aa1bf66d82315dc6a1d",
+        "date": "2026-02-06",
+        "author": "Gelka Dev",
+        "message": "06.02.2026"
+      },
+      "used_in_production": false,
+      "usage_reason": "orphan (A6)"
+    },
+    {
+      "artifact_type": "module",
+      "artifact": "backend/app/validator.py",
+      "role": "legacy validator (canlı)",
+      "introduced_at": {
+        "sha": "3804397a8f1b3cdb15e2b9592f50622768265cae",
+        "date": "2026-01-18",
+        "author": "Gelka Dev",
+        "message": "Sprint 8.9.1: Production Ready - PILOT_ENABLED + post_deploy_check"
+      },
+      "last_modified": {
+        "sha": "3804397a8f1b3cdb15e2b9592f50622768265cae",
+        "date": "2026-01-18",
+        "author": "Gelka Dev",
+        "message": "Sprint 8.9.1: Production Ready - PILOT_ENABLED + post_deploy_check"
+      },
+      "used_in_production": true,
+      "usage_reason": "alive_from_main (A6)"
+    },
+    {
+      "artifact_type": "table",
+      "artifact": "hourly_market_prices",
+      "role": "canonical PTF (+ SMF)",
+      "introduced_at": {
+        "sha": "83f1d3b1a215223ade418adaf22a1e910c48470e",
+        "date": "2026-05-01",
+        "author": "Gelka Dev",
+        "message": "feat: Pricing Risk Engine + frontend entegrasyon + bayi puan modeli"
+      },
+      "last_modified": {
+        "sha": "83f1d3b1a215223ade418adaf22a1e910c48470e",
+        "date": "2026-05-01",
+        "author": "Gelka Dev",
+        "message": "feat: Pricing Risk Engine + frontend entegrasyon + bayi puan modeli"
+      },
+      "used_in_production": true,
+      "usage_reason": "invoice flow transitive reference (A7 ref count>0)"
+    },
+    {
+      "artifact_type": "table",
+      "artifact": "market_reference_prices",
+      "role": "legacy (hem PTF hem YEKDEM eski rows)",
+      "introduced_at": {
+        "sha": "3804397a8f1b3cdb15e2b9592f50622768265cae",
+        "date": "2026-01-18",
+        "author": "Gelka Dev",
+        "message": "Sprint 8.9.1: Production Ready - PILOT_ENABLED + post_deploy_check"
+      },
+      "last_modified": {
+        "sha": "83f1d3b1a215223ade418adaf22a1e910c48470e",
+        "date": "2026-05-01",
+        "author": "Gelka Dev",
+        "message": "feat: Pricing Risk Engine + frontend entegrasyon + bayi puan modeli"
+      },
+      "used_in_production": true,
+      "usage_reason": "invoice flow transitive reference (A7 ref count>0)"
+    },
+    {
+      "artifact_type": "table",
+      "artifact": "monthly_yekdem_prices",
+      "role": "canonical YEKDEM",
+      "introduced_at": {
+        "sha": "83f1d3b1a215223ade418adaf22a1e910c48470e",
+        "date": "2026-05-01",
+        "author": "Gelka Dev",
+        "message": "feat: Pricing Risk Engine + frontend entegrasyon + bayi puan modeli"
+      },
+      "last_modified": {
+        "sha": "83f1d3b1a215223ade418adaf22a1e910c48470e",
+        "date": "2026-05-01",
+        "author": "Gelka Dev",
+        "message": "feat: Pricing Risk Engine + frontend entegrasyon + bayi puan modeli"
+      },
+      "used_in_production": true,
+      "usage_reason": "invoice flow transitive reference (A7 ref count>0)"
+    }
+  ]
+}

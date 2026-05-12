@@ -253,6 +253,10 @@ function App() {
   // 'detailed': PTF × Katsayı ayrı, YEKDEM ayrı satır
   const [offerDisplayMode, setOfferDisplayMode] = useState<'energy' | 'combined' | 'detailed'>('energy');
   
+  // Dağıtım dahil mod: faturadaki toplam zaten dağıtım dahil ise true
+  // Bu durumda ters hesaplamada dağıtım ayrıca çıkarılmaz
+  const [distIncludedInTotal, setDistIncludedInTotal] = useState<boolean>(false);
+  
   // BTV oranı: Sanayi %1, Ticarethane/Kamu/Özel %5
   const [btvRate, setBtvRate] = useState<number>(0.01);
   
@@ -353,7 +357,10 @@ function App() {
       const current_btv_tl = current_energy_tl * btvRate;
       const current_vat_matrah_tl = current_energy_tl + current_distribution_tl + current_btv_tl;
       const current_vat_tl = current_vat_matrah_tl * vatRate;
-      const current_total_with_vat_tl = current_vat_matrah_tl + current_vat_tl;
+      // Kullanıcı TOPLAM'ı elle girdiyse onu kullan, yoksa hesapla
+      const current_total_with_vat_tl = manualValues.current_total_with_vat_tl > 0 
+        ? manualValues.current_total_with_vat_tl 
+        : current_vat_matrah_tl + current_vat_tl;
       
       // YEKDEM dahil et (manuel modda her zaman dahil)
       const includeYekdem = yekdemPrice > 0;
@@ -2055,6 +2062,24 @@ function App() {
                   )}
                 </div>
                 
+                {/* Dağıtım Dahil Toggle */}
+                <div className="pt-2 border-t border-gray-100">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={distIncludedInTotal}
+                      onChange={(e) => setDistIncludedInTotal(e.target.checked)}
+                      className="w-3.5 h-3.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                    />
+                    <span className="text-xs text-gray-700">Dağıtım faturaya dahil (tek kalem)</span>
+                  </label>
+                  {distIncludedInTotal && (
+                    <p className="text-[10px] text-amber-600 mt-1 ml-5">
+                      ⚠ Ters hesaplamada dağıtım ayrıca çıkarılmaz — faturadaki birim fiyat zaten dağıtım dahil kabul edilir.
+                    </p>
+                  )}
+                </div>
+                
                 {/* BTV Oranı */}
                 <div className="pt-2 border-t border-gray-100">
                   <label className="text-xs font-medium text-gray-700 mb-1 block">BTV Oranı</label>
@@ -2489,16 +2514,48 @@ function App() {
                           <div className="col-span-2">
                             <label className="text-xs text-gray-500 block mb-1">TOPLAM (KDV Dahil)</label>
                             <input
-                              type="text"
+                              type="number"
                               className="w-full px-2 py-1 text-xs border border-amber-300 bg-amber-50 rounded focus:ring-1 focus:ring-amber-500 font-medium"
-                              value={liveCalculation?.current_total_with_vat_tl?.toLocaleString('tr-TR', {minimumFractionDigits: 2}) || ''}
-                              readOnly
+                              value={manualValues.current_total_with_vat_tl || ''}
+                              onChange={(e) => {
+                                const total = e.target.value === '' ? 0 : parseFloat(e.target.value) || 0;
+                                const kwh = manualValues.consumption_kwh;
+                                const distPrice = getDistributionUnitPrice();
+                                
+                                if (total > 0 && kwh > 0) {
+                                  // Otomatik ters hesaplama
+                                  // distIncludedInTotal: faturadaki toplam zaten dağıtım dahil ise
+                                  // dağıtımı ayrıca çıkarmıyoruz
+                                  const distTl = distIncludedInTotal ? 0 : distPrice * kwh;
+                                  const vatMatrah = total / (1 + vatRate);
+                                  const vatTl = total - vatMatrah;
+                                  const energyTl = (vatMatrah - distTl) / (1 + btvRate);
+                                  const btvTl = energyTl * btvRate;
+                                  const unitPrice = energyTl / kwh;
+                                  
+                                  setCurrentUnitPriceInput(unitPrice.toFixed(4).replace('.', ','));
+                                  setManualValues(prev => ({
+                                    ...prev,
+                                    current_total_with_vat_tl: total,
+                                    current_unit_price: unitPrice,
+                                    current_energy_tl: energyTl,
+                                    current_distribution_tl: distIncludedInTotal ? distPrice * kwh : distTl,
+                                    current_btv_tl: btvTl,
+                                    current_vat_matrah_tl: vatMatrah,
+                                    current_vat_tl: vatTl,
+                                  }));
+                                } else {
+                                  setManualValues(prev => ({...prev, current_total_with_vat_tl: total}));
+                                }
+                              }}
+                              placeholder="KDV dahil toplam"
+                              step="0.01"
                             />
                           </div>
-                          <div className="flex items-end">
+                          <div className="flex items-end gap-1">
                             <button
                               onClick={() => {
-                                // Otomatik toplam hesapla - seçilen oranlara göre
+                                // İleriye hesapla: enerji → toplam
                                 const btv = manualValues.current_energy_tl * btvRate;
                                 const vat_matrah = manualValues.current_energy_tl + manualValues.current_distribution_tl + btv;
                                 const vat = vat_matrah * vatRate;
@@ -2510,9 +2567,50 @@ function App() {
                                   current_total_with_vat_tl: vat_matrah + vat,
                                 });
                               }}
-                              className="w-full px-2 py-1 text-xs bg-gray-100 text-gray-600 rounded hover:bg-gray-200"
+                              className="flex-1 px-1 py-1 text-[10px] bg-gray-100 text-gray-600 rounded hover:bg-gray-200"
+                              title="Enerji bedelinden toplama hesapla"
                             >
                               Hesapla
+                            </button>
+                            <button
+                              onClick={() => {
+                                // Tersten hesapla: toplam → birim fiyat
+                                const totalWithVat = manualValues.current_total_with_vat_tl;
+                                const kwh = manualValues.consumption_kwh;
+                                if (totalWithVat <= 0 || kwh <= 0) return;
+                                
+                                const distPrice = getDistributionUnitPrice();
+                                // distIncludedInTotal: faturadaki toplam zaten dağıtım dahil ise
+                                // dağıtımı ayrıca çıkarmıyoruz
+                                const distTl = distIncludedInTotal ? 0 : distPrice * kwh;
+                                
+                                // KDV hariç = KDV dahil / (1 + KDV oranı)
+                                const vatMatrah = totalWithVat / (1 + vatRate);
+                                const vatTl = totalWithVat - vatMatrah;
+                                
+                                // BTV = (vatMatrah - dağıtım) × btvRate / (1 + btvRate)
+                                // vatMatrah = enerji + dağıtım + btv
+                                // vatMatrah = enerji + dağıtım + enerji × btvRate
+                                // vatMatrah - dağıtım = enerji × (1 + btvRate)
+                                // enerji = (vatMatrah - dağıtım) / (1 + btvRate)
+                                const energyTl = (vatMatrah - distTl) / (1 + btvRate);
+                                const btvTl = energyTl * btvRate;
+                                const unitPrice = energyTl / kwh;
+                                
+                                setManualValues({
+                                  ...manualValues,
+                                  current_unit_price: unitPrice,
+                                  current_energy_tl: energyTl,
+                                  current_distribution_tl: distIncludedInTotal ? distPrice * kwh : distTl,
+                                  current_btv_tl: btvTl,
+                                  current_vat_matrah_tl: vatMatrah,
+                                  current_vat_tl: vatTl,
+                                });
+                              }}
+                              className="flex-1 px-1 py-1 text-[10px] bg-blue-100 text-blue-700 rounded hover:bg-blue-200 font-medium"
+                              title="Toplamdan geriye birim fiyat hesapla"
+                            >
+                              ↑ Tersten
                             </button>
                           </div>
                         </div>

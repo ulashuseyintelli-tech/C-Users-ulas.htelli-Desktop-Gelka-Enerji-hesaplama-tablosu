@@ -1,0 +1,1167 @@
+{
+  "_meta": {
+    "script": "03_match_endpoints.py",
+    "be_endpoint_count": 91,
+    "fe_unique_count": 26,
+    "fe_raw_count": 29,
+    "categories": {
+      "MATCHED": 26,
+      "METHOD_MISMATCH": 0,
+      "FE_ONLY": 0,
+      "BE_ONLY": 65,
+      "DUAL_FE_CLIENT": 3
+    }
+  },
+  "matched": [
+    {
+      "fe_method": "GET",
+      "fe_path": "/admin/distribution-tariffs",
+      "normalized_path": "/admin/distribution-tariffs",
+      "be_method": "GET",
+      "be_path": "/admin/distribution-tariffs",
+      "be_file": "backend/app/main.py",
+      "be_line": 4692,
+      "be_function": "list_distribution_tariffs",
+      "be_router": "app",
+      "fe_refs": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 496,
+          "client": "adminApi"
+        }
+      ]
+    },
+    {
+      "fe_method": "GET",
+      "fe_path": "/admin/distribution-tariffs/lookup",
+      "normalized_path": "/admin/distribution-tariffs/lookup",
+      "be_method": "GET",
+      "be_path": "/admin/distribution-tariffs/lookup",
+      "be_file": "backend/app/main.py",
+      "be_line": 4733,
+      "be_function": "lookup_distribution_tariff",
+      "be_router": "app",
+      "fe_refs": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 523,
+          "client": "adminApi"
+        }
+      ]
+    },
+    {
+      "fe_method": "GET",
+      "fe_path": "/admin/incidents",
+      "normalized_path": "/admin/incidents",
+      "be_method": "GET",
+      "be_path": "/admin/incidents",
+      "be_file": "backend/app/main.py",
+      "be_line": 4788,
+      "be_function": "list_incidents",
+      "be_router": "app",
+      "fe_refs": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 597,
+          "client": "adminApi"
+        }
+      ]
+    },
+    {
+      "fe_method": "GET",
+      "fe_path": "/admin/incidents/stats",
+      "normalized_path": "/admin/incidents/stats",
+      "be_method": "GET",
+      "be_path": "/admin/incidents/stats",
+      "be_file": "backend/app/main.py",
+      "be_line": 4900,
+      "be_function": "get_incident_stats",
+      "be_router": "app",
+      "fe_refs": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 624,
+          "client": "adminApi"
+        }
+      ]
+    },
+    {
+      "fe_method": "GET",
+      "fe_path": "/admin/incidents/{id}",
+      "normalized_path": "/admin/incidents/{_}",
+      "be_method": "GET",
+      "be_path": "/admin/incidents/{incident_id}",
+      "be_file": "backend/app/main.py",
+      "be_line": 4823,
+      "be_function": "get_incident",
+      "be_router": "app",
+      "fe_refs": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 602,
+          "client": "adminApi"
+        }
+      ]
+    },
+    {
+      "fe_method": "PATCH",
+      "fe_path": "/admin/incidents/{id}",
+      "normalized_path": "/admin/incidents/{_}",
+      "be_method": "PATCH",
+      "be_path": "/admin/incidents/{incident_id}",
+      "be_file": "backend/app/main.py",
+      "be_line": 4857,
+      "be_function": "update_incident",
+      "be_router": "app",
+      "fe_refs": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 617,
+          "client": "adminApi"
+        }
+      ]
+    },
+    {
+      "fe_method": "GET",
+      "fe_path": "/admin/market-prices",
+      "normalized_path": "/admin/market-prices",
+      "be_method": "GET",
+      "be_path": "/admin/market-prices",
+      "be_file": "backend/app/main.py",
+      "be_line": 3340,
+      "be_function": "list_market_prices",
+      "be_router": "app",
+      "fe_refs": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 433,
+          "client": "adminApi"
+        },
+        {
+          "file": "frontend/src/market-prices/marketPricesApi.ts",
+          "line": 31,
+          "client": "adminApi"
+        }
+      ]
+    },
+    {
+      "fe_method": "POST",
+      "fe_path": "/admin/market-prices",
+      "normalized_path": "/admin/market-prices",
+      "be_method": "POST",
+      "be_path": "/admin/market-prices",
+      "be_file": "backend/app/main.py",
+      "be_line": 3662,
+      "be_function": "upsert_market_price",
+      "be_router": "app",
+      "fe_refs": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 458,
+          "client": "adminApi"
+        },
+        {
+          "file": "frontend/src/market-prices/marketPricesApi.ts",
+          "line": 59,
+          "client": "adminApi"
+        }
+      ]
+    },
+    {
+      "fe_method": "GET",
+      "fe_path": "/admin/market-prices/history",
+      "normalized_path": "/admin/market-prices/history",
+      "be_method": "GET",
+      "be_path": "/admin/market-prices/history",
+      "be_file": "backend/app/main.py",
+      "be_line": 3449,
+      "be_function": "get_price_history",
+      "be_router": "app",
+      "fe_refs": [
+        {
+          "file": "frontend/src/market-prices/marketPricesApi.ts",
+          "line": 136,
+          "client": "adminApi"
+        }
+      ]
+    },
+    {
+      "fe_method": "POST",
+      "fe_path": "/admin/market-prices/import/apply",
+      "normalized_path": "/admin/market-prices/import/apply",
+      "be_method": "POST",
+      "be_path": "/admin/market-prices/import/apply",
+      "be_file": "backend/app/main.py",
+      "be_line": 4045,
+      "be_function": "import_apply",
+      "be_router": "app",
+      "fe_refs": [
+        {
+          "file": "frontend/src/market-prices/marketPricesApi.ts",
+          "line": 115,
+          "client": "adminApi"
+        }
+      ]
+    },
+    {
+      "fe_method": "POST",
+      "fe_path": "/admin/market-prices/import/preview",
+      "normalized_path": "/admin/market-prices/import/preview",
+      "be_method": "POST",
+      "be_path": "/admin/market-prices/import/preview",
+      "be_file": "backend/app/main.py",
+      "be_line": 3929,
+      "be_function": "import_preview",
+      "be_router": "app",
+      "fe_refs": [
+        {
+          "file": "frontend/src/market-prices/marketPricesApi.ts",
+          "line": 85,
+          "client": "adminApi"
+        }
+      ]
+    },
+    {
+      "fe_method": "GET",
+      "fe_path": "/admin/market-prices/{period}",
+      "normalized_path": "/admin/market-prices/{_}",
+      "be_method": "GET",
+      "be_path": "/admin/market-prices/{period}",
+      "be_file": "backend/app/main.py",
+      "be_line": 3622,
+      "be_function": "get_market_price",
+      "be_router": "app",
+      "fe_refs": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 439,
+          "client": "adminApi"
+        }
+      ]
+    },
+    {
+      "fe_method": "POST",
+      "fe_path": "/admin/market-prices/{period}/lock",
+      "normalized_path": "/admin/market-prices/{_}/lock",
+      "be_method": "POST",
+      "be_path": "/admin/market-prices/{period}/lock",
+      "be_file": "backend/app/main.py",
+      "be_line": 3855,
+      "be_function": "lock_market_price",
+      "be_router": "app",
+      "fe_refs": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 466,
+          "client": "adminApi"
+        }
+      ]
+    },
+    {
+      "fe_method": "POST",
+      "fe_path": "/admin/market-prices/{period}/unlock",
+      "normalized_path": "/admin/market-prices/{_}/unlock",
+      "be_method": "POST",
+      "be_path": "/admin/market-prices/{period}/unlock",
+      "be_file": "backend/app/main.py",
+      "be_line": 3889,
+      "be_function": "unlock_market_price",
+      "be_router": "app",
+      "fe_refs": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 472,
+          "client": "adminApi"
+        }
+      ]
+    },
+    {
+      "fe_method": "POST",
+      "fe_path": "/admin/telemetry/events",
+      "normalized_path": "/admin/telemetry/events",
+      "be_method": "POST",
+      "be_path": "/admin/telemetry/events",
+      "be_file": "backend/app/main.py",
+      "be_line": 542,
+      "be_function": "ingest_telemetry_events",
+      "be_router": "app",
+      "fe_refs": [
+        {
+          "file": "frontend/src/market-prices/telemetry.ts",
+          "line": 91,
+          "client": "fetch-const"
+        }
+      ]
+    },
+    {
+      "fe_method": "POST",
+      "fe_path": "/analyze-invoice",
+      "normalized_path": "/analyze-invoice",
+      "be_method": "POST",
+      "be_path": "/analyze-invoice",
+      "be_file": "backend/app/main.py",
+      "be_line": 776,
+      "be_function": "analyze_invoice",
+      "be_router": "app",
+      "fe_refs": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 107,
+          "client": "api"
+        }
+      ]
+    },
+    {
+      "fe_method": "GET",
+      "fe_path": "/api/epias/prices/{period}",
+      "normalized_path": "/api/epias/prices/{_}",
+      "be_method": "GET",
+      "be_path": "/api/epias/prices/{period}",
+      "be_file": "backend/app/main.py",
+      "be_line": 4503,
+      "be_function": "get_prices_with_epias_fallback",
+      "be_router": "app",
+      "fe_refs": [
+        {
+          "file": "frontend/src/App.tsx",
+          "line": 678,
+          "client": "fetch"
+        },
+        {
+          "file": "frontend/src/api.ts",
+          "line": 653,
+          "client": "api"
+        }
+      ]
+    },
+    {
+      "fe_method": "POST",
+      "fe_path": "/api/epias/prices/{period}",
+      "normalized_path": "/api/epias/prices/{_}",
+      "be_method": "POST",
+      "be_path": "/api/epias/prices/{period}",
+      "be_file": "backend/app/main.py",
+      "be_line": 4544,
+      "be_function": "save_period_prices",
+      "be_router": "app",
+      "fe_refs": [
+        {
+          "file": "frontend/src/App.tsx",
+          "line": 1190,
+          "client": "fetch"
+        }
+      ]
+    },
+    {
+      "fe_method": "POST",
+      "fe_path": "/api/epias/sync/{period}",
+      "normalized_path": "/api/epias/sync/{_}",
+      "be_method": "POST",
+      "be_path": "/api/epias/sync/{period}",
+      "be_file": "backend/app/main.py",
+      "be_line": 4445,
+      "be_function": "sync_period_from_epias",
+      "be_router": "app",
+      "fe_refs": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 680,
+          "client": "api"
+        }
+      ]
+    },
+    {
+      "fe_method": "POST",
+      "fe_path": "/api/pricing/analyze",
+      "normalized_path": "/api/pricing/analyze",
+      "be_method": "POST",
+      "be_path": "/api/pricing/analyze",
+      "be_file": "backend/app/pricing/router.py",
+      "be_line": 443,
+      "be_function": "analyze",
+      "be_router": "pricing_router",
+      "fe_refs": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 914,
+          "client": "fetch"
+        }
+      ]
+    },
+    {
+      "fe_method": "GET",
+      "fe_path": "/api/pricing/periods",
+      "normalized_path": "/api/pricing/periods",
+      "be_method": "GET",
+      "be_path": "/api/pricing/periods",
+      "be_file": "backend/app/pricing/router.py",
+      "be_line": 1004,
+      "be_function": "list_periods",
+      "be_router": "pricing_router",
+      "fe_refs": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 930,
+          "client": "fetch"
+        }
+      ]
+    },
+    {
+      "fe_method": "POST",
+      "fe_path": "/api/pricing/report/excel",
+      "normalized_path": "/api/pricing/report/excel",
+      "be_method": "POST",
+      "be_path": "/api/pricing/report/excel",
+      "be_file": "backend/app/pricing/router.py",
+      "be_line": 1202,
+      "be_function": "report_excel",
+      "be_router": "pricing_router",
+      "fe_refs": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 966,
+          "client": "fetch"
+        }
+      ]
+    },
+    {
+      "fe_method": "POST",
+      "fe_path": "/api/pricing/report/pdf",
+      "normalized_path": "/api/pricing/report/pdf",
+      "be_method": "POST",
+      "be_path": "/api/pricing/report/pdf",
+      "be_file": "backend/app/pricing/router.py",
+      "be_line": 1139,
+      "be_function": "report_pdf",
+      "be_router": "pricing_router",
+      "fe_refs": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 951,
+          "client": "fetch-url-ctor"
+        }
+      ]
+    },
+    {
+      "fe_method": "GET",
+      "fe_path": "/api/pricing/templates",
+      "normalized_path": "/api/pricing/templates",
+      "be_method": "GET",
+      "be_path": "/api/pricing/templates",
+      "be_file": "backend/app/pricing/router.py",
+      "be_line": 962,
+      "be_function": "list_templates",
+      "be_router": "pricing_router",
+      "fe_refs": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 939,
+          "client": "fetch"
+        }
+      ]
+    },
+    {
+      "fe_method": "POST",
+      "fe_path": "/full-process",
+      "normalized_path": "/full-process",
+      "be_method": "POST",
+      "be_path": "/full-process",
+      "be_file": "backend/app/main.py",
+      "be_line": 947,
+      "be_function": "full_process",
+      "be_router": "app",
+      "fe_refs": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 150,
+          "client": "api"
+        }
+      ]
+    },
+    {
+      "fe_method": "GET",
+      "fe_path": "/health",
+      "normalized_path": "/health",
+      "be_method": "GET",
+      "be_path": "/health",
+      "be_file": "backend/app/main.py",
+      "be_line": 616,
+      "be_function": "health",
+      "be_router": "app",
+      "fe_refs": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 157,
+          "client": "api"
+        }
+      ]
+    }
+  ],
+  "method_mismatch": [],
+  "fe_only": [],
+  "be_only": [
+    {
+      "method": "GET",
+      "path": "/admin/distribution-tariffs/parse",
+      "normalized_path": "/admin/distribution-tariffs/parse",
+      "function": "parse_tariff_string",
+      "file": "backend/app/main.py",
+      "line": 4763,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/epias/sync-all",
+      "normalized_path": "/admin/epias/sync-all",
+      "function": "sync_all_missing_from_epias",
+      "file": "backend/app/main.py",
+      "line": 4619,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/feedback-stats",
+      "normalized_path": "/admin/feedback-stats",
+      "function": "get_feedback_stats",
+      "file": "backend/app/main.py",
+      "line": 5061,
+      "router": "app"
+    },
+    {
+      "method": "PATCH",
+      "path": "/admin/incidents/{incident_id}/feedback",
+      "normalized_path": "/admin/incidents/{_}/feedback",
+      "function": "submit_incident_feedback",
+      "file": "backend/app/main.py",
+      "line": 4993,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/market-prices/deprecation-stats",
+      "normalized_path": "/admin/market-prices/deprecation-stats",
+      "function": "get_deprecation_stats",
+      "file": "backend/app/main.py",
+      "line": 3602,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/market-prices/form",
+      "normalized_path": "/admin/market-prices/form",
+      "function": "deprecated_upsert_market_price_form",
+      "file": "backend/app/main.py",
+      "line": 4320,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/market-prices/legacy",
+      "normalized_path": "/admin/market-prices/legacy",
+      "function": "deprecated_list_market_prices_legacy",
+      "file": "backend/app/main.py",
+      "line": 3537,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/ops/kill-switches",
+      "normalized_path": "/admin/ops/kill-switches",
+      "function": "list_kill_switches",
+      "file": "backend/app/main.py",
+      "line": 5130,
+      "router": "app"
+    },
+    {
+      "method": "PUT",
+      "path": "/admin/ops/kill-switches/{switch_name}",
+      "normalized_path": "/admin/ops/kill-switches/{_}",
+      "function": "update_kill_switch",
+      "file": "backend/app/main.py",
+      "line": 5143,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/ops/status",
+      "normalized_path": "/admin/ops/status",
+      "function": "get_ops_status",
+      "file": "backend/app/main.py",
+      "line": 5157,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/system-health",
+      "normalized_path": "/admin/system-health",
+      "function": "get_system_health",
+      "file": "backend/app/main.py",
+      "line": 4944,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/api/epias/missing-periods",
+      "normalized_path": "/api/epias/missing-periods",
+      "function": "get_missing_periods",
+      "file": "backend/app/main.py",
+      "line": 4590,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-prices/{price_type}/{period}",
+      "normalized_path": "/api/market-prices/{_}/{_}",
+      "function": "get_market_price_for_calculation",
+      "file": "backend/app/main.py",
+      "line": 4179,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/api/pricing/bayi-segments",
+      "normalized_path": "/api/pricing/bayi-segments",
+      "function": "list_bayi_segments",
+      "file": "backend/app/pricing/router.py",
+      "line": 1061,
+      "router": "pricing_router"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/compare",
+      "normalized_path": "/api/pricing/compare",
+      "function": "compare",
+      "file": "backend/app/pricing/router.py",
+      "line": 787,
+      "router": "pricing_router"
+    },
+    {
+      "method": "GET",
+      "path": "/api/pricing/distribution-tariffs",
+      "normalized_path": "/api/pricing/distribution-tariffs",
+      "function": "list_distribution_tariffs_public",
+      "file": "backend/app/pricing/router.py",
+      "line": 1079,
+      "router": "pricing_router"
+    },
+    {
+      "method": "GET",
+      "path": "/api/pricing/distribution-tariffs/lookup",
+      "normalized_path": "/api/pricing/distribution-tariffs/lookup",
+      "function": "lookup_distribution_tariff_public",
+      "file": "backend/app/pricing/router.py",
+      "line": 1099,
+      "router": "pricing_router"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/simulate",
+      "normalized_path": "/api/pricing/simulate",
+      "function": "simulate",
+      "file": "backend/app/pricing/router.py",
+      "line": 730,
+      "router": "pricing_router"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/upload-consumption",
+      "normalized_path": "/api/pricing/upload-consumption",
+      "function": "upload_consumption",
+      "file": "backend/app/pricing/router.py",
+      "line": 387,
+      "router": "pricing_router"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/upload-market-data",
+      "normalized_path": "/api/pricing/upload-market-data",
+      "function": "upload_market_data",
+      "file": "backend/app/pricing/router.py",
+      "line": 283,
+      "router": "pricing_router"
+    },
+    {
+      "method": "GET",
+      "path": "/api/pricing/yekdem",
+      "normalized_path": "/api/pricing/yekdem",
+      "function": "list_yekdem_endpoint",
+      "file": "backend/app/pricing/router.py",
+      "line": 937,
+      "router": "pricing_router"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/yekdem",
+      "normalized_path": "/api/pricing/yekdem",
+      "function": "upsert_yekdem",
+      "file": "backend/app/pricing/router.py",
+      "line": 893,
+      "router": "pricing_router"
+    },
+    {
+      "method": "GET",
+      "path": "/api/pricing/yekdem/{period}",
+      "normalized_path": "/api/pricing/yekdem/{_}",
+      "function": "get_yekdem_endpoint",
+      "file": "backend/app/pricing/router.py",
+      "line": 918,
+      "router": "pricing_router"
+    },
+    {
+      "method": "GET",
+      "path": "/audit-logs",
+      "normalized_path": "/audit-logs",
+      "function": "list_audit_logs",
+      "file": "backend/app/main.py",
+      "line": 3246,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/audit-logs/stats",
+      "normalized_path": "/audit-logs/stats",
+      "function": "get_audit_stats",
+      "file": "backend/app/main.py",
+      "line": 3301,
+      "router": "app"
+    },
+    {
+      "method": "DELETE",
+      "path": "/cache",
+      "normalized_path": "/cache",
+      "function": "clear_cache",
+      "file": "backend/app/main.py",
+      "line": 761,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/calculate-offer",
+      "normalized_path": "/calculate-offer",
+      "function": "calculate_offer_endpoint",
+      "file": "backend/app/main.py",
+      "line": 906,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/customers",
+      "normalized_path": "/customers",
+      "function": "list_customers",
+      "file": "backend/app/main.py",
+      "line": 1452,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/customers",
+      "normalized_path": "/customers",
+      "function": "create_customer",
+      "file": "backend/app/main.py",
+      "line": 1419,
+      "router": "app"
+    },
+    {
+      "method": "DELETE",
+      "path": "/customers/{customer_id}",
+      "normalized_path": "/customers/{_}",
+      "function": "delete_customer",
+      "file": "backend/app/main.py",
+      "line": 1552,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/customers/{customer_id}",
+      "normalized_path": "/customers/{_}",
+      "function": "get_customer",
+      "file": "backend/app/main.py",
+      "line": 1486,
+      "router": "app"
+    },
+    {
+      "method": "PUT",
+      "path": "/customers/{customer_id}",
+      "normalized_path": "/customers/{_}",
+      "function": "update_customer",
+      "file": "backend/app/main.py",
+      "line": 1517,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/extraction/apply-suggested-fixes",
+      "normalized_path": "/extraction/apply-suggested-fixes",
+      "function": "apply_suggested_fixes",
+      "file": "backend/app/main.py",
+      "line": 2361,
+      "router": "app"
+    },
+    {
+      "method": "PATCH",
+      "path": "/extraction/patch-fields",
+      "normalized_path": "/extraction/patch-fields",
+      "function": "patch_extraction_fields",
+      "file": "backend/app/main.py",
+      "line": 2311,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/generate-html-direct",
+      "normalized_path": "/generate-html-direct",
+      "function": "generate_html_direct",
+      "file": "backend/app/main.py",
+      "line": 2260,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/generate-pdf-direct",
+      "normalized_path": "/generate-pdf-direct",
+      "function": "generate_pdf_direct",
+      "file": "backend/app/main.py",
+      "line": 1962,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/generate-pdf-simple",
+      "normalized_path": "/generate-pdf-simple",
+      "function": "generate_pdf_simple",
+      "file": "backend/app/main.py",
+      "line": 1988,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/health/ready",
+      "normalized_path": "/health/ready",
+      "function": "health_ready",
+      "file": "backend/app/main.py",
+      "line": 621,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/invoices",
+      "normalized_path": "/invoices",
+      "function": "list_invoices",
+      "file": "backend/app/main.py",
+      "line": 2787,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/invoices",
+      "normalized_path": "/invoices",
+      "function": "upload_invoice",
+      "file": "backend/app/main.py",
+      "line": 2413,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/invoices/{invoice_id}",
+      "normalized_path": "/invoices/{_}",
+      "function": "get_invoice",
+      "file": "backend/app/main.py",
+      "line": 2759,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/invoices/{invoice_id}/download",
+      "normalized_path": "/invoices/{_}/download",
+      "function": "download_invoice_file",
+      "file": "backend/app/main.py",
+      "line": 2820,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/invoices/{invoice_id}/extract",
+      "normalized_path": "/invoices/{_}/extract",
+      "function": "extract_invoice",
+      "file": "backend/app/main.py",
+      "line": 2603,
+      "router": "app"
+    },
+    {
+      "method": "PATCH",
+      "path": "/invoices/{invoice_id}/fields",
+      "normalized_path": "/invoices/{_}/fields",
+      "function": "patch_invoice_fields",
+      "file": "backend/app/main.py",
+      "line": 2714,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/invoices/{invoice_id}/jobs",
+      "normalized_path": "/invoices/{_}/jobs",
+      "function": "get_invoice_jobs",
+      "file": "backend/app/main.py",
+      "line": 3024,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/invoices/{invoice_id}/process",
+      "normalized_path": "/invoices/{_}/process",
+      "function": "process_invoice_async",
+      "file": "backend/app/main.py",
+      "line": 2904,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/invoices/{invoice_id}/validate",
+      "normalized_path": "/invoices/{_}/validate",
+      "function": "validate_invoice",
+      "file": "backend/app/main.py",
+      "line": 2683,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/jobs",
+      "normalized_path": "/jobs",
+      "function": "list_all_jobs",
+      "file": "backend/app/main.py",
+      "line": 3046,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/jobs/{job_id}",
+      "normalized_path": "/jobs/{_}",
+      "function": "get_job_status",
+      "file": "backend/app/main.py",
+      "line": 2982,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/metrics",
+      "normalized_path": "/metrics",
+      "function": "prometheus_metrics",
+      "file": "backend/app/main.py",
+      "line": 474,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/offers",
+      "normalized_path": "/offers",
+      "function": "list_offers",
+      "file": "backend/app/main.py",
+      "line": 1612,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/offers",
+      "normalized_path": "/offers",
+      "function": "create_offer",
+      "file": "backend/app/main.py",
+      "line": 1569,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/offers/{offer_id}",
+      "normalized_path": "/offers/{_}",
+      "function": "get_offer",
+      "file": "backend/app/main.py",
+      "line": 1649,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/offers/{offer_id}/download",
+      "normalized_path": "/offers/{_}/download",
+      "function": "download_offer_pdf",
+      "file": "backend/app/main.py",
+      "line": 1856,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/offers/{offer_id}/generate-html",
+      "normalized_path": "/offers/{_}/generate-html",
+      "function": "generate_html_for_offer",
+      "file": "backend/app/main.py",
+      "line": 1934,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/offers/{offer_id}/generate-pdf",
+      "normalized_path": "/offers/{_}/generate-pdf",
+      "function": "generate_pdf_for_offer",
+      "file": "backend/app/main.py",
+      "line": 1788,
+      "router": "app"
+    },
+    {
+      "method": "PUT",
+      "path": "/offers/{offer_id}/status",
+      "normalized_path": "/offers/{_}/status",
+      "function": "update_offer_status",
+      "file": "backend/app/main.py",
+      "line": 1686,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/pdf/jobs",
+      "normalized_path": "/pdf/jobs",
+      "function": "create_pdf_job",
+      "file": "backend/app/pdf_api.py",
+      "line": 122,
+      "router": "router"
+    },
+    {
+      "method": "GET",
+      "path": "/pdf/jobs/{job_id}",
+      "normalized_path": "/pdf/jobs/{_}",
+      "function": "get_pdf_job_status",
+      "file": "backend/app/pdf_api.py",
+      "line": 196,
+      "router": "router"
+    },
+    {
+      "method": "GET",
+      "path": "/pdf/jobs/{job_id}/download",
+      "normalized_path": "/pdf/jobs/{_}/download",
+      "function": "download_pdf",
+      "file": "backend/app/pdf_api.py",
+      "line": 219,
+      "router": "router"
+    },
+    {
+      "method": "GET",
+      "path": "/stats",
+      "normalized_path": "/stats",
+      "function": "get_statistics",
+      "file": "backend/app/main.py",
+      "line": 2282,
+      "router": "app"
+    },
+    {
+      "method": "GET",
+      "path": "/webhooks",
+      "normalized_path": "/webhooks",
+      "function": "list_webhooks",
+      "file": "backend/app/main.py",
+      "line": 3164,
+      "router": "app"
+    },
+    {
+      "method": "POST",
+      "path": "/webhooks",
+      "normalized_path": "/webhooks",
+      "function": "create_webhook",
+      "file": "backend/app/main.py",
+      "line": 3111,
+      "router": "app"
+    },
+    {
+      "method": "DELETE",
+      "path": "/webhooks/{webhook_id}",
+      "normalized_path": "/webhooks/{_}",
+      "function": "delete_webhook",
+      "file": "backend/app/main.py",
+      "line": 3190,
+      "router": "app"
+    },
+    {
+      "method": "PUT",
+      "path": "/webhooks/{webhook_id}/toggle",
+      "normalized_path": "/webhooks/{_}/toggle",
+      "function": "toggle_webhook",
+      "file": "backend/app/main.py",
+      "line": 3214,
+      "router": "app"
+    }
+  ],
+  "dual_fe_client": [
+    {
+      "method": "GET",
+      "path": "/admin/market-prices",
+      "normalized_path": "/admin/market-prices",
+      "clients": [
+        "adminApi"
+      ],
+      "files": [
+        "frontend/src/api.ts",
+        "frontend/src/market-prices/marketPricesApi.ts"
+      ],
+      "fe_refs": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 433,
+          "client": "adminApi"
+        },
+        {
+          "file": "frontend/src/market-prices/marketPricesApi.ts",
+          "line": 31,
+          "client": "adminApi"
+        }
+      ],
+      "be_match": true
+    },
+    {
+      "method": "POST",
+      "path": "/admin/market-prices",
+      "normalized_path": "/admin/market-prices",
+      "clients": [
+        "adminApi"
+      ],
+      "files": [
+        "frontend/src/api.ts",
+        "frontend/src/market-prices/marketPricesApi.ts"
+      ],
+      "fe_refs": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 458,
+          "client": "adminApi"
+        },
+        {
+          "file": "frontend/src/market-prices/marketPricesApi.ts",
+          "line": 59,
+          "client": "adminApi"
+        }
+      ],
+      "be_match": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/epias/prices/{period}",
+      "normalized_path": "/api/epias/prices/{_}",
+      "clients": [
+        "api",
+        "fetch"
+      ],
+      "files": [
+        "frontend/src/App.tsx",
+        "frontend/src/api.ts"
+      ],
+      "fe_refs": [
+        {
+          "file": "frontend/src/App.tsx",
+          "line": 678,
+          "client": "fetch"
+        },
+        {
+          "file": "frontend/src/api.ts",
+          "line": 653,
+          "client": "api"
+        }
+      ],
+      "be_match": true
+    }
+  ]
+}

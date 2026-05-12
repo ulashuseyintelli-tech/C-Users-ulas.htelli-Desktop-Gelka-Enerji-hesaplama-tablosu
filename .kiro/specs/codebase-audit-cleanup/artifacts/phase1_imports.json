@@ -1,0 +1,2984 @@
+{
+  "_meta": {
+    "script": "04_import_closure.py",
+    "root_module": "app.main",
+    "total_modules": 156,
+    "counts": {
+      "alive_from_main": 68,
+      "alive_from_tests_only": 59,
+      "orphan": 15,
+      "dormant": 14
+    },
+    "router_reachability": {
+      "app": true,
+      "router": false,
+      "pricing_router": true
+    },
+    "endpoint_total": 91,
+    "endpoint_reachable": 88,
+    "endpoint_unreachable": 3
+  },
+  "modules": [
+    {
+      "module": "app",
+      "file": "backend/app/__init__.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_pr3_observability.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.action_router",
+      "file": "backend/app/action_router.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_action_router.py",
+        "backend/tests/test_incident_repository.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.adaptive_control",
+      "file": "backend/app/adaptive_control/__init__.py",
+      "status": "dormant",
+      "reason": "flag-driven dormant (feature gate OFF)",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_adaptive_control_properties.py",
+        "backend/tests/test_adaptive_wiring.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.adaptive_control.budget",
+      "file": "backend/app/adaptive_control/budget.py",
+      "status": "dormant",
+      "reason": "flag-driven dormant (feature gate OFF)",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_adaptive_budget.py",
+        "backend/tests/test_adaptive_control_edge_cases.py",
+        "backend/tests/test_adaptive_control_properties.py",
+        "backend/tests/test_adaptive_decision.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.adaptive_control.config",
+      "file": "backend/app/adaptive_control/config.py",
+      "status": "dormant",
+      "reason": "flag-driven dormant (feature gate OFF)",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_adaptive_config.py",
+        "backend/tests/test_adaptive_control_edge_cases.py",
+        "backend/tests/test_adaptive_control_properties.py",
+        "backend/tests/test_adaptive_decision.py",
+        "backend/tests/test_adaptive_wiring.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.adaptive_control.controller",
+      "file": "backend/app/adaptive_control/controller.py",
+      "status": "dormant",
+      "reason": "flag-driven dormant (feature gate OFF)",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_adaptive_control_edge_cases.py",
+        "backend/tests/test_adaptive_control_properties.py",
+        "backend/tests/test_adaptive_decision.py",
+        "backend/tests/test_adaptive_wiring.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.adaptive_control.decision_engine",
+      "file": "backend/app/adaptive_control/decision_engine.py",
+      "status": "dormant",
+      "reason": "flag-driven dormant (feature gate OFF)",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_adaptive_control_edge_cases.py",
+        "backend/tests/test_adaptive_control_properties.py",
+        "backend/tests/test_adaptive_decision.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.adaptive_control.events",
+      "file": "backend/app/adaptive_control/events.py",
+      "status": "dormant",
+      "reason": "flag-driven dormant (feature gate OFF)",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_adaptive_control_properties.py",
+        "backend/tests/test_adaptive_events.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.adaptive_control.hysteresis",
+      "file": "backend/app/adaptive_control/hysteresis.py",
+      "status": "dormant",
+      "reason": "flag-driven dormant (feature gate OFF)",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_adaptive_control_edge_cases.py",
+        "backend/tests/test_adaptive_control_properties.py",
+        "backend/tests/test_adaptive_decision.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.adaptive_control.metrics",
+      "file": "backend/app/adaptive_control/metrics.py",
+      "status": "dormant",
+      "reason": "flag-driven dormant (feature gate OFF)",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_adaptive_metrics.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.adaptive_control.metrics_collector",
+      "file": "backend/app/adaptive_control/metrics_collector.py",
+      "status": "dormant",
+      "reason": "flag-driven dormant (feature gate OFF)",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_adaptive_control_edge_cases.py",
+        "backend/tests/test_adaptive_control_properties.py",
+        "backend/tests/test_adaptive_decision.py",
+        "backend/tests/test_adaptive_telemetry.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.adaptive_control.signals",
+      "file": "backend/app/adaptive_control/signals.py",
+      "status": "dormant",
+      "reason": "flag-driven dormant (feature gate OFF)",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_adaptive_control_edge_cases.py",
+        "backend/tests/test_adaptive_control_properties.py",
+        "backend/tests/test_adaptive_decision.py",
+        "backend/tests/test_adaptive_events.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.adaptive_control.sufficiency",
+      "file": "backend/app/adaptive_control/sufficiency.py",
+      "status": "dormant",
+      "reason": "flag-driven dormant (feature gate OFF)",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_adaptive_control_edge_cases.py",
+        "backend/tests/test_adaptive_control_properties.py",
+        "backend/tests/test_adaptive_decision.py",
+        "backend/tests/test_adaptive_telemetry.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.bulk_importer",
+      "file": "backend/app/bulk_importer.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_bulk_importer.py",
+        "backend/tests/test_bulk_importer_properties.py",
+        "backend/tests/test_market_price_api.py",
+        "backend/tests/test_ptf_metrics.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.calculator",
+      "file": "backend/app/calculator.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_action_hints_golden.py",
+        "backend/tests/test_calculator_properties.py",
+        "backend/tests/test_e2e_smoke.py",
+        "backend/tests/test_integration.py",
+        "backend/tests/test_total_mismatch.py"
+      ],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.canonical_extractor",
+      "file": "backend/app/canonical_extractor.py",
+      "status": "orphan",
+      "reason": "no import chain from main or tests",
+      "imported_by_main": false,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.config",
+      "file": "backend/app/config.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_config.py",
+        "backend/tests/test_e2e_smoke.py"
+      ],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.core",
+      "file": "backend/app/core/__init__.py",
+      "status": "orphan",
+      "reason": "no import chain from main or tests",
+      "imported_by_main": false,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.core.config",
+      "file": "backend/app/core/config.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.database",
+      "file": "backend/app/database.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_audit_history.py",
+        "backend/tests/test_audit_history_properties.py",
+        "backend/tests/test_audit_trail_properties.py",
+        "backend/tests/test_bulk_importer.py",
+        "backend/tests/test_cb_precheck.py",
+        "backend/tests/test_deprecation_aliases.py",
+        "backend/tests/test_drift_guard_middleware_v0.py",
+        "backend/tests/test_e2e_smoke.py",
+        "backend/tests/test_endpoint_class_policy_enforcement.py",
+        "backend/tests/test_fi_guard_error.py",
+        "backend/tests/test_fi_killswitch.py",
+        "backend/tests/test_guard_decision_wiring.py",
+        "backend/tests/test_kill_switch.py",
+        "backend/tests/test_market_price_admin_service.py",
+        "backend/tests/test_market_price_admin_service_properties.py",
+        "backend/tests/test_market_price_api.py",
+        "backend/tests/test_market_price_lookup_api.py",
+        "backend/tests/test_metrics_endpoint.py",
+        "backend/tests/test_ops_guard_middleware.py",
+        "backend/tests/test_pr2_closure.py",
+        "backend/tests/test_pricing_cache.py",
+        "backend/tests/test_pricing_consistency_bug_condition.py",
+        "backend/tests/test_pricing_consistency_preservation.py",
+        "backend/tests/test_pricing_core.py",
+        "backend/tests/test_ptf_metrics.py",
+        "backend/tests/test_risk_analysis_db_param_fix.py",
+        "backend/tests/test_t1t2t3_input_mode.py",
+        "backend/tests/test_t1t2t3_quality.py",
+        "backend/tests/test_telemetry_events.py",
+        "backend/tests/test_tenant_enable_integration.py"
+      ],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.distribution_tariffs",
+      "file": "backend/app/distribution_tariffs.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_t1t2t3_quality.py"
+      ],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.endpoint_normalization",
+      "file": "backend/app/endpoint_normalization.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_endpoint_normalization.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.epias_client",
+      "file": "backend/app/epias_client.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_epias_client.py"
+      ],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.event_store",
+      "file": "backend/app/event_store.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_telemetry_events.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.extraction_prompt",
+      "file": "backend/app/extraction_prompt.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.extractor",
+      "file": "backend/app/extractor.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.fast_extractor",
+      "file": "backend/app/fast_extractor.py",
+      "status": "orphan",
+      "reason": "no import chain from main or tests",
+      "imported_by_main": false,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.guard_config",
+      "file": "backend/app/guard_config.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/concurrency_harness.py",
+        "backend/tests/test_adaptive_wiring.py",
+        "backend/tests/test_cb_precheck.py",
+        "backend/tests/test_circuit_breaker.py",
+        "backend/tests/test_concurrency_pbt.py",
+        "backend/tests/test_dependency_wrapper.py",
+        "backend/tests/test_drift_guard.py",
+        "backend/tests/test_drift_guard_middleware_v0.py",
+        "backend/tests/test_drift_guard_v0.py",
+        "backend/tests/test_endpoint_class_policy_checkpoint.py",
+        "backend/tests/test_endpoint_class_policy_enforcement.py",
+        "backend/tests/test_fi_cb_lifecycle.py",
+        "backend/tests/test_fi_db_timeout.py",
+        "backend/tests/test_fi_killswitch.py",
+        "backend/tests/test_fi_rate_limit.py",
+        "backend/tests/test_guard_config.py",
+        "backend/tests/test_guard_decision.py",
+        "backend/tests/test_guard_decision_wiring.py",
+        "backend/tests/test_kill_switch.py",
+        "backend/tests/test_lc_multi_instance.py",
+        "backend/tests/test_ops_guard_middleware.py",
+        "backend/tests/test_rate_limit_guard.py",
+        "backend/tests/test_tenant_enable_integration.py",
+        "backend/tests/test_wiring_integration.py"
+      ],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.guards",
+      "file": "backend/app/guards/__init__.py",
+      "status": "orphan",
+      "reason": "no import chain from main or tests",
+      "imported_by_main": false,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.guards.circuit_breaker",
+      "file": "backend/app/guards/circuit_breaker.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_cb_precheck.py",
+        "backend/tests/test_circuit_breaker.py",
+        "backend/tests/test_dependency_wrapper.py",
+        "backend/tests/test_endpoint_dependency_map.py",
+        "backend/tests/test_fi_cb_lifecycle.py",
+        "backend/tests/test_fi_db_timeout.py",
+        "backend/tests/test_lc_chaos_io.py",
+        "backend/tests/test_lc_chaos_splitbrain.py",
+        "backend/tests/test_lc_invariants.py",
+        "backend/tests/test_lc_multi_instance.py",
+        "backend/tests/test_lc_ops_contract.py",
+        "backend/tests/test_wiring_integration.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.guards.dependency_wrapper",
+      "file": "backend/app/guards/dependency_wrapper.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_dependency_wrapper.py",
+        "backend/tests/test_wiring_integration.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.guards.drift_guard",
+      "file": "backend/app/guards/drift_guard.py",
+      "status": "dormant",
+      "reason": "alive via main but feature flag OFF",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_drift_guard.py",
+        "backend/tests/test_drift_guard_middleware_v0.py",
+        "backend/tests/test_drift_guard_v0.py"
+      ],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.guards.endpoint_dependency_map",
+      "file": "backend/app/guards/endpoint_dependency_map.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_endpoint_dependency_map.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.guards.failure_taxonomy",
+      "file": "backend/app/guards/failure_taxonomy.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_failure_taxonomy.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.guards.guard_decision",
+      "file": "backend/app/guards/guard_decision.py",
+      "status": "dormant",
+      "reason": "alive via main but feature flag OFF",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/concurrency_harness.py",
+        "backend/tests/test_concurrency_pbt.py",
+        "backend/tests/test_drift_guard_v0.py",
+        "backend/tests/test_endpoint_class_policy_checkpoint.py",
+        "backend/tests/test_endpoint_class_policy_enforcement.py",
+        "backend/tests/test_endpoint_class_policy_properties.py",
+        "backend/tests/test_guard_decision.py",
+        "backend/tests/test_guard_decision_wiring.py",
+        "backend/tests/test_tenant_enable_integration.py",
+        "backend/tests/test_tenant_enable_properties.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.guards.guard_decision_middleware",
+      "file": "backend/app/guards/guard_decision_middleware.py",
+      "status": "dormant",
+      "reason": "alive via main but feature flag OFF",
+      "imported_by_main": true,
+      "imported_by_tests": [],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.guards.guard_enforcement",
+      "file": "backend/app/guards/guard_enforcement.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_concurrency_pbt.py",
+        "backend/tests/test_endpoint_class_policy_checkpoint.py",
+        "backend/tests/test_guard_decision.py",
+        "backend/tests/test_guard_decision_wiring.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.guards.rate_limit_guard",
+      "file": "backend/app/guards/rate_limit_guard.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_fi_rate_limit.py",
+        "backend/tests/test_ops_guard_middleware.py",
+        "backend/tests/test_rate_limit_guard.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.html_render",
+      "file": "backend/app/html_render.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.image_prep",
+      "file": "backend/app/image_prep.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.incident_digest",
+      "file": "backend/app/incident_digest.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_incident_digest.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.incident_keys",
+      "file": "backend/app/incident_keys.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_dedupe_key_v2.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.incident_metrics",
+      "file": "backend/app/incident_metrics.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_e2e_smoke.py",
+        "backend/tests/test_feedback.py",
+        "backend/tests/test_incident_digest.py",
+        "backend/tests/test_incident_metrics.py"
+      ],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.incident_repository",
+      "file": "backend/app/incident_repository.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_incident_repository.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.incident_service",
+      "file": "backend/app/incident_service.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_action_hints_golden.py",
+        "backend/tests/test_action_hints_unit.py",
+        "backend/tests/test_e2e_smoke.py",
+        "backend/tests/test_primary_cause.py",
+        "backend/tests/test_prod_guard.py",
+        "backend/tests/test_total_mismatch.py"
+      ],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.invoice",
+      "file": "backend/app/invoice/__init__.py",
+      "status": "orphan",
+      "reason": "no import chain from main or tests",
+      "imported_by_main": false,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.invoice.validation",
+      "file": "backend/app/invoice/validation/__init__.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_invoice_validator_enforcement_f.py",
+        "backend/tests/test_invoice_validator_fixtures.py",
+        "backend/tests/test_invoice_validator_pbt.py",
+        "backend/tests/test_invoice_validator_shadow.py",
+        "backend/tests/test_invoice_validator_shadow_e.py",
+        "backend/tests/test_invoice_validator_totals_fixtures.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.invoice.validation.enforcement",
+      "file": "backend/app/invoice/validation/enforcement.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_invoice_telemetry_g.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.invoice.validation.enforcement_config",
+      "file": "backend/app/invoice/validation/enforcement_config.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_invoice_telemetry_g.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.invoice.validation.error_codes",
+      "file": "backend/app/invoice/validation/error_codes.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.invoice.validation.gate_evaluator",
+      "file": "backend/app/invoice/validation/gate_evaluator.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_invoice_prod_hardening_h0.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.invoice.validation.rollout_config",
+      "file": "backend/app/invoice/validation/rollout_config.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_invoice_prod_hardening_h0.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.invoice.validation.shadow",
+      "file": "backend/app/invoice/validation/shadow.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_invoice_validator_shadow.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.invoice.validation.shadow_config",
+      "file": "backend/app/invoice/validation/shadow_config.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_invoice_telemetry_g.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.invoice.validation.stage_report",
+      "file": "backend/app/invoice/validation/stage_report.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_invoice_prod_hardening_h0.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.invoice.validation.telemetry",
+      "file": "backend/app/invoice/validation/telemetry.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_invoice_telemetry_g.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.invoice.validation.telemetry_config",
+      "file": "backend/app/invoice/validation/telemetry_config.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_invoice_telemetry_g.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.invoice.validation.types",
+      "file": "backend/app/invoice/validation/types.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.invoice.validation.validator",
+      "file": "backend/app/invoice/validation/validator.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.issue_payload",
+      "file": "backend/app/issue_payload.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_action_router.py",
+        "backend/tests/test_issue_payload_builder.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.issue_reporter",
+      "file": "backend/app/issue_reporter.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_issue_reporter.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.job_queue",
+      "file": "backend/app/job_queue.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.kill_switch",
+      "file": "backend/app/kill_switch.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_fi_killswitch.py",
+        "backend/tests/test_kill_switch.py",
+        "backend/tests/test_ops_guard_middleware.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.main",
+      "file": "backend/app/main.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/conftest.py",
+        "backend/tests/test_audit_history.py",
+        "backend/tests/test_cb_precheck.py",
+        "backend/tests/test_deprecation_aliases.py",
+        "backend/tests/test_drift_guard_middleware_v0.py",
+        "backend/tests/test_endpoint_class_policy_enforcement.py",
+        "backend/tests/test_fi_guard_error.py",
+        "backend/tests/test_fi_killswitch.py",
+        "backend/tests/test_guard_decision_wiring.py",
+        "backend/tests/test_kill_switch.py",
+        "backend/tests/test_market_price_api.py",
+        "backend/tests/test_market_price_lookup_api.py",
+        "backend/tests/test_metrics_endpoint.py",
+        "backend/tests/test_ops_guard_middleware.py",
+        "backend/tests/test_pr2_closure.py",
+        "backend/tests/test_pr3_observability.py",
+        "backend/tests/test_pricing_consistency_bug_condition.py",
+        "backend/tests/test_pricing_consistency_preservation.py",
+        "backend/tests/test_ptf_metrics.py",
+        "backend/tests/test_risk_analysis_db_param_fix.py",
+        "backend/tests/test_t1t2t3_input_mode.py",
+        "backend/tests/test_t1t2t3_quality.py",
+        "backend/tests/test_telemetry_events.py",
+        "backend/tests/test_tenant_enable_integration.py",
+        "backend/tests/test_wiring_integration.py"
+      ],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.market_price_admin_service",
+      "file": "backend/app/market_price_admin_service.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_audit_history.py",
+        "backend/tests/test_audit_history_properties.py",
+        "backend/tests/test_audit_trail_properties.py",
+        "backend/tests/test_bulk_importer.py",
+        "backend/tests/test_bulk_importer_properties.py",
+        "backend/tests/test_deprecation_aliases.py",
+        "backend/tests/test_market_price_admin_service.py",
+        "backend/tests/test_market_price_admin_service_properties.py",
+        "backend/tests/test_market_price_api.py",
+        "backend/tests/test_market_price_lookup_api.py",
+        "backend/tests/test_ptf_metrics.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.market_price_validator",
+      "file": "backend/app/market_price_validator.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_audit_history.py",
+        "backend/tests/test_audit_history_properties.py",
+        "backend/tests/test_audit_trail_properties.py",
+        "backend/tests/test_bulk_importer.py",
+        "backend/tests/test_bulk_importer_properties.py",
+        "backend/tests/test_deprecation_aliases.py",
+        "backend/tests/test_market_price_admin_service.py",
+        "backend/tests/test_market_price_admin_service_properties.py",
+        "backend/tests/test_market_price_api.py",
+        "backend/tests/test_market_price_validator.py",
+        "backend/tests/test_market_price_validator_properties.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.market_prices",
+      "file": "backend/app/market_prices.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_market_prices.py"
+      ],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.metrics_middleware",
+      "file": "backend/app/metrics_middleware.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_metrics_endpoint.py"
+      ],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.models",
+      "file": "backend/app/models.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_calculator_properties.py",
+        "backend/tests/test_e2e_smoke.py",
+        "backend/tests/test_integration.py",
+        "backend/tests/test_validator_properties.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.ocr_extractor",
+      "file": "backend/app/ocr_extractor.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_ocr_extractor.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.ops_guard_middleware",
+      "file": "backend/app/ops_guard_middleware.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/conftest.py",
+        "backend/tests/test_cb_precheck.py",
+        "backend/tests/test_drift_guard_middleware_v0.py",
+        "backend/tests/test_endpoint_class_policy_enforcement.py",
+        "backend/tests/test_fi_guard_error.py",
+        "backend/tests/test_fi_killswitch.py",
+        "backend/tests/test_guard_decision_wiring.py",
+        "backend/tests/test_ops_guard_middleware.py",
+        "backend/tests/test_tenant_enable_integration.py"
+      ],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.parse_tr",
+      "file": "backend/app/parse_tr.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.pdf_api",
+      "file": "backend/app/pdf_api.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_pdf_api.py",
+        "backend/tests/test_pdf_integration.py",
+        "backend/tests/test_pdf_metrics.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.pdf_generator",
+      "file": "backend/app/pdf_generator.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.pdf_render",
+      "file": "backend/app/pdf_render.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.pdf_text_extractor",
+      "file": "backend/app/pdf_text_extractor.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.penalty_engine",
+      "file": "backend/app/penalty_engine.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_penalty_engine.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.penalty_models",
+      "file": "backend/app/penalty_models.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_penalty_engine.py",
+        "backend/tests/test_penalty_rates.py",
+        "backend/tests/test_tariff_simulator.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.penalty_rates",
+      "file": "backend/app/penalty_rates.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_penalty_rates.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.pilot_guard",
+      "file": "backend/app/pilot_guard.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_pilot_guard.py"
+      ],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.pricing",
+      "file": "backend/app/pricing/__init__.py",
+      "status": "orphan",
+      "reason": "no import chain from main or tests",
+      "imported_by_main": false,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.pricing.consumption_service",
+      "file": "backend/app/pricing/consumption_service.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_pricing_core.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.pricing.excel_formatter",
+      "file": "backend/app/pricing/excel_formatter.py",
+      "status": "orphan",
+      "reason": "no import chain from main or tests",
+      "imported_by_main": false,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.pricing.excel_parser",
+      "file": "backend/app/pricing/excel_parser.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_excel_parser.py",
+        "backend/tests/test_multiplier_simulator.py",
+        "backend/tests/test_pricing_consistency_bug_condition.py",
+        "backend/tests/test_pricing_consistency_preservation.py",
+        "backend/tests/test_pricing_core.py",
+        "backend/tests/test_risk_analysis_db_param_fix.py",
+        "backend/tests/test_sanity_real_scenario.py",
+        "backend/tests/test_t1t2t3_input_mode.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.pricing.imbalance",
+      "file": "backend/app/pricing/imbalance.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_pricing_consistency_preservation.py",
+        "backend/tests/test_pricing_core.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.pricing.margin_reality",
+      "file": "backend/app/pricing/margin_reality.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_margin_reality.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.pricing.models",
+      "file": "backend/app/pricing/models.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_multiplier_simulator.py",
+        "backend/tests/test_pricing_consistency_bug_condition.py",
+        "backend/tests/test_pricing_consistency_preservation.py",
+        "backend/tests/test_pricing_core.py",
+        "backend/tests/test_risk_calculator.py",
+        "backend/tests/test_sanity_real_scenario.py",
+        "backend/tests/test_t1t2t3_input_mode.py",
+        "backend/tests/test_t1t2t3_quality.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.pricing.multiplier_simulator",
+      "file": "backend/app/pricing/multiplier_simulator.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_multiplier_simulator.py",
+        "backend/tests/test_sanity_real_scenario.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.pricing.pricing_cache",
+      "file": "backend/app/pricing/pricing_cache.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_pricing_cache.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.pricing.pricing_engine",
+      "file": "backend/app/pricing/pricing_engine.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_pricing_consistency_bug_condition.py",
+        "backend/tests/test_pricing_consistency_preservation.py",
+        "backend/tests/test_pricing_core.py",
+        "backend/tests/test_sanity_real_scenario.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.pricing.pricing_report",
+      "file": "backend/app/pricing/pricing_report.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_pricing_report.py"
+      ],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.pricing.profile_templates",
+      "file": "backend/app/pricing/profile_templates.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_pricing_consistency_bug_condition.py",
+        "backend/tests/test_pricing_consistency_preservation.py",
+        "backend/tests/test_risk_analysis_db_param_fix.py",
+        "backend/tests/test_t1t2t3_input_mode.py",
+        "backend/tests/test_t1t2t3_quality.py"
+      ],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.pricing.risk_calculator",
+      "file": "backend/app/pricing/risk_calculator.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_risk_calculator.py",
+        "backend/tests/test_sanity_real_scenario.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.pricing.router",
+      "file": "backend/app/pricing/router.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_risk_analysis_db_param_fix.py",
+        "backend/tests/test_t1t2t3_input_mode.py"
+      ],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.pricing.schemas",
+      "file": "backend/app/pricing/schemas.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_pricing_cache.py",
+        "backend/tests/test_pricing_consistency_bug_condition.py",
+        "backend/tests/test_pricing_consistency_preservation.py",
+        "backend/tests/test_pricing_core.py",
+        "backend/tests/test_risk_analysis_db_param_fix.py",
+        "backend/tests/test_t1t2t3_input_mode.py",
+        "backend/tests/test_t1t2t3_quality.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.pricing.time_zones",
+      "file": "backend/app/pricing/time_zones.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_pricing_core.py",
+        "backend/tests/test_sanity_real_scenario.py",
+        "backend/tests/test_t1t2t3_input_mode.py",
+        "backend/tests/test_t1t2t3_quality.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.pricing.version_manager",
+      "file": "backend/app/pricing/version_manager.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_pricing_cache.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.pricing.yekdem_service",
+      "file": "backend/app/pricing/yekdem_service.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.ptf_metrics",
+      "file": "backend/app/ptf_metrics.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_api_request_label_drift.py",
+        "backend/tests/test_cb_precheck.py",
+        "backend/tests/test_circuit_breaker.py",
+        "backend/tests/test_dependency_wrapper.py",
+        "backend/tests/test_drift_guard.py",
+        "backend/tests/test_endpoint_class_policy_metrics.py",
+        "backend/tests/test_fi_cb_lifecycle.py",
+        "backend/tests/test_fi_db_timeout.py",
+        "backend/tests/test_fi_killswitch.py",
+        "backend/tests/test_fi_rate_limit.py",
+        "backend/tests/test_guard_config.py",
+        "backend/tests/test_kill_switch.py",
+        "backend/tests/test_lc_metrics_capture.py",
+        "backend/tests/test_metrics_endpoint.py",
+        "backend/tests/test_ops_guard_middleware.py",
+        "backend/tests/test_pdf_metrics.py",
+        "backend/tests/test_pr3_observability.py",
+        "backend/tests/test_ptf_metrics.py",
+        "backend/tests/test_rate_limit_guard.py",
+        "backend/tests/test_telemetry_events.py",
+        "backend/tests/test_wiring_integration.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.recompute_service",
+      "file": "backend/app/recompute_service.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_recompute_service.py",
+        "backend/tests/test_resolution_reasons.py",
+        "backend/tests/test_retry_orchestrator.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.region_extractor",
+      "file": "backend/app/region_extractor.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.resolution_reasons",
+      "file": "backend/app/resolution_reasons.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_incident_metrics.py",
+        "backend/tests/test_resolution_reasons.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.retry_executor",
+      "file": "backend/app/retry_executor.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_resolution_reasons.py",
+        "backend/tests/test_retry_executor.py",
+        "backend/tests/test_retry_orchestrator.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.retry_orchestrator",
+      "file": "backend/app/retry_orchestrator.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_resolution_reasons.py",
+        "backend/tests/test_retry_orchestrator.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.rq_adapter",
+      "file": "backend/app/rq_adapter.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.rq_worker",
+      "file": "backend/app/rq_worker.py",
+      "status": "orphan",
+      "reason": "no import chain from main or tests",
+      "imported_by_main": false,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.section_extractor",
+      "file": "backend/app/section_extractor.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.seed_market_prices",
+      "file": "backend/app/seed_market_prices.py",
+      "status": "orphan",
+      "reason": "no import chain from main or tests",
+      "imported_by_main": false,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.services",
+      "file": "backend/app/services/__init__.py",
+      "status": "orphan",
+      "reason": "no import chain from main or tests",
+      "imported_by_main": false,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.services.audit",
+      "file": "backend/app/services/audit.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.services.job_claim",
+      "file": "backend/app/services/job_claim.py",
+      "status": "orphan",
+      "reason": "no import chain from main or tests",
+      "imported_by_main": false,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.services.pdf_artifact_store",
+      "file": "backend/app/services/pdf_artifact_store.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_pdf_api.py",
+        "backend/tests/test_pdf_artifact_storage.py",
+        "backend/tests/test_pdf_integration.py",
+        "backend/tests/test_pdf_metrics.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.services.pdf_job_store",
+      "file": "backend/app/services/pdf_job_store.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_adaptive_wiring.py",
+        "backend/tests/test_pdf_api.py",
+        "backend/tests/test_pdf_artifact_storage.py",
+        "backend/tests/test_pdf_integration.py",
+        "backend/tests/test_pdf_job_store.py",
+        "backend/tests/test_pdf_metrics.py",
+        "backend/tests/test_pdf_worker.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.services.pdf_page_numbering",
+      "file": "backend/app/services/pdf_page_numbering.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.services.pdf_playwright",
+      "file": "backend/app/services/pdf_playwright.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.services.pdf_render_worker",
+      "file": "backend/app/services/pdf_render_worker.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_pdf_artifact_storage.py",
+        "backend/tests/test_pdf_integration.py",
+        "backend/tests/test_pdf_metrics.py",
+        "backend/tests/test_pdf_worker.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.services.rate_limit",
+      "file": "backend/app/services/rate_limit.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.services.storage",
+      "file": "backend/app/services/storage.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.services.storage_backend",
+      "file": "backend/app/services/storage_backend.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_pdf_api.py",
+        "backend/tests/test_pdf_artifact_storage.py",
+        "backend/tests/test_pdf_integration.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.services.storage_local",
+      "file": "backend/app/services/storage_local.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_pdf_artifact_storage.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.services.storage_s3",
+      "file": "backend/app/services/storage_s3.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [],
+      "has_lazy_import": true
+    },
+    {
+      "module": "app.services.tenant",
+      "file": "backend/app/services/tenant.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.services.webhook",
+      "file": "backend/app/services/webhook.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.services.webhook_manager",
+      "file": "backend/app/services/webhook_manager.py",
+      "status": "orphan",
+      "reason": "no import chain from main or tests",
+      "imported_by_main": false,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.supplier_profiles",
+      "file": "backend/app/supplier_profiles.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_invoice_validator_enforcement_f.py",
+        "backend/tests/test_supplier_profiles.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.tariff_simulator",
+      "file": "backend/app/tariff_simulator.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_tariff_simulator.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing",
+      "file": "backend/app/testing/__init__.py",
+      "status": "orphan",
+      "reason": "no import chain from main or tests",
+      "imported_by_main": false,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.alert_validator",
+      "file": "backend/app/testing/alert_validator.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_fi_alert_validation.py",
+        "backend/tests/test_lc_alert_validation.py",
+        "backend/tests/test_lc_chaos_io.py",
+        "backend/tests/test_lc_chaos_splitbrain.py",
+        "backend/tests/test_lc_invariants.py",
+        "backend/tests/test_lc_ops_contract.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.cb_observer",
+      "file": "backend/app/testing/cb_observer.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_lc_chaos_io.py",
+        "backend/tests/test_lc_chaos_splitbrain.py",
+        "backend/tests/test_lc_invariants.py",
+        "backend/tests/test_lc_multi_instance.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.chaos_harness",
+      "file": "backend/app/testing/chaos_harness.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_lc_chaos_io.py",
+        "backend/tests/test_lc_chaos_payload.py",
+        "backend/tests/test_lc_chaos_splitbrain.py",
+        "backend/tests/test_lc_chaos_time.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.db_timeout_hook",
+      "file": "backend/app/testing/db_timeout_hook.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_fi_db_timeout.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.fault_injection",
+      "file": "backend/app/testing/fault_injection.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_fault_injection.py",
+        "backend/tests/test_fi_db_timeout.py",
+        "backend/tests/test_fi_guard_error.py",
+        "backend/tests/test_lc_scenario_runner.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.gate_metrics",
+      "file": "backend/app/testing/gate_metrics.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_gate_metrics.py",
+        "backend/tests/test_gate_telemetry_integration.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.guard_error_hook",
+      "file": "backend/app/testing/guard_error_hook.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_fi_guard_error.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.lc_config",
+      "file": "backend/app/testing/lc_config.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_lc_alert_validation.py",
+        "backend/tests/test_lc_chaos_io.py",
+        "backend/tests/test_lc_chaos_payload.py",
+        "backend/tests/test_lc_chaos_time.py",
+        "backend/tests/test_lc_checkpoint_gnk.py",
+        "backend/tests/test_lc_config.py",
+        "backend/tests/test_lc_failure_matrix.py",
+        "backend/tests/test_lc_integration.py",
+        "backend/tests/test_lc_invariants.py",
+        "backend/tests/test_lc_load_harness.py",
+        "backend/tests/test_lc_multi_instance.py",
+        "backend/tests/test_lc_ops_contract.py",
+        "backend/tests/test_lc_scenario_runner.py",
+        "backend/tests/test_lc_write_safety.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.load_harness",
+      "file": "backend/app/testing/load_harness.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_lc_chaos_payload.py",
+        "backend/tests/test_lc_chaos_time.py",
+        "backend/tests/test_lc_checkpoint_gnk.py",
+        "backend/tests/test_lc_failure_matrix.py",
+        "backend/tests/test_lc_integration.py",
+        "backend/tests/test_lc_load_harness.py",
+        "backend/tests/test_lc_multi_instance.py",
+        "backend/tests/test_lc_scenario_runner.py",
+        "backend/tests/test_lc_write_safety.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.metrics_capture",
+      "file": "backend/app/testing/metrics_capture.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_lc_checkpoint_gnk.py",
+        "backend/tests/test_lc_failure_matrix.py",
+        "backend/tests/test_lc_integration.py",
+        "backend/tests/test_lc_metrics_capture.py",
+        "backend/tests/test_lc_scenario_runner.py",
+        "backend/tests/test_lc_write_safety.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.perf_budget",
+      "file": "backend/app/testing/perf_budget.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_gate_telemetry_integration.py",
+        "backend/tests/test_lc_perf_budget.py",
+        "backend/tests/test_lc_tier_runner.py",
+        "backend/tests/test_release_e2e.py",
+        "backend/tests/test_release_gate.py",
+        "backend/tests/test_release_policy.py",
+        "backend/tests/test_release_preflight_enforcement.py",
+        "backend/tests/test_release_report.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.policy_engine",
+      "file": "backend/app/testing/policy_engine.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_gate_telemetry_integration.py",
+        "backend/tests/test_lc_concurrency_semantics.py",
+        "backend/tests/test_lc_drift_monitor.py",
+        "backend/tests/test_lc_multi_instance_races.py",
+        "backend/tests/test_lc_orchestrator.py",
+        "backend/tests/test_lc_override_governance.py",
+        "backend/tests/test_lc_policy_canary.py",
+        "backend/tests/test_lc_policy_engine.py",
+        "backend/tests/test_lc_state_store.py",
+        "backend/tests/test_release_e2e.py",
+        "backend/tests/test_release_gate.py",
+        "backend/tests/test_release_policy.py",
+        "backend/tests/test_release_preflight_enforcement.py",
+        "backend/tests/test_release_report.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.preflight_metrics",
+      "file": "backend/app/testing/preflight_metrics.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_preflight_guardrails.py",
+        "backend/tests/test_preflight_metrics.py",
+        "backend/tests/test_preflight_metrics_roundtrip.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.release_gate",
+      "file": "backend/app/testing/release_gate.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_gate_telemetry_integration.py",
+        "backend/tests/test_release_e2e.py",
+        "backend/tests/test_release_gate.py",
+        "backend/tests/test_release_pack.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.release_policy",
+      "file": "backend/app/testing/release_policy.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_gate_metrics.py",
+        "backend/tests/test_gate_telemetry_integration.py",
+        "backend/tests/test_preflight_guardrails.py",
+        "backend/tests/test_preflight_metrics.py",
+        "backend/tests/test_preflight_metrics_roundtrip.py",
+        "backend/tests/test_release_e2e.py",
+        "backend/tests/test_release_gate.py",
+        "backend/tests/test_release_pack.py",
+        "backend/tests/test_release_policy.py",
+        "backend/tests/test_release_preflight_enforcement.py",
+        "backend/tests/test_release_report.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.release_preflight",
+      "file": "backend/app/testing/release_preflight.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_release_preflight.py",
+        "backend/tests/test_release_preflight_enforcement.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.release_report",
+      "file": "backend/app/testing/release_report.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_release_e2e.py",
+        "backend/tests/test_release_pack.py",
+        "backend/tests/test_release_report.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.release_version",
+      "file": "backend/app/testing/release_version.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_release_pack.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.rollout_orchestrator",
+      "file": "backend/app/testing/rollout_orchestrator.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_gate_telemetry_integration.py",
+        "backend/tests/test_lc_drift_monitor.py",
+        "backend/tests/test_lc_orchestrator.py",
+        "backend/tests/test_lc_policy_canary.py",
+        "backend/tests/test_release_e2e.py",
+        "backend/tests/test_release_gate.py",
+        "backend/tests/test_release_policy.py",
+        "backend/tests/test_release_preflight_enforcement.py",
+        "backend/tests/test_release_report.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.scenario_runner",
+      "file": "backend/app/testing/scenario_runner.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_lc_chaos_io.py",
+        "backend/tests/test_lc_chaos_payload.py",
+        "backend/tests/test_lc_checkpoint_gnk.py",
+        "backend/tests/test_lc_failure_matrix.py",
+        "backend/tests/test_lc_integration.py",
+        "backend/tests/test_lc_invariants.py",
+        "backend/tests/test_lc_multi_instance.py",
+        "backend/tests/test_lc_scenario_runner.py",
+        "backend/tests/test_lc_write_safety.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.slo_evaluator",
+      "file": "backend/app/testing/slo_evaluator.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_adaptive_budget.py",
+        "backend/tests/test_adaptive_control_edge_cases.py",
+        "backend/tests/test_adaptive_control_properties.py",
+        "backend/tests/test_adaptive_decision.py",
+        "backend/tests/test_adaptive_telemetry.py",
+        "backend/tests/test_lc_canary_gate.py",
+        "backend/tests/test_lc_pipeline_gate.py",
+        "backend/tests/test_lc_slo_evaluator.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.state_store",
+      "file": "backend/app/testing/state_store.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_lc_concurrency_semantics.py",
+        "backend/tests/test_lc_multi_instance_races.py",
+        "backend/tests/test_lc_state_store.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.store_memory",
+      "file": "backend/app/testing/store_memory.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_lc_concurrency_semantics.py",
+        "backend/tests/test_lc_multi_instance_races.py",
+        "backend/tests/test_lc_state_store.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.store_sqlite",
+      "file": "backend/app/testing/store_sqlite.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_lc_concurrency_semantics.py",
+        "backend/tests/test_lc_multi_instance_races.py",
+        "backend/tests/test_lc_state_store.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.stress_report",
+      "file": "backend/app/testing/stress_report.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_lc_chaos_payload.py",
+        "backend/tests/test_lc_checkpoint_gnk.py",
+        "backend/tests/test_lc_integration.py",
+        "backend/tests/test_lc_multi_instance.py",
+        "backend/tests/test_lc_report.py",
+        "backend/tests/test_lc_write_safety.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.testing.stub_server",
+      "file": "backend/app/testing/stub_server.py",
+      "status": "alive_from_tests_only",
+      "reason": "imported only by tests",
+      "imported_by_main": false,
+      "imported_by_tests": [
+        "backend/tests/test_fi_cb_lifecycle.py",
+        "backend/tests/test_stub_server.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.validator",
+      "file": "backend/app/validator.py",
+      "status": "alive_from_main",
+      "reason": "reachable from main.py",
+      "imported_by_main": true,
+      "imported_by_tests": [
+        "backend/tests/test_e2e_smoke.py",
+        "backend/tests/test_integration.py",
+        "backend/tests/test_validator_properties.py"
+      ],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.worker",
+      "file": "backend/app/worker.py",
+      "status": "orphan",
+      "reason": "no import chain from main or tests",
+      "imported_by_main": false,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    },
+    {
+      "module": "app.worker_pg",
+      "file": "backend/app/worker_pg.py",
+      "status": "orphan",
+      "reason": "no import chain from main or tests",
+      "imported_by_main": false,
+      "imported_by_tests": [],
+      "has_lazy_import": false
+    }
+  ],
+  "endpoint_reachability": [
+    {
+      "method": "POST",
+      "path": "/pdf/jobs",
+      "router": "router",
+      "file": "backend/app/pdf_api.py",
+      "line": 122,
+      "function": "create_pdf_job",
+      "reachable": false,
+      "reason": "router 'router' defined but never included"
+    },
+    {
+      "method": "GET",
+      "path": "/pdf/jobs/{job_id}",
+      "router": "router",
+      "file": "backend/app/pdf_api.py",
+      "line": 196,
+      "function": "get_pdf_job_status",
+      "reachable": false,
+      "reason": "router 'router' defined but never included"
+    },
+    {
+      "method": "GET",
+      "path": "/pdf/jobs/{job_id}/download",
+      "router": "router",
+      "file": "backend/app/pdf_api.py",
+      "line": 219,
+      "function": "download_pdf",
+      "reachable": false,
+      "reason": "router 'router' defined but never included"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/distribution-tariffs",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 4692,
+      "function": "list_distribution_tariffs",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/distribution-tariffs/lookup",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 4733,
+      "function": "lookup_distribution_tariff",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/distribution-tariffs/parse",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 4763,
+      "function": "parse_tariff_string",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/epias/sync-all",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 4619,
+      "function": "sync_all_missing_from_epias",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/feedback-stats",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 5061,
+      "function": "get_feedback_stats",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/incidents",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 4788,
+      "function": "list_incidents",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/incidents/stats",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 4900,
+      "function": "get_incident_stats",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/incidents/{incident_id}",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 4823,
+      "function": "get_incident",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "PATCH",
+      "path": "/admin/incidents/{incident_id}",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 4857,
+      "function": "update_incident",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "PATCH",
+      "path": "/admin/incidents/{incident_id}/feedback",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 4993,
+      "function": "submit_incident_feedback",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/market-prices",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 3340,
+      "function": "list_market_prices",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/market-prices",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 3662,
+      "function": "upsert_market_price",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/market-prices/deprecation-stats",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 3602,
+      "function": "get_deprecation_stats",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/market-prices/form",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 4320,
+      "function": "deprecated_upsert_market_price_form",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/market-prices/history",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 3449,
+      "function": "get_price_history",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/market-prices/import/apply",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 4045,
+      "function": "import_apply",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/market-prices/import/preview",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 3929,
+      "function": "import_preview",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/market-prices/legacy",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 3537,
+      "function": "deprecated_list_market_prices_legacy",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/market-prices/{period}",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 3622,
+      "function": "get_market_price",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/market-prices/{period}/lock",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 3855,
+      "function": "lock_market_price",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/market-prices/{period}/unlock",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 3889,
+      "function": "unlock_market_price",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/ops/kill-switches",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 5130,
+      "function": "list_kill_switches",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "PUT",
+      "path": "/admin/ops/kill-switches/{switch_name}",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 5143,
+      "function": "update_kill_switch",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/ops/status",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 5157,
+      "function": "get_ops_status",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/system-health",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 4944,
+      "function": "get_system_health",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/telemetry/events",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 542,
+      "function": "ingest_telemetry_events",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/analyze-invoice",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 776,
+      "function": "analyze_invoice",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/api/epias/missing-periods",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 4590,
+      "function": "get_missing_periods",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/api/epias/prices/{period}",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 4503,
+      "function": "get_prices_with_epias_fallback",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/api/epias/prices/{period}",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 4544,
+      "function": "save_period_prices",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/api/epias/sync/{period}",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 4445,
+      "function": "sync_period_from_epias",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/api/market-prices/{price_type}/{period}",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 4179,
+      "function": "get_market_price_for_calculation",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/analyze",
+      "router": "pricing_router",
+      "file": "backend/app/pricing/router.py",
+      "line": 443,
+      "function": "analyze",
+      "reachable": true,
+      "reason": "router 'pricing_router' included via app.include_router"
+    },
+    {
+      "method": "GET",
+      "path": "/api/pricing/bayi-segments",
+      "router": "pricing_router",
+      "file": "backend/app/pricing/router.py",
+      "line": 1061,
+      "function": "list_bayi_segments",
+      "reachable": true,
+      "reason": "router 'pricing_router' included via app.include_router"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/compare",
+      "router": "pricing_router",
+      "file": "backend/app/pricing/router.py",
+      "line": 787,
+      "function": "compare",
+      "reachable": true,
+      "reason": "router 'pricing_router' included via app.include_router"
+    },
+    {
+      "method": "GET",
+      "path": "/api/pricing/distribution-tariffs",
+      "router": "pricing_router",
+      "file": "backend/app/pricing/router.py",
+      "line": 1079,
+      "function": "list_distribution_tariffs_public",
+      "reachable": true,
+      "reason": "router 'pricing_router' included via app.include_router"
+    },
+    {
+      "method": "GET",
+      "path": "/api/pricing/distribution-tariffs/lookup",
+      "router": "pricing_router",
+      "file": "backend/app/pricing/router.py",
+      "line": 1099,
+      "function": "lookup_distribution_tariff_public",
+      "reachable": true,
+      "reason": "router 'pricing_router' included via app.include_router"
+    },
+    {
+      "method": "GET",
+      "path": "/api/pricing/periods",
+      "router": "pricing_router",
+      "file": "backend/app/pricing/router.py",
+      "line": 1004,
+      "function": "list_periods",
+      "reachable": true,
+      "reason": "router 'pricing_router' included via app.include_router"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/report/excel",
+      "router": "pricing_router",
+      "file": "backend/app/pricing/router.py",
+      "line": 1202,
+      "function": "report_excel",
+      "reachable": true,
+      "reason": "router 'pricing_router' included via app.include_router"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/report/pdf",
+      "router": "pricing_router",
+      "file": "backend/app/pricing/router.py",
+      "line": 1139,
+      "function": "report_pdf",
+      "reachable": true,
+      "reason": "router 'pricing_router' included via app.include_router"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/simulate",
+      "router": "pricing_router",
+      "file": "backend/app/pricing/router.py",
+      "line": 730,
+      "function": "simulate",
+      "reachable": true,
+      "reason": "router 'pricing_router' included via app.include_router"
+    },
+    {
+      "method": "GET",
+      "path": "/api/pricing/templates",
+      "router": "pricing_router",
+      "file": "backend/app/pricing/router.py",
+      "line": 962,
+      "function": "list_templates",
+      "reachable": true,
+      "reason": "router 'pricing_router' included via app.include_router"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/upload-consumption",
+      "router": "pricing_router",
+      "file": "backend/app/pricing/router.py",
+      "line": 387,
+      "function": "upload_consumption",
+      "reachable": true,
+      "reason": "router 'pricing_router' included via app.include_router"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/upload-market-data",
+      "router": "pricing_router",
+      "file": "backend/app/pricing/router.py",
+      "line": 283,
+      "function": "upload_market_data",
+      "reachable": true,
+      "reason": "router 'pricing_router' included via app.include_router"
+    },
+    {
+      "method": "GET",
+      "path": "/api/pricing/yekdem",
+      "router": "pricing_router",
+      "file": "backend/app/pricing/router.py",
+      "line": 937,
+      "function": "list_yekdem_endpoint",
+      "reachable": true,
+      "reason": "router 'pricing_router' included via app.include_router"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/yekdem",
+      "router": "pricing_router",
+      "file": "backend/app/pricing/router.py",
+      "line": 893,
+      "function": "upsert_yekdem",
+      "reachable": true,
+      "reason": "router 'pricing_router' included via app.include_router"
+    },
+    {
+      "method": "GET",
+      "path": "/api/pricing/yekdem/{period}",
+      "router": "pricing_router",
+      "file": "backend/app/pricing/router.py",
+      "line": 918,
+      "function": "get_yekdem_endpoint",
+      "reachable": true,
+      "reason": "router 'pricing_router' included via app.include_router"
+    },
+    {
+      "method": "GET",
+      "path": "/audit-logs",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 3246,
+      "function": "list_audit_logs",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/audit-logs/stats",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 3301,
+      "function": "get_audit_stats",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "DELETE",
+      "path": "/cache",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 761,
+      "function": "clear_cache",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/calculate-offer",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 906,
+      "function": "calculate_offer_endpoint",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/customers",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 1452,
+      "function": "list_customers",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/customers",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 1419,
+      "function": "create_customer",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "DELETE",
+      "path": "/customers/{customer_id}",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 1552,
+      "function": "delete_customer",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/customers/{customer_id}",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 1486,
+      "function": "get_customer",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "PUT",
+      "path": "/customers/{customer_id}",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 1517,
+      "function": "update_customer",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/extraction/apply-suggested-fixes",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 2361,
+      "function": "apply_suggested_fixes",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "PATCH",
+      "path": "/extraction/patch-fields",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 2311,
+      "function": "patch_extraction_fields",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/full-process",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 947,
+      "function": "full_process",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/generate-html-direct",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 2260,
+      "function": "generate_html_direct",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/generate-pdf-direct",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 1962,
+      "function": "generate_pdf_direct",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/generate-pdf-simple",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 1988,
+      "function": "generate_pdf_simple",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/health",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 616,
+      "function": "health",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/health/ready",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 621,
+      "function": "health_ready",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/invoices",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 2787,
+      "function": "list_invoices",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/invoices",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 2413,
+      "function": "upload_invoice",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/invoices/{invoice_id}",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 2759,
+      "function": "get_invoice",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/invoices/{invoice_id}/download",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 2820,
+      "function": "download_invoice_file",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/invoices/{invoice_id}/extract",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 2603,
+      "function": "extract_invoice",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "PATCH",
+      "path": "/invoices/{invoice_id}/fields",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 2714,
+      "function": "patch_invoice_fields",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/invoices/{invoice_id}/jobs",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 3024,
+      "function": "get_invoice_jobs",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/invoices/{invoice_id}/process",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 2904,
+      "function": "process_invoice_async",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/invoices/{invoice_id}/validate",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 2683,
+      "function": "validate_invoice",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/jobs",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 3046,
+      "function": "list_all_jobs",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/jobs/{job_id}",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 2982,
+      "function": "get_job_status",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/metrics",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 474,
+      "function": "prometheus_metrics",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/offers",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 1612,
+      "function": "list_offers",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/offers",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 1569,
+      "function": "create_offer",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/offers/{offer_id}",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 1649,
+      "function": "get_offer",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/offers/{offer_id}/download",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 1856,
+      "function": "download_offer_pdf",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/offers/{offer_id}/generate-html",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 1934,
+      "function": "generate_html_for_offer",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/offers/{offer_id}/generate-pdf",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 1788,
+      "function": "generate_pdf_for_offer",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "PUT",
+      "path": "/offers/{offer_id}/status",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 1686,
+      "function": "update_offer_status",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/stats",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 2282,
+      "function": "get_statistics",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/webhooks",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 3164,
+      "function": "list_webhooks",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "POST",
+      "path": "/webhooks",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 3111,
+      "function": "create_webhook",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "DELETE",
+      "path": "/webhooks/{webhook_id}",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 3190,
+      "function": "delete_webhook",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    },
+    {
+      "method": "PUT",
+      "path": "/webhooks/{webhook_id}/toggle",
+      "router": "app",
+      "file": "backend/app/main.py",
+      "line": 3214,
+      "function": "toggle_webhook",
+      "reachable": true,
+      "reason": "app-level endpoint"
+    }
+  ],
+  "orphan_routers": [
+    {
+      "router_name": "router",
+      "prefix": "/pdf",
+      "defined_in": "backend/app/pdf_api.py",
+      "endpoint_count": 3
+    }
+  ],
+  "dormant_flags": [
+    {
+      "flag": "adaptive_control_enabled",
+      "default": false,
+      "defined_in": "backend/app/guard_config.py:107",
+      "affected_modules": [
+        "app.adaptive_control"
+      ]
+    },
+    {
+      "flag": "decision_layer_enabled",
+      "default": false,
+      "defined_in": "backend/app/guard_config.py:95",
+      "affected_modules": [
+        "app.guards.guard_decision",
+        "app.guards.guard_decision_middleware"
+      ]
+    },
+    {
+      "flag": "drift_guard_enabled",
+      "default": false,
+      "defined_in": "backend/app/guard_config.py:110",
+      "affected_modules": [
+        "app.guards.drift_guard"
+      ]
+    }
+  ]
+}

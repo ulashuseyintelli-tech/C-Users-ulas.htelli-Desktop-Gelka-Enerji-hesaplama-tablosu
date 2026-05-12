@@ -100,6 +100,16 @@ def get_yekdem(
 ) -> Optional[MonthlyYekdemPrice]:
     """Dönem bazlı YEKDEM kaydı sorgula.
 
+    Öncelik sırası:
+      1. monthly_yekdem_prices (risk engine tablosu — birincil kaynak)
+      2. market_reference_prices (legacy tablo — YEKDEM > 0 kayıtlar için fallback)
+         Eski sistem bu tabloya manuel YEKDEM değerleri yazıyor; risk engine
+         verilerin yeni tabloya mirror edilmediği durumlarda buradan okur.
+
+    Fallback başarılı olursa, sonuç `monthly_yekdem_prices`'a da kopyalanır
+    (sonraki sorgular için cache edilir). Böylece iki tablo arasında
+    transparent sync sağlanır.
+
     Args:
         db: SQLAlchemy oturumu.
         period: Dönem (YYYY-MM).
@@ -107,11 +117,45 @@ def get_yekdem(
     Returns:
         MonthlyYekdemPrice kaydı veya None.
     """
-    return (
+    # 1. Birincil tablo
+    primary = (
         db.query(MonthlyYekdemPrice)
         .filter(MonthlyYekdemPrice.period == period)
         .first()
     )
+    if primary is not None:
+        return primary
+
+    # 2. Legacy tablo — market_reference_prices (sadece YEKDEM > 0)
+    try:
+        from sqlalchemy import text
+        row = db.execute(
+            text(
+                "SELECT yekdem_tl_per_mwh FROM market_reference_prices "
+                "WHERE period = :p AND yekdem_tl_per_mwh > 0 "
+                "LIMIT 1"
+            ),
+            {"p": period},
+        ).fetchone()
+        if row is None:
+            return None
+
+        yekdem_val = float(row[0])
+
+        # Birincil tabloya mirror et (transparent cache)
+        record = MonthlyYekdemPrice(
+            period=period,
+            yekdem_tl_per_mwh=yekdem_val,
+            source="mirror_from_market_reference_prices",
+        )
+        db.add(record)
+        db.commit()
+        db.refresh(record)
+        return record
+    except Exception:
+        # Fallback tablosu yoksa veya hata olursa sessizce None dön
+        db.rollback()
+        return None
 
 
 def list_yekdem(

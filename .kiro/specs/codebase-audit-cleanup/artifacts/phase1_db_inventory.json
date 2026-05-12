@@ -1,0 +1,4374 @@
+{
+  "inventory": {
+    "db_path": "C:\\Users\\ulas.htelli\\Desktop\\Gelka Enerji hesaplama tablosu\\backend\\gelka_enerji.db",
+    "db_size_bytes": 1138688,
+    "alembic_current": "011_market_prices_ptf_admin",
+    "table_count": 19,
+    "tables": [
+      {
+        "name": "alembic_version",
+        "role": "infra",
+        "row_count": 1,
+        "columns": [
+          {
+            "name": "version_num",
+            "type": "VARCHAR(32)",
+            "pk": true,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "version"
+            ],
+            "is_numeric": false
+          }
+        ],
+        "indexes": [
+          {
+            "name": "sqlite_autoindex_alembic_version_1",
+            "unique": true,
+            "origin": "pk"
+          }
+        ],
+        "domains_hit": [
+          "version"
+        ],
+        "sample_rows": [
+          [
+            "011_market_prices_ptf_admin"
+          ]
+        ],
+        "period_coverage": null
+      },
+      {
+        "name": "analysis_cache",
+        "role": "cache",
+        "row_count": 3,
+        "columns": [
+          {
+            "name": "id",
+            "type": "INTEGER",
+            "pk": true,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "cache_key",
+            "type": "VARCHAR(64)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "cache_key"
+            ],
+            "is_numeric": false
+          },
+          {
+            "name": "customer_id",
+            "type": "VARCHAR(100)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "period",
+            "type": "VARCHAR(7)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "period"
+            ],
+            "is_numeric": false
+          },
+          {
+            "name": "params_hash",
+            "type": "VARCHAR(64)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "version",
+              "cache_key"
+            ],
+            "is_numeric": false
+          },
+          {
+            "name": "result_json",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "created_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "expires_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "hit_count",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          }
+        ],
+        "indexes": [
+          {
+            "name": "idx_cache_customer_period",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "idx_cache_expires",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_analysis_cache_id",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "sqlite_autoindex_analysis_cache_1",
+            "unique": true,
+            "origin": "u"
+          }
+        ],
+        "domains_hit": [
+          "cache_key",
+          "period",
+          "version"
+        ],
+        "sample_rows": [
+          [
+            1,
+            "fd93e90a5e7336658b04c6c84ac1726cfc7cc32cf204b392a8243f1fb0fd3354",
+            "__template__",
+            "2026-01",
+            "fd93e90a5e7336658b04c6c84ac1726cfc7cc32cf204b392a8243f1fb0fd3354",
+            "{\"status\": \"ok\", \"period\": \"2026-01\", \"customer_id\": null, \"weighted_prices\": {\"weighted_ptf_tl_per_mwh\": 2894.92, \"weighted_smf_tl_per_mwh\": 2760.64, \"arithmetic_avg_ptf\": 2894.92, \"arithmetic_avg_smf\": 2760.64, \"total_consumption_kwh\": 99999.9922, \"total_cost_tl\": 289492.05, \"hours_count\": 744}, \"supplier_cost\": {\"weighted_ptf_tl_per_mwh\": 2894.92, \"yekdem_tl_per_mwh\": 162.73, \"imbalance_tl_per_mwh\": 2.5, \"total_cost_tl_per_mwh\": 3060.15}, \"pricing\": {\"multiplier\": 1.05, \"sales_energy_price_per_mwh\": 3210.53, \"sales_effective_price_per_mwh\": 4281.03, \"gross_margin_energy_per_mwh\": 152.88, \"gross_margin_total_per_mwh\": -917.62, \"net_margin_per_mwh\": -946.57, \"distribution_cost_per_mwh\": 1070.5, \"imbalance_cost_per_mwh\": 28.95, \"dealer_commission_per_mwh\": 0.0, \"customer_savings_per_mwh\": null, \"customer_reference_price_per_mwh\": null, \"customer_reference_price_source\": null, \"risk_flags\": [{\"type\": \"LOSS_RISK\", \"priority\": 1, \"message\": \"Net marj negatif — teklif zarar üretir\"}, {\"type\": \"UNPROFITABLE_OFFER\", \"priority\": 2, \"message\": \"Toplam brüt marj negatif — dağıtım dahil maliyet satışı aşıyor\"}], \"total_sales_tl\": 321053.22, \"total_cost_tl\": 305765.05, \"total_gross_margin_tl\": 15288.18, \"total_dealer_commission_tl\": 0.0, \"total_net_margin_tl\": -94656.73, \"sales_price_tl_per_mwh\": 3210.53, \"gross_margin_tl_per_mwh\": 152.88, \"dealer_commission_tl_per_mwh\": 0.0, \"net_margin_tl_per_mwh\": -946.57}, \"time_zone_breakdown\": {\"T1\": {\"label\": \"Gündüz (06:00-16:59)\", \"consumption_kwh\": 45833.3326, \"consumption_pct\": 45.83, \"weighted_ptf_tl_per_mwh\": 2949.48, \"weighted_smf_tl_per_mwh\": 2795.96, \"total_cost_tl\": 142642.86}, \"T2\": {\"label\": \"Puant (17:00-21:59)\", \"consumption_kwh\": 20833.333, \"consumption_pct\": 20.83, \"weighted_ptf_tl_per_mwh\": 3312.9, \"weighted_smf_tl_per_mwh\": 3000.52, \"total_cost_tl\": 72408.98}, \"T3\": {\"label\": \"Gece (22:00-05:59)\", \"consumption_kwh\": 33333.3266, \"consumption_pct\": 33.33, \"weighted_ptf_tl_per_mwh\": 2558.67, \"weighted_smf_tl_per_mwh\": 2562.14, \"total_cost_tl\": 90713.21}}, \"loss_map\": {\"total_loss_hours\": 377, \"total_loss_tl\": -14231.49, \"by_time_zone\": {\"T1\": 191, \"T2\": 141, \"T3\": 45}, \"worst_hours\": [{\"date\": \"2026-01-01\", \"hour\": 17, \"ptf\": 3400.0, \"sales_price\": 431.52, \"loss_tl\": -47.34}, {\"date\": \"2026-01-01\", \"hour\": 18, \"ptf\": 3400.0, \"sales_price\": 431.52, \"loss_tl\": -47.34}, {\"date\": \"2026-01-01\", \"hour\": 19, \"ptf\": 3399.99, \"sales_price\": 431.52, \"loss_tl\": -47.34}, {\"date\": \"2026-01-01\", \"hour\": 20, \"ptf\": 3400.0, \"sales_price\": 431.52, \"loss_tl\": -47.34}, {\"date\": \"2026-01-01\", \"hour\": 21, \"ptf\": 3400.0, \"sales_price\": 431.52, \"loss_tl\": -47.34}, {\"date\": \"2026-01-02\", \"hour\": 7, \"ptf\": 3400.0, \"sales_price\": 431.52, \"loss_tl\": -47.34}, {\"date\": \"2026-01-02\", \"hour\": 8, \"ptf\": 3400.0, \"sales_price\": 431.52, \"loss_tl\": -47.34}, {\"date\": \"2026-01-02\", \"hour\": 9, \"ptf\": 3400.0, \"sales_price\": 431.52, \"loss_tl\": -47.34}, {\"date\": \"2026-01-02\", \"hour\": 10, \"ptf\": 3400.0, \"sales_price\": 431.52, \"loss_tl\": -47.34}, {\"date\": \"2026-01-02\", \"hour\": 16, \"ptf\": 3400.0, \"sales_price\": 431.52, \"loss_tl\": -47.34}]}, \"risk_score\": {\"score\": \"Düşük\", \"weighted_ptf\": 2894.92, \"arithmetic_avg_ptf\": 2894.92, \"deviation_pct\": 0.0, \"t2_consumption_pct\": 20.83, \"peak_concentration\": 23.68, \"reasons\": [\"Ağırlıklı PTF sapması düşük (%0.0)\"]}, \"safe_multiplier\": {\"safe_multiplier\": 1.1, \"recommended_multiplier\": 1.1, \"confidence_level\": 0.95, \"periods_analyzed\": 1, \"monthly_margins\": [27681.51], \"warning\": \"Bu profil için ×1.10 altında güvenli katsayı bulunamadı. Daha yüksek katsayı veya farklı parametreler deneyin.\"}, \"distribution\": {\"voltage_level\": \"OG\", \"unit_price_tl_per_kwh\": 1.0705, \"total_kwh\": 99999.99, \"total_tl\": 107049.99, \"tariff_key\": \"sanayi/OG/çift_terim\"}, \"margin_reality\": {\"verdict\": \"Kârlı\", \"pricing_decision\": \"TEKLİF UYGUN\", \"pricing_decision_reason\": \"Gerçek marj %5.0, hedef %5.0 ile uyumlu. Teklif uygun.\", \"pricing_aggressiveness\": \"YOK\", \"multiplier\": 1.05, \"effective_multiplier\": 1.05, \"nominal_margin_pct\": 5.0, \"nominal_margin_tl\": 15288.25, \"real_margin_pct\": 5.0, \"real_margin_tl\": 15288.18, \"margin_deviation_pct\": -0.0, \"margin_deviation_tl\": -0.07, \"real_margin_on_revenue_pct\": 4.76, \"multiplier_delta\": -0.0, \"total_hours\": 744, \"negative_margin_hours\": 377, \"negative_margin_total_tl\": -14231.05, \"positive_margin_total_tl\": 29519.23, \"break_even_multiplier\": 1.0, \"safe_multiplier\": 1.01, \"target_margin_pct\": 5.0, \"required_multiplier_for_target\": 1.05, \"total_offer_tl\": 321053.22, \"total_cost_tl\": 305765.05, \"total_consumption_kwh\": 99999.99, \"offer_unit_price_tl_per_kwh\": 3.210533, \"weighted_cost_tl_per_kwh\": 3.057651, \"worst_hours\": [{\"hour\": \"2026-01-01 17:00\", \"ptf_tl_per_mwh\": 3400.0, \"consumption_kwh\": 134.41, \"cost_tl\": 478.86, \"margin_tl\": -47.34, \"time_zone\": \"T2\"}, {\"hour\": \"2026-01-01 18:00\", \"ptf_tl_per_mwh\": 3400.0, \"consumption_kwh\": 134.41, \"cost_tl\": 478.86, \"margin_tl\": -47.34, \"time_zone\": \"T2\"}, {\"hour\": \"2026-01-01 19:00\", \"ptf_tl_per_mwh\": 3399.99, \"consumption_kwh\": 134.41, \"cost_tl\": 478.86, \"margin_tl\": -47.34, \"time_zone\": \"T2\"}, {\"hour\": \"2026-01-01 20:00\", \"ptf_tl_per_mwh\": 3400.0, \"consumption_kwh\": 134.41, \"cost_tl\": 478.86, \"margin_tl\": -47.34, \"time_zone\": \"T2\"}, {\"hour\": \"2026-01-01 21:00\", \"ptf_tl_per_mwh\": 3400.0, \"consumption_kwh\": 134.41, \"cost_tl\": 478.86, \"margin_tl\": -47.34, \"time_zone\": \"T2\"}, {\"hour\": \"2026-01-02 07:00\", \"ptf_tl_per_mwh\": 3400.0, \"consumption_kwh\": 134.41, \"cost_tl\": 478.86, \"margin_tl\": -47.34, \"time_zone\": \"T1\"}, {\"hour\": \"2026-01-02 08:00\", \"ptf_tl_per_mwh\": 3400.0, \"consumption_kwh\": 134.41, \"cost_tl\": 478.86, \"margin_tl\": -47.34, \"time_zone\": \"T1\"}, {\"hour\": \"2026-01-02 09:00\", \"ptf_tl_per_mwh\": 3400.0, \"consumption_kwh\": 134.41, \"cost_tl\": 478.86, \"margin_tl\": -47.34, \"time_zone\": \"T1\"}, {\"hour\": \"2026-01-02 10:00\", \"ptf_tl_per_mwh\": 3400.0, \"consumption_kwh\": 134.41, \"cost_tl\": 478.86, \"margin_tl\": -47.34, \"time_zone\": \"T1\"}, {\"hour\": \"2026-01-02 16:00\", \"ptf_tl_per_mwh\": 3400.0, \"consumption_kwh\": 134.41, \"cost_tl\": 478.86, \"margin_tl\": -47.34, \"time_zone\": \"T1\"}], \"best_hours\": [{\"hour\": \"2026-01-04 12:00\", \"ptf_tl_per_mwh\": 715.11, \"consumption_kwh\": 134.41, \"cost_tl\": 117.99, \"margin_tl\": 313.53, \"time_zone\": \"T1\"}, {\"hour\": \"2026-01-04 11:00\", \"ptf_tl_per_mwh\": 853.99, \"consumption_kwh\": 134.41, \"cost_tl\": 136.66, \"margin_tl\": 294.87, \"time_zone\": \"T1\"}, {\"hour\": \"2026-01-25 14:00\", \"ptf_tl_per_mwh\": 1000.0, \"consumption_kwh\": 134.41, \"cost_tl\": 156.28, \"margin_tl\": 275.24, \"time_zone\": \"T1\"}, {\"hour\": \"2026-01-04 10:00\", \"ptf_tl_per_mwh\": 1000.01, \"consumption_kwh\": 134.41, \"cost_tl\": 156.28, \"margin_tl\": 275.24, \"time_zone\": \"T1\"}, {\"hour\": \"2026-01-27 02:00\", \"ptf_tl_per_mwh\": 1399.99, \"consumption_kwh\": 134.41, \"cost_tl\": 210.04, \"margin_tl\": 221.48, \"time_zone\": \"T3\"}, {\"hour\": \"2026-01-25 15:00\", \"ptf_tl_per_mwh\": 1400.0, \"consumption_kwh\": 134.41, \"cost_tl\": 210.04, \"margin_tl\": 221.48, \"time_zone\": \"T1\"}, {\"hour\": \"2026-01-11 03:00\", \"ptf_tl_per_mwh\": 1400.0, \"consumption_kwh\": 134.41, \"cost_tl\": 210.04, \"margin_tl\": 221.48, \"time_zone\": \"T3\"}, {\"hour\": \"2026-01-11 02:00\", \"ptf_tl_per_mwh\": 1399.99, \"consumption_kwh\": 134.41, \"cost_tl\": 210.04, \"margin_tl\": 221.48, \"time_zone\": \"T3\"}, {\"hour\": \"2026-01-10 14:00\", \"ptf_tl_per_mwh\": 1400.0, \"consumption_kwh\": 134.41, \"cost_tl\": 210.04, \"margin_tl\": 221.48, \"time_zone\": \"T1\"}, {\"hour\": \"2026-01-04 15:00\", \"ptf_tl_per_mwh\": 1400.0, \"consumption_kwh\": 134.41, \"cost_tl\": 210.04, \"margin_tl\": 221.48, \"time_zone\": \"T1\"}], \"hourly_margins_tl\": [-1.28, 18.51, 55.62, 33.44, 77.66, 181.85, 167.72, 154.27, 38.01, 7.1, 75.38, 80.22, 167.71, 19.55, 59.52, 55.62, -19.78, -47.34, -47.34, -47.34, -47.34, -47.34, 12.1, 12.1, -11.05, -6.34, 103.87, 53.47, 77.66, 60.19, 6.88, -47.34, -47.34, -47.34, -47.34, -6.21, 65.42, 104.35, 53.47, 14.35, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -16.05, 7.23, -33.88, -20.32, 22.31, 73.63, 140.83, 154.27, 46.75, -20.46, -47.34, -47.34, 29.54, 6.23, 167.72, 49.74, 80.22, 60.19, 53.47, -46.67, -47.34, -33.9, -19.11, -46.66, 21.04, 77.66, -47.34, 124.03, 181.86, 181.86, 181.86, 181.86, 181.86, 167.72, 181.86, 187.88, 275.24, 294.87, 313.53, 221.48, 221.48, 221.48, 7.79, -47.34, -47.34, -47.34, -13.07, -47.34, 8.58, 22.02, 181.86, 181.86, 187.2, 187.23, 208.71, 181.86, 7.9, -27.18, -47.34, -47.34, -47.34, -6.34, 80.22, 48.23, 19.86, -33.9, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -5.17, 48.22, -19.64, -5.37, 77.66, 82.95, 140.83, 76.72, 23.09, -47.34, -47.34, -47.34, -47.34, 70.0, 93.79, 73.5, 30.64, 13.68, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, 24.92, 73.63, 19.86, 46.75, 60.19, 80.22, 107.23, 65.43, 21.38, -45.99, -47.34, -47.34, -47.34, 13.34, 175.77, 187.23, 113.95, 167.72, -47.34, -47.34, -47.34, -27.18, -43.36, -47.34, 24.28, 103.87, 73.63, 165.83, 187.88, 187.88, 187.88, 167.72, 60.19, 43.43, -47.34, -47.34, -33.9, -26.64, 19.86, 6.69, -10.25, 76.45, 6.43, -47.34, -26.64, -12.93, -40.48, -47.34, -27.18, 20.13, 60.19, 73.63, 73.63, 38.78, 19.86, 13.41, -45.32, -47.34, -47.34, -47.34, -47.34, -47.34, -44.65, -33.53, -45.32, -33.9, -47.34, -47.34, -47.34, -40.48, -33.76, -33.76, 24.09, 20.24, 13.15, 51.85, 93.79, 140.84, 167.72, 93.79, 46.13, -19.14, -47.34, -47.34, -47.34, -12.34, 60.19, 85.71, 221.48, 187.88, -20.19, -20.46, -26.64, 6.43, 2.3, -45.32, 26.72, 120.0, 167.72, 191.71, 221.48, 221.48, 204.36, 188.86, 188.86, 187.2, 94.1, 59.52, 113.95, -31.21, -45.32, -47.34, -33.9, 19.87, 60.32, 1.73, -33.9, -33.9, -21.3, -45.99, 6.42, 112.59, 17.18, -11.02, 60.19, 188.86, 188.86, 187.2, 32.6, 26.59, 18.15, -47.34, -47.34, -47.34, -45.32, -47.34, -47.34, -11.05, -47.34, -47.34, -47.34, -33.9, 2.65, 19.86, 17.01, -1.96, 7.23, 37.47, 57.86, 65.25, 65.25, 47.55, -27.18, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -36.18, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -15.08, -27.18, -9.43, 58.26, 60.19, 48.94, 34.92, -27.18, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -27.18, -17.77, -7.01, 34.78, 50.33, 60.19, 50.33, 7.1, -43.89, -47.34, -47.34, -47.34, -47.34, 50.33, 50.33, -7.02, 50.33, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -27.18, -11.05, 25.95, 36.4, 53.17, 36.1, -35.14, -47.34, -47.34, -47.34, -47.34, -47.34, -11.05, -6.75, -43.04, -35.14, -47.34, -47.34, -47.34, -47.34, -33.9, -13.74, 60.19, 58.11, -47.34, -45.85, 34.69, 54.91, 113.95, 167.72, 103.87, 188.86, -47.34, -47.34, -47.34, -47.34, 1.43, 9.21, 38.25, 89.22, 35.99, -47.34, -47.34, -45.73, 22.55, -43.25, 17.18, 72.27, -4.28, -5.58, 52.5, 73.63, 60.19, 167.72, 13.15, -27.17, -7.01, 167.72, 188.86, 188.86, 187.88, 187.2, 187.88, 204.36, 59.52, -27.17, -43.04, -47.34, -43.04, -7.61, 60.19, 103.87, -9.44, 19.87, 60.99, 167.72, 187.2, 85.71, 44.64, 5.13, -47.34, -47.34, -35.24, 58.5, 60.19, 39.18, 59.65, 54.4, -47.34, -47.34, -47.34, -47.34, -42.41, -22.07, 14.68, 21.48, 19.87, 59.52, 7.9, 51.68, 107.23, 58.84, 3.06, -47.34, -47.34, -47.34, -47.34, 36.4, 51.32, 36.4, 25.34, 34.69, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -40.48, -15.08, -20.46, 23.31, 52.89, 51.32, 51.32, 51.32, -8.36, -44.11, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -44.11, 5.38, 5.38, -27.18, 12.16, 60.19, 53.47, 94.7, 96.07, 19.86, -8.36, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -7.01, 48.85, 48.85, 6.69, 0.34, 45.39, 33.58, 46.75, 39.72, 19.87, -11.05, -15.08, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -40.25, -20.32, 5.38, -8.36, -20.46, 18.03, 23.09, 41.07, 45.39, 35.81, -16.47, 29.87, -7.02, -47.34, -47.34, -47.34, -17.45, -17.02, 34.69, 5.48, -45.99, -47.34, -47.34, -47.34, -47.34, -47.34, -6.34, 12.17, -7.79, 9.47, 60.19, 18.51, -7.02, 59.52, -45.32, -45.32, -29.52, -22.4, 113.95, 188.86, 187.2, 187.88, 275.24, 221.48, 19.87, -47.34, -47.34, -47.34, -33.76, -33.76, 22.33, 167.72, 23.09, 60.19, 148.88, 113.95, 113.95, 60.19, 13.68, -20.46, -47.34, -47.34, 47.42, 24.12, 165.83, 71.48, 35.99, 60.19, -47.34, -47.34, -47.34, -47.34, -42.95, -0.43, 103.87, 188.86, 194.6, 195.82, 221.48, 195.82, 208.04, 188.86, 188.86, 188.86, 34.3, -33.63, 85.71, -26.64, 59.52, 1.43, -33.63, 6.43, -47.34, -47.34, -47.34, -47.34, -40.48, -47.34, -1.8, 33.31, -3.18, 60.19, 18.66, 60.32, 107.23, 77.66, -20.46, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -47.34, -43.31, 22.55, -26.64, -47.34, -47.34, -13.07, 60.19, 19.86, 19.87, 119.87, -5.67, -1.24, 60.19, 167.72, 188.86, 188.86, 113.95, 0.45, -47.34, -47.34, 19.87, 5.9, 59.7, 18.78, 7.1, 50.0, -5.25, -47.34, -47.34, -32.6, 10.59, -1.24, 10.59, 112.59, 188.86, 188.86, 188.86, 167.72, 197.43, 188.86, 35.99, 62.88, 19.86, -47.34, -47.34, -30.46, 47.15, 61.67, 12.97, 36.29, -1.24, -32.29, -47.34, -47.34, -9.48, 50.45, 60.19, 60.19, -12.39, -0.3, 6.69, 26.57, 87.74, 60.19, 13.68, 1.25, -7.02, -12.39, -13.74, -41.04, 1.25, -0.29, -0.3, 1.25, 93.12, 60.19, -26.64, 6.69, 6.69, -12.39, 32.09, 103.87]}, \"warnings\": [{\"type\": \"safe_multiplier_warning\", \"message\": \"Bu müşteri için ×1.05 riskli (Risk: Düşük). Minimum güvenli katsayı: ×1.100. Önerilen: ×1.10\"}, {\"type\": \"coherence_warning\", \"message\": \"Tutarsızlık: Risk seviyesi Düşük ama güvenli katsayı ×1.100 (>×1.060). Profil dağılımı düzgün ama bazı saatlerde yüksek PTF var.\"}], \"data_quality\": {\"market_data_score\": null, \"consumption_data_score\": null, \"issues\": [], \"warning\": null}, \"cache_hit\": false}",
+            "2026-05-11 15:52:07.798754",
+            "2026-05-12 15:52:07.798754",
+            0
+          ],
+          [
+            2,
+            "3ded48f2bc28ecece208b5be2cead65f62512b3132dcc5e4fb623d3d83607f6d",
+            "__template__",
+            "2026-02",
+            "3ded48f2bc28ecece208b5be2cead65f62512b3132dcc5e4fb623d3d83607f6d",
+            "{\"status\": \"ok\", \"period\": \"2026-02\", \"customer_id\": null, \"weighted_prices\": {\"weighted_ptf_tl_per_mwh\": 2078.2, \"weighted_smf_tl_per_mwh\": 1850.99, \"arithmetic_avg_ptf\": 2078.19, \"arithmetic_avg_smf\": 1850.99, \"total_consumption_kwh\": 99999.9784, \"total_cost_tl\": 207819.46, \"hours_count\": 672}, \"supplier_cost\": {\"weighted_ptf_tl_per_mwh\": 2078.2, \"yekdem_tl_per_mwh\": 479.35, \"imbalance_tl_per_mwh\": 2.5, \"total_cost_tl_per_mwh\": 2560.05}, \"pricing\": {\"multiplier\": 1.05, \"sales_energy_price_per_mwh\": 2685.43, \"sales_effective_price_per_mwh\": 3755.93, \"gross_margin_energy_per_mwh\": 127.88, \"gross_margin_total_per_mwh\": -942.62, \"net_margin_per_mwh\": -963.4, \"distribution_cost_per_mwh\": 1070.5, \"imbalance_cost_per_mwh\": 20.78, \"dealer_commission_per_mwh\": 0.0, \"customer_savings_per_mwh\": null, \"customer_reference_price_per_mwh\": null, \"customer_reference_price_source\": null, \"risk_flags\": [{\"type\": \"LOSS_RISK\", \"priority\": 1, \"message\": \"Net marj negatif — teklif zarar üretir\"}, {\"type\": \"UNPROFITABLE_OFFER\", \"priority\": 2, \"message\": \"Toplam brüt marj negatif — dağıtım dahil maliyet satışı aşıyor\"}], \"total_sales_tl\": 268542.69, \"total_cost_tl\": 255754.45, \"total_gross_margin_tl\": 12788.24, \"total_dealer_commission_tl\": 0.0, \"total_net_margin_tl\": -96339.93, \"sales_price_tl_per_mwh\": 2685.43, \"gross_margin_tl_per_mwh\": 127.88, \"dealer_commission_tl_per_mwh\": 0.0, \"net_margin_tl_per_mwh\": -963.4}, \"time_zone_breakdown\": {\"T1\": {\"label\": \"Gündüz (06:00-16:59)\", \"consumption_kwh\": 45833.326, \"consumption_pct\": 45.83, \"weighted_ptf_tl_per_mwh\": 1966.48, \"weighted_smf_tl_per_mwh\": 1718.8, \"total_cost_tl\": 112100.35}, \"T2\": {\"label\": \"Puant (17:00-21:59)\", \"consumption_kwh\": 20833.33, \"consumption_pct\": 20.83, \"weighted_ptf_tl_per_mwh\": 2814.31, \"weighted_smf_tl_per_mwh\": 2357.33, \"total_cost_tl\": 68617.99}, \"T3\": {\"label\": \"Gece (22:00-05:59)\", \"consumption_kwh\": 33333.3224, \"consumption_pct\": 33.33, \"weighted_ptf_tl_per_mwh\": 1771.73, \"weighted_smf_tl_per_mwh\": 1716.27, \"total_cost_tl\": 75036.11}}, \"loss_map\": {\"total_loss_hours\": 318, \"total_loss_tl\": -36873.21, \"by_time_zone\": {\"T1\": 136, \"T2\": 112, \"T3\": 70}, \"worst_hours\": [{\"date\": \"2026-02-02\", \"hour\": 9, \"ptf\": 3400.0, \"sales_price\": 399.62, \"loss_tl\": -177.67}, {\"date\": \"2026-02-02\", \"hour\": 17, \"ptf\": 3400.0, \"sales_price\": 399.62, \"loss_tl\": -177.67}, {\"date\": \"2026-02-03\", \"hour\": 8, \"ptf\": 3400.0, \"sales_price\": 399.62, \"loss_tl\": -177.67}, {\"date\": \"2026-02-03\", \"hour\": 9, \"ptf\": 3400.0, \"sales_price\": 399.62, \"loss_tl\": -177.67}, {\"date\": \"2026-02-03\", \"hour\": 10, \"ptf\": 3400.0, \"sales_price\": 399.62, \"loss_tl\": -177.67}, {\"date\": \"2026-02-03\", \"hour\": 11, \"ptf\": 3400.0, \"sales_price\": 399.62, \"loss_tl\": -177.67}, {\"date\": \"2026-02-03\", \"hour\": 16, \"ptf\": 3400.0, \"sales_price\": 399.62, \"loss_tl\": -177.67}, {\"date\": \"2026-02-03\", \"hour\": 17, \"ptf\": 3400.0, \"sales_price\": 399.62, \"loss_tl\": -177.67}, {\"date\": \"2026-02-03\", \"hour\": 18, \"ptf\": 3400.0, \"sales_price\": 399.62, \"loss_tl\": -177.67}, {\"date\": \"2026-02-03\", \"hour\": 19, \"ptf\": 3400.0, \"sales_price\": 399.62, \"loss_tl\": -177.67}]}, \"risk_score\": {\"score\": \"Düşük\", \"weighted_ptf\": 2078.2, \"arithmetic_avg_ptf\": 2078.19, \"deviation_pct\": 0.0, \"t2_consumption_pct\": 20.83, \"peak_concentration\": 26.83, \"reasons\": [\"Ağırlıklı PTF sapması düşük (%0.0)\"]}, \"safe_multiplier\": {\"safe_multiplier\": 1.1, \"recommended_multiplier\": 1.1, \"confidence_level\": 0.95, \"periods_analyzed\": 1, \"monthly_margins\": [23497.79], \"warning\": \"Bu profil için ×1.10 altında güvenli katsayı bulunamadı. Daha yüksek katsayı veya farklı parametreler deneyin.\"}, \"distribution\": {\"voltage_level\": \"OG\", \"unit_price_tl_per_kwh\": 1.0705, \"total_kwh\": 99999.98, \"total_tl\": 107049.98, \"tariff_key\": \"sanayi/OG/çift_terim\"}, \"margin_reality\": {\"verdict\": \"Kârlı\", \"pricing_decision\": \"TEKLİF UYGUN\", \"pricing_decision_reason\": \"Gerçek marj %5.0, hedef %5.0 ile uyumlu. Teklif uygun.\", \"pricing_aggressiveness\": \"YOK\", \"multiplier\": 1.05, \"effective_multiplier\": 1.05, \"nominal_margin_pct\": 5.0, \"nominal_margin_tl\": 12787.75, \"real_margin_pct\": 5.0, \"real_margin_tl\": 12788.24, \"margin_deviation_pct\": 0.0, \"margin_deviation_tl\": 0.5, \"real_margin_on_revenue_pct\": 4.76, \"multiplier_delta\": 0.0, \"total_hours\": 672, \"negative_margin_hours\": 318, \"negative_margin_total_tl\": -36873.0, \"positive_margin_total_tl\": 49661.25, \"break_even_multiplier\": 1.0, \"safe_multiplier\": 1.01, \"target_margin_pct\": 5.0, \"required_multiplier_for_target\": 1.05, \"total_offer_tl\": 268542.69, \"total_cost_tl\": 255754.45, \"total_consumption_kwh\": 99999.98, \"offer_unit_price_tl_per_kwh\": 2.685427, \"weighted_cost_tl_per_kwh\": 2.557545, \"worst_hours\": [{\"hour\": \"2026-02-02 09:00\", \"ptf_tl_per_mwh\": 3400.0, \"consumption_kwh\": 148.81, \"cost_tl\": 577.28, \"margin_tl\": -177.67, \"time_zone\": \"T1\"}, {\"hour\": \"2026-02-02 17:00\", \"ptf_tl_per_mwh\": 3400.0, \"consumption_kwh\": 148.81, \"cost_tl\": 577.28, \"margin_tl\": -177.67, \"time_zone\": \"T2\"}, {\"hour\": \"2026-02-03 08:00\", \"ptf_tl_per_mwh\": 3400.0, \"consumption_kwh\": 148.81, \"cost_tl\": 577.28, \"margin_tl\": -177.67, \"time_zone\": \"T1\"}, {\"hour\": \"2026-02-03 09:00\", \"ptf_tl_per_mwh\": 3400.0, \"consumption_kwh\": 148.81, \"cost_tl\": 577.28, \"margin_tl\": -177.67, \"time_zone\": \"T1\"}, {\"hour\": \"2026-02-03 10:00\", \"ptf_tl_per_mwh\": 3400.0, \"consumption_kwh\": 148.81, \"cost_tl\": 577.28, \"margin_tl\": -177.67, \"time_zone\": \"T1\"}, {\"hour\": \"2026-02-03 11:00\", \"ptf_tl_per_mwh\": 3400.0, \"consumption_kwh\": 148.81, \"cost_tl\": 577.28, \"margin_tl\": -177.67, \"time_zone\": \"T1\"}, {\"hour\": \"2026-02-03 16:00\", \"ptf_tl_per_mwh\": 3400.0, \"consumption_kwh\": 148.81, \"cost_tl\": 577.28, \"margin_tl\": -177.67, \"time_zone\": \"T1\"}, {\"hour\": \"2026-02-03 17:00\", \"ptf_tl_per_mwh\": 3400.0, \"consumption_kwh\": 148.81, \"cost_tl\": 577.28, \"margin_tl\": -177.67, \"time_zone\": \"T2\"}, {\"hour\": \"2026-02-03 18:00\", \"ptf_tl_per_mwh\": 3400.0, \"consumption_kwh\": 148.81, \"cost_tl\": 577.28, \"margin_tl\": -177.67, \"time_zone\": \"T2\"}, {\"hour\": \"2026-02-03 19:00\", \"ptf_tl_per_mwh\": 3400.0, \"consumption_kwh\": 148.81, \"cost_tl\": 577.28, \"margin_tl\": -177.67, \"time_zone\": \"T2\"}], \"best_hours\": [{\"hour\": \"2026-02-22 13:00\", \"ptf_tl_per_mwh\": 0.0, \"consumption_kwh\": 148.81, \"cost_tl\": 71.33, \"margin_tl\": 328.29, \"time_zone\": \"T1\"}, {\"hour\": \"2026-02-22 12:00\", \"ptf_tl_per_mwh\": 0.0, \"consumption_kwh\": 148.81, \"cost_tl\": 71.33, \"margin_tl\": 328.29, \"time_zone\": \"T1\"}, {\"hour\": \"2026-02-22 11:00\", \"ptf_tl_per_mwh\": 0.0, \"consumption_kwh\": 148.81, \"cost_tl\": 71.33, \"margin_tl\": 328.29, \"time_zone\": \"T1\"}, {\"hour\": \"2026-02-20 14:00\", \"ptf_tl_per_mwh\": 0.0, \"consumption_kwh\": 148.81, \"cost_tl\": 71.33, \"margin_tl\": 328.29, \"time_zone\": \"T1\"}, {\"hour\": \"2026-02-20 13:00\", \"ptf_tl_per_mwh\": 0.0, \"consumption_kwh\": 148.81, \"cost_tl\": 71.33, \"margin_tl\": 328.29, \"time_zone\": \"T1\"}, {\"hour\": \"2026-02-20 12:00\", \"ptf_tl_per_mwh\": 0.0, \"consumption_kwh\": 148.81, \"cost_tl\": 71.33, \"margin_tl\": 328.29, \"time_zone\": \"T1\"}, {\"hour\": \"2026-02-16 05:00\", \"ptf_tl_per_mwh\": 0.0, \"consumption_kwh\": 148.81, \"cost_tl\": 71.33, \"margin_tl\": 328.29, \"time_zone\": \"T3\"}, {\"hour\": \"2026-02-16 04:00\", \"ptf_tl_per_mwh\": 0.0, \"consumption_kwh\": 148.81, \"cost_tl\": 71.33, \"margin_tl\": 328.29, \"time_zone\": \"T3\"}, {\"hour\": \"2026-02-16 03:00\", \"ptf_tl_per_mwh\": 0.0, \"consumption_kwh\": 148.81, \"cost_tl\": 71.33, \"margin_tl\": 328.29, \"time_zone\": \"T3\"}, {\"hour\": \"2026-02-16 02:00\", \"ptf_tl_per_mwh\": 0.0, \"consumption_kwh\": 148.81, \"cost_tl\": 71.33, \"margin_tl\": 328.29, \"time_zone\": \"T3\"}], \"hourly_margins_tl\": [-118.14, -118.14, -114.72, -116.36, -93.74, -92.14, -95.67, 30.67, 60.43, 98.02, 208.72, 179.33, 194.36, 98.02, 83.84, 224.12, -58.62, -118.14, -154.75, -142.71, -118.14, -118.14, 98.02, 179.47, 1.2, 83.84, 179.48, 83.84, 97.02, 93.33, 142.27, 83.84, -168.35, -177.67, -138.53, -133.02, -102.85, -131.1, -131.1, -93.74, -137.49, -177.67, -177.54, -133.02, -73.5, -115.02, -93.74, -102.85, -117.4, -73.5, -46.27, -73.5, -87.93, -83.05, -118.14, -175.43, -177.67, -177.67, -177.67, -177.67, -118.14, -123.43, -80.94, -95.67, -177.67, -177.67, -177.67, -177.67, -177.67, -177.67, -117.72, -109.1, -105.29, -102.85, -86.85, -43.74, 0.91, 0.9, -100.29, -146.57, -177.67, -177.67, -58.62, 30.67, 87.97, 83.84, 61.32, -58.62, -146.57, -177.67, -177.67, -177.67, -146.56, -102.85, -80.9, -43.74, -105.29, -95.67, 58.35, 83.84, 83.84, 83.84, -28.14, -115.91, -177.67, -164.98, 30.64, 69.34, 119.95, 91.25, 83.84, -0.6, -115.02, -177.67, -147.9, -113.9, -87.94, -140.0, 159.64, 291.08, 170.99, 171.0, 179.47, 179.47, 94.03, 83.84, 94.03, 7.45, -177.67, -177.67, -177.67, -177.67, -95.82, -14.42, -118.14, -86.85, -132.88, -177.67, -177.67, -110.7, -14.42, 3.11, 87.22, 179.33, 90.19, 83.84, 98.47, 111.45, 168.32, 90.19, 23.62, -30.89, -69.93, -177.67, -135.78, -137.13, -6.52, -69.93, 60.43, 31.11, -125.49, -147.9, -177.67, -177.67, -146.96, -132.58, -102.96, -102.96, -147.91, -95.53, -65.76, -95.53, -87.79, -87.79, -139.72, -137.49, -100.29, 83.84, 98.02, 98.02, 98.02, 83.84, 83.84, 57.2, -88.38, -103.26, -155.2, -177.67, -154.75, -95.53, -95.53, -95.52, -103.26, -92.55, -73.5, 7.45, 58.35, -6.54, -103.26, -162.79, -177.67, -177.67, -175.95, -86.85, -73.2, -73.5, -66.06, -66.06, -147.76, -177.67, -177.67, -147.76, -58.47, -73.5, -75.0, -73.5, -100.29, -92.55, 60.43, 83.84, 83.84, 83.84, -28.86, -28.86, -99.69, -177.67, -138.98, -133.69, -73.05, -93.46, -106.72, -66.06, -72.76, -173.2, -138.98, -127.7, -86.85, -115.76, -95.82, -99.69, -109.29, -86.85, -59.36, -28.71, -28.71, -72.61, -138.5, -177.67, -177.67, -177.67, -177.67, -177.67, -72.61, -69.93, -47.76, 7.45, -1.33, -177.67, -177.67, -153.71, -86.75, -126.92, -99.69, 30.66, -28.11, 60.43, 91.31, 90.19, 83.84, 83.84, 82.75, -46.86, -103.26, -102.97, -80.94, -149.5, -59.36, -90.31, -127.87, -133.02, -144.37, -118.14, -73.5, 7.45, 90.19, 30.67, 90.19, 179.47, 112.51, 112.51, 179.33, 179.47, 164.59, 119.95, 179.48, 83.84, -110.7, -165.22, -173.95, -132.73, -99.69, 30.82, -95.67, -54.17, -110.7, -132.73, -137.49, -132.73, -132.73, -173.95, -5.64, 60.43, 75.31, 83.84, 83.84, 83.84, 83.84, 76.8, -52.67, -104.77, -158.32, -132.73, 33.64, 33.64, 98.02, 105.07, 179.47, 283.64, 60.43, -86.0, -133.19, -173.95, -36.3, -138.04, 76.8, 224.12, 226.92, 291.08, 293.32, 302.84, 302.99, 302.99, 302.84, 302.84, 320.84, 328.29, 328.29, 328.29, 328.29, 328.29, 328.29, 328.29, 328.29, 291.08, 83.84, 83.84, 179.37, 253.88, 313.4, 326.81, 328.29, 328.29, 328.29, 328.29, 328.29, 328.29, 302.99, 287.81, -137.49, 23.23, 179.48, 293.32, 302.99, 302.84, 212.22, 168.02, 60.43, -177.67, -173.2, -144.82, -98.41, -103.11, 179.48, 293.31, 212.21, 224.12, 236.47, 281.86, 287.81, 283.75, 224.12, 112.51, -132.73, 30.67, 147.71, 83.84, 224.12, 156.27, 83.84, 105.76, 82.75, 14.74, -58.62, 82.75, 83.84, -43.89, 179.48, 253.88, 239.0, 253.88, 279.14, 293.31, 293.32, 293.31, 224.12, 112.51, 31.41, -80.2, 0.9, 0.91, 83.84, -73.5, -137.34, -177.67, -170.22, -138.98, -173.95, -177.67, -132.18, -69.49, -73.2, 39.58, -103.26, -21.57, 60.43, 82.75, -80.2, -176.18, -177.67, -177.67, -177.67, -177.67, 103.19, 253.88, 138.25, 179.48, 281.05, 253.88, 60.43, -177.67, -177.67, -177.67, -162.32, -103.11, -50.43, 83.84, 67.87, 82.75, 135.72, 135.73, 97.78, 82.75, 90.19, 116.98, 30.67, 135.73, 302.7, 320.84, 328.29, 328.29, 328.29, 302.99, 298.37, 75.31, -162.79, 30.66, -103.26, -117.99, 127.39, 212.22, 105.07, 113.05, 113.05, 139.28, 75.31, 46.59, 46.59, 90.19, 75.31, 113.05, 285.58, 298.52, 302.84, 301.35, 292.57, 201.2, 179.33, -21.42, -154.75, -118.13, -118.13, -43.74, 75.31, 149.71, 90.19, 113.05, 117.27, 149.56, 90.19, 69.34, 90.19, 224.12, 293.93, 302.99, 327.03, 328.29, 328.29, 328.29, 324.62, 302.93, 289.59, 69.34, -73.5, -21.42, 0.9, -99.69, 172.04, 212.21, 90.19, 90.19, 113.05, 179.47, 69.34, 32.16, 2.39, 69.34, -173.95, 0.9, 69.34, 105.07, 105.07, 69.34, 140.25, 113.05, 32.15, -173.2, -177.67, -177.67, -173.2, -125.73, -117.99, -87.93, -117.25, -118.13, -58.62, 30.59, -162.49, -177.67, -177.67, 32.15, -137.49, 69.34, 180.22, 123.67, 253.69, 224.12, 194.36, 293.32, 69.34, -54.6, -177.67, -177.67, -162.49, -73.5, -73.2, -36.45, 30.67, -42.1, 69.36, 75.31, 69.36, 0.91, 69.36, 113.64, -137.49, -88.08, -43.89, -43.89, -103.26, -151.63, -161.07, -118.13, -161.07, -118.14, -154.75, -173.95, -118.14, -88.08, 32.15, 33.05, 30.66, 39.58, 69.36, 97.78, 23.58, -43.44, -42.19, 30.67, -155.35, 61.32, 179.48, 79.03, 224.12, 179.48, 149.71, 179.47, 179.47, 30.67, 97.78, 69.36, 69.36, 9.24, 134.83, 194.36, 105.07, 69.36, 97.78, 112.51, 105.07, 32.15, 69.36, 179.61, -38.98, 69.36, 140.24, 69.36, 149.71, 179.61, 52.99, 134.83, 134.83, 61.32, -38.98, -38.98, -38.98, 32.16, 82.75, 105.96, 69.36, 84.24, 112.51, 107.45, 90.19, 69.36, 69.36, 112.51, 112.51, 149.72, 114.39, 227.82, 253.88, 227.82, 112.51, 194.36, 149.57, 69.36, 69.36, 31.11, 30.66, 31.11, 84.24, 90.19]}, \"warnings\": [{\"type\": \"safe_multiplier_warning\", \"message\": \"Bu müşteri için ×1.05 riskli (Risk: Düşük). Minimum güvenli katsayı: ×1.100. Önerilen: ×1.10\"}, {\"type\": \"coherence_warning\", \"message\": \"Tutarsızlık: Risk seviyesi Düşük ama güvenli katsayı ×1.100 (>×1.060). Profil dağılımı düzgün ama bazı saatlerde yüksek PTF var.\"}], \"data_quality\": {\"market_data_score\": null, \"consumption_data_score\": null, \"issues\": [], \"warning\": null}, \"cache_hit\": false}",
+            "2026-05-11 15:52:10.609943",
+            "2026-05-12 15:52:10.609943",
+            0
+          ],
+          [
+            3,
+            "8acd50ae4cb4adc7e18ec7ffdce6e34fa5c059b451eabd5bc9e4046c76c0cc2c",
+            "__template__",
+            "2026-04",
+            "8acd50ae4cb4adc7e18ec7ffdce6e34fa5c059b451eabd5bc9e4046c76c0cc2c",
+            "{\"status\": \"ok\", \"period\": \"2026-04\", \"customer_id\": null, \"weighted_prices\": {\"weighted_ptf_tl_per_mwh\": 921.06, \"weighted_smf_tl_per_mwh\": 1185.86, \"arithmetic_avg_ptf\": 921.06, \"arithmetic_avg_smf\": 1185.86, \"total_consumption_kwh\": 99999.999, \"total_cost_tl\": 92105.65, \"hours_count\": 720}, \"supplier_cost\": {\"weighted_ptf_tl_per_mwh\": 921.06, \"yekdem_tl_per_mwh\": 441.29, \"imbalance_tl_per_mwh\": 2.5, \"total_cost_tl_per_mwh\": 1364.85}, \"pricing\": {\"multiplier\": 1.05, \"sales_energy_price_per_mwh\": 1430.47, \"sales_effective_price_per_mwh\": 2500.97, \"gross_margin_energy_per_mwh\": 68.12, \"gross_margin_total_per_mwh\": -1002.38, \"net_margin_per_mwh\": -1011.59, \"distribution_cost_per_mwh\": 1070.5, \"imbalance_cost_per_mwh\": 9.21, \"dealer_commission_per_mwh\": 0.0, \"customer_savings_per_mwh\": null, \"customer_reference_price_per_mwh\": null, \"customer_reference_price_source\": null, \"risk_flags\": [{\"type\": \"LOSS_RISK\", \"priority\": 1, \"message\": \"Net marj negatif — teklif zarar üretir\"}, {\"type\": \"UNPROFITABLE_OFFER\", \"priority\": 2, \"message\": \"Toplam brüt marj negatif — dağıtım dahil maliyet satışı aşıyor\"}], \"total_sales_tl\": 143046.75, \"total_cost_tl\": 136234.65, \"total_gross_margin_tl\": 6812.09, \"total_dealer_commission_tl\": 0.0, \"total_net_margin_tl\": -101158.96, \"sales_price_tl_per_mwh\": 1430.47, \"gross_margin_tl_per_mwh\": 68.12, \"dealer_commission_tl_per_mwh\": 0.0, \"net_margin_tl_per_mwh\": -1011.59}, \"time_zone_breakdown\": {\"T1\": {\"label\": \"Gündüz (06:00-16:59)\", \"consumption_kwh\": 45833.337, \"consumption_pct\": 45.83, \"weighted_ptf_tl_per_mwh\": 282.7, \"weighted_smf_tl_per_mwh\": 567.73, \"total_cost_tl\": 33182.87}, \"T2\": {\"label\": \"Puant (17:00-21:59)\", \"consumption_kwh\": 20833.335, \"consumption_pct\": 20.83, \"weighted_ptf_tl_per_mwh\": 2414.29, \"weighted_smf_tl_per_mwh\": 2482.51, \"total_cost_tl\": 59491.22}, \"T3\": {\"label\": \"Gece (22:00-05:59)\", \"consumption_kwh\": 33333.327, \"consumption_pct\": 33.33, \"weighted_ptf_tl_per_mwh\": 865.53, \"weighted_smf_tl_per_mwh\": 1225.39, \"total_cost_tl\": 43560.57}}, \"loss_map\": {\"total_loss_hours\": 233, \"total_loss_tl\": -41260.35, \"by_time_zone\": {\"T1\": 27, \"T2\": 117, \"T3\": 89}, \"worst_hours\": [{\"date\": \"2026-04-04\", \"hour\": 19, \"ptf\": 4500.0, \"sales_price\": 198.68, \"loss_tl\": -487.61}, {\"date\": \"2026-04-04\", \"hour\": 20, \"ptf\": 4499.98, \"sales_price\": 198.68, \"loss_tl\": -487.61}, {\"date\": \"2026-04-07\", \"hour\": 19, \"ptf\": 4500.0, \"sales_price\": 198.68, \"loss_tl\": -487.61}, {\"date\": \"2026-04-09\", \"hour\": 19, \"ptf\": 4500.0, \"sales_price\": 198.68, \"loss_tl\": -487.61}, {\"date\": \"2026-04-09\", \"hour\": 20, \"ptf\": 4500.0, \"sales_price\": 198.68, \"loss_tl\": -487.61}, {\"date\": \"2026-04-10\", \"hour\": 20, \"ptf\": 4500.0, \"sales_price\": 198.68, \"loss_tl\": -487.61}, {\"date\": \"2026-04-11\", \"hour\": 19, \"ptf\": 4500.0, \"sales_price\": 198.68, \"loss_tl\": -487.61}, {\"date\": \"2026-04-11\", \"hour\": 20, \"ptf\": 4500.0, \"sales_price\": 198.68, \"loss_tl\": -487.61}, {\"date\": \"2026-04-13\", \"hour\": 19, \"ptf\": 4500.0, \"sales_price\": 198.68, \"loss_tl\": -487.61}, {\"date\": \"2026-04-13\", \"hour\": 20, \"ptf\": 4500.0, \"sales_price\": 198.68, \"loss_tl\": -487.61}]}, \"risk_score\": {\"score\": \"Düşük\", \"weighted_ptf\": 921.06, \"arithmetic_avg_ptf\": 921.06, \"deviation_pct\": 0.0, \"t2_consumption_pct\": 20.83, \"peak_concentration\": 43.67, \"reasons\": [\"Ağırlıklı PTF sapması düşük (%0.0)\"]}, \"safe_multiplier\": {\"safe_multiplier\": 1.1, \"recommended_multiplier\": 1.1, \"confidence_level\": 0.95, \"periods_analyzed\": 1, \"monthly_margins\": [12702.78], \"warning\": \"Bu profil için ×1.10 altında güvenli katsayı bulunamadı. Daha yüksek katsayı veya farklı parametreler deneyin.\"}, \"distribution\": {\"voltage_level\": \"OG\", \"unit_price_tl_per_kwh\": 1.0705, \"total_kwh\": 100000.0, \"total_tl\": 107050.0, \"tariff_key\": \"sanayi/OG/çift_terim\"}, \"margin_reality\": {\"verdict\": \"Kârlı\", \"pricing_decision\": \"TEKLİF UYGUN\", \"pricing_decision_reason\": \"Gerçek marj %5.0, hedef %5.0 ile uyumlu. Teklif uygun.\", \"pricing_aggressiveness\": \"YOK\", \"multiplier\": 1.05, \"effective_multiplier\": 1.05, \"nominal_margin_pct\": 5.0, \"nominal_margin_tl\": 6811.75, \"real_margin_pct\": 5.0, \"real_margin_tl\": 6812.09, \"margin_deviation_pct\": 0.0, \"margin_deviation_tl\": 0.34, \"real_margin_on_revenue_pct\": 4.76, \"multiplier_delta\": 0.0, \"total_hours\": 720, \"negative_margin_hours\": 233, \"negative_margin_total_tl\": -41260.51, \"positive_margin_total_tl\": 48072.6, \"break_even_multiplier\": 1.0, \"safe_multiplier\": 1.01, \"target_margin_pct\": 5.0, \"required_multiplier_for_target\": 1.05, \"total_offer_tl\": 143046.75, \"total_cost_tl\": 136234.65, \"total_consumption_kwh\": 100000.0, \"offer_unit_price_tl_per_kwh\": 1.430468, \"weighted_cost_tl_per_kwh\": 1.362347, \"worst_hours\": [{\"hour\": \"2026-04-04 19:00\", \"ptf_tl_per_mwh\": 4500.0, \"consumption_kwh\": 138.89, \"cost_tl\": 686.29, \"margin_tl\": -487.61, \"time_zone\": \"T2\"}, {\"hour\": \"2026-04-04 20:00\", \"ptf_tl_per_mwh\": 4499.98, \"consumption_kwh\": 138.89, \"cost_tl\": 686.29, \"margin_tl\": -487.61, \"time_zone\": \"T2\"}, {\"hour\": \"2026-04-07 19:00\", \"ptf_tl_per_mwh\": 4500.0, \"consumption_kwh\": 138.89, \"cost_tl\": 686.29, \"margin_tl\": -487.61, \"time_zone\": \"T2\"}, {\"hour\": \"2026-04-09 19:00\", \"ptf_tl_per_mwh\": 4500.0, \"consumption_kwh\": 138.89, \"cost_tl\": 686.29, \"margin_tl\": -487.61, \"time_zone\": \"T2\"}, {\"hour\": \"2026-04-09 20:00\", \"ptf_tl_per_mwh\": 4500.0, \"consumption_kwh\": 138.89, \"cost_tl\": 686.29, \"margin_tl\": -487.61, \"time_zone\": \"T2\"}, {\"hour\": \"2026-04-10 20:00\", \"ptf_tl_per_mwh\": 4500.0, \"consumption_kwh\": 138.89, \"cost_tl\": 686.29, \"margin_tl\": -487.61, \"time_zone\": \"T2\"}, {\"hour\": \"2026-04-11 19:00\", \"ptf_tl_per_mwh\": 4500.0, \"consumption_kwh\": 138.89, \"cost_tl\": 686.29, \"margin_tl\": -487.61, \"time_zone\": \"T2\"}, {\"hour\": \"2026-04-11 20:00\", \"ptf_tl_per_mwh\": 4500.0, \"consumption_kwh\": 138.89, \"cost_tl\": 686.29, \"margin_tl\": -487.61, \"time_zone\": \"T2\"}, {\"hour\": \"2026-04-13 19:00\", \"ptf_tl_per_mwh\": 4500.0, \"consumption_kwh\": 138.89, \"cost_tl\": 686.29, \"margin_tl\": -487.61, \"time_zone\": \"T2\"}, {\"hour\": \"2026-04-13 20:00\", \"ptf_tl_per_mwh\": 4500.0, \"consumption_kwh\": 138.89, \"cost_tl\": 686.29, \"margin_tl\": -487.61, \"time_zone\": \"T2\"}], \"best_hours\": [{\"hour\": \"2026-04-30 15:00\", \"ptf_tl_per_mwh\": 0.0, \"consumption_kwh\": 138.89, \"cost_tl\": 61.29, \"margin_tl\": 137.39, \"time_zone\": \"T1\"}, {\"hour\": \"2026-04-30 14:00\", \"ptf_tl_per_mwh\": 0.0, \"consumption_kwh\": 138.89, \"cost_tl\": 61.29, \"margin_tl\": 137.39, \"time_zone\": \"T1\"}, {\"hour\": \"2026-04-30 13:00\", \"ptf_tl_per_mwh\": 0.0, \"consumption_kwh\": 138.89, \"cost_tl\": 61.29, \"margin_tl\": 137.39, \"time_zone\": \"T1\"}, {\"hour\": \"2026-04-30 12:00\", \"ptf_tl_per_mwh\": 0.0, \"consumption_kwh\": 138.89, \"cost_tl\": 61.29, \"margin_tl\": 137.39, \"time_zone\": \"T1\"}, {\"hour\": \"2026-04-30 11:00\", \"ptf_tl_per_mwh\": 0.0, \"consumption_kwh\": 138.89, \"cost_tl\": 61.29, \"margin_tl\": 137.39, \"time_zone\": \"T1\"}, {\"hour\": \"2026-04-30 10:00\", \"ptf_tl_per_mwh\": 0.0, \"consumption_kwh\": 138.89, \"cost_tl\": 61.29, \"margin_tl\": 137.39, \"time_zone\": \"T1\"}, {\"hour\": \"2026-04-29 15:00\", \"ptf_tl_per_mwh\": 0.0, \"consumption_kwh\": 138.89, \"cost_tl\": 61.29, \"margin_tl\": 137.39, \"time_zone\": \"T1\"}, {\"hour\": \"2026-04-29 14:00\", \"ptf_tl_per_mwh\": 0.0, \"consumption_kwh\": 138.89, \"cost_tl\": 61.29, \"margin_tl\": 137.39, \"time_zone\": \"T1\"}, {\"hour\": \"2026-04-29 13:00\", \"ptf_tl_per_mwh\": 0.0, \"consumption_kwh\": 138.89, \"cost_tl\": 61.29, \"margin_tl\": 137.39, \"time_zone\": \"T1\"}, {\"hour\": \"2026-04-29 12:00\", \"ptf_tl_per_mwh\": 0.0, \"consumption_kwh\": 138.89, \"cost_tl\": 61.29, \"margin_tl\": 137.39, \"time_zone\": \"T1\"}], \"hourly_margins_tl\": [-70.95, 26.27, 67.94, 67.87, 21.41, -29.28, -29.28, 67.94, -1.36, 81.21, 95.72, 95.72, 112.25, 109.61, 102.66, 102.66, 67.94, -29.28, -43.17, -154.07, -98.59, -70.94, 54.05, 102.66, 102.66, 104.05, 109.47, 109.61, 109.61, 109.47, 109.47, 102.66, -1.5, -29.28, -36.22, -29.28, 67.94, 67.94, 67.94, 101.27, 95.72, 67.94, 12.52, -202.89, -147.0, -140.39, -1.5, 87.94, 104.47, 109.47, 109.61, 113.08, 113.63, 111.0, 111.0, 113.08, 101.27, 102.66, 109.61, 113.08, 113.77, 114.14, 112.52, 113.08, 104.05, -1.36, -29.28, -279.28, -279.28, -221.92, -70.95, -1.36, -29.28, -1.36, 15.72, 52.66, 40.16, -1.5, 12.38, 102.66, 108.64, 109.75, 109.75, 109.61, 113.08, 109.61, 109.61, 102.66, 74.05, -70.95, -410.53, -487.61, -487.61, -362.61, -102.2, -14.07, -50.11, -1.5, 67.94, 95.72, 95.72, 95.83, 104.87, 120.72, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 113.63, 40.16, -126.36, -140.39, -126.37, -14.07, 67.94, 97.3, 102.66, 102.66, 102.66, 102.66, 95.72, 94.19, 102.38, 102.38, 109.61, 116.55, 137.39, 137.39, 137.39, 117.04, 113.63, 67.94, -139.0, -314.0, -473.73, -480.67, -410.53, -324.24, -244.56, -102.89, -18.65, -0.11, -1.5, -1.5, -29.28, -29.28, 54.05, 56.55, 104.75, 114.05, 113.77, 137.39, 137.39, 118.22, 137.39, 113.64, 33.29, -237.61, -487.61, -466.78, -410.53, -39.7, 64.35, -1.23, 82.19, 95.3, 99.89, 102.66, 101.27, 99.88, 102.66, 33.29, 92.94, 101.27, 106.27, 113.77, 113.63, 109.61, 109.75, 104.75, 33.29, 12.39, -145.53, -168.17, -244.56, -38.22, 40.16, 69.05, 40.16, 15.16, 15.72, -1.5, -29.28, -70.95, -8.45, -1.5, 67.94, 95.75, 102.66, 111.0, 109.61, 67.94, 88.77, -1.5, -324.24, -375.95, -487.61, -487.61, -473.73, -334.84, -249.52, -237.61, -29.28, -29.28, -29.28, -29.28, -98.03, -29.28, 33.22, -362.61, -154.28, -1.5, -29.28, 75.86, 95.72, -12.98, 33.91, -1.5, -151.64, -203.03, -480.67, -487.61, -362.61, -232.06, -91.78, -209.84, -29.28, -19.56, -29.28, -29.28, -29.28, -22.34, 67.94, -1.5, 74.96, 102.66, 106.14, 113.63, 111.0, 102.66, 95.58, 81.55, -128.31, -314.0, -487.61, -487.61, -432.06, -293.17, -348.73, -237.61, -70.94, -29.28, -29.28, -1.5, -29.28, -1.5, 109.61, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 111.0, 61.0, -341.99, -432.06, -251.36, -36.22, 33.91, 67.94, 95.72, 102.66, 102.66, 106.14, 95.72, 91.72, 102.66, 74.35, 106.13, 113.63, 113.63, 137.39, 130.44, 113.77, 114.14, 109.75, -1.5, -348.03, -487.61, -487.61, -487.61, -368.06, -282.56, -279.0, -57.06, -22.34, -70.95, -29.28, -77.89, -77.89, 26.27, 19.33, 95.72, 109.61, 109.61, 116.55, 113.64, 101.83, 104.47, 67.94, -265.39, -151.64, -487.61, -487.61, -472.34, -314.0, -311.83, -154.28, -126.23, -70.95, -70.95, -42.48, -70.95, -64.0, -1.5, -209.7, -64.0, 15.16, 26.41, 107.16, 102.66, 40.16, 74.35, -32.89, -223.73, -265.39, -487.61, -487.61, -429.95, -314.0, -87.61, -29.28, -1.5, -1.5, 24.47, 67.94, 40.16, 68.91, 95.72, 91.72, 109.61, 111.0, 113.08, 137.39, 123.5, 113.64, 114.14, 109.61, 26.27, -1.5, -219.56, -209.84, -70.95, -1.42, 67.94, 72.77, 67.94, 88.78, 91.97, 94.33, 91.35, 95.72, 102.66, 95.3, 109.61, 113.63, 113.64, 116.55, 116.55, 112.8, 112.8, 101.69, 70.86, 74.35, -29.28, -39.7, -1.5, 82.04, 102.66, 95.52, 95.76, 104.05, 109.61, 109.61, 109.61, 111.0, 111.0, 94.33, 67.94, 81.83, 45.72, 101.27, 95.72, 88.73, 104.47, 111.0, 104.05, 82.04, -70.94, -261.92, -126.23, -23.31, 67.89, 99.88, 101.69, 102.66, 104.05, 106.41, 104.47, 109.75, 113.77, 113.77, 134.61, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 113.64, 102.66, -29.28, -133.73, -59.1, -1.5, 70.32, 95.19, 95.72, 101.83, 100.3, 99.89, 94.19, 91.55, 95.72, 33.22, 74.35, 104.75, 109.61, 116.55, 114.14, 113.63, 113.64, 102.66, 19.33, -293.17, -487.61, -487.61, -447.52, -324.24, -102.49, -70.94, -1.09, 33.22, 67.94, 67.94, 40.16, 67.94, 95.72, 94.19, 113.08, 123.5, 137.39, 137.39, 137.39, 137.39, 133.22, 111.0, 67.94, -70.94, -487.61, -487.61, -348.59, -70.95, 33.22, 67.94, 67.94, 81.83, 67.94, 68.63, 35.72, 86.0, 109.75, 112.38, 113.64, 123.5, 137.25, 137.39, 137.39, 128.31, 120.72, 112.8, 85.74, 33.22, -279.14, -362.62, -265.39, -1.64, 94.33, 104.05, 108.36, 109.75, 109.75, 113.08, 112.35, 113.64, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 111.0, 67.94, -70.95, -314.0, -110.39, 31.97, 74.89, 54.05, 67.94, 88.73, 83.22, 74.89, 33.22, 40.16, 74.89, 33.22, 88.73, 109.61, 109.75, 130.44, 137.39, 113.77, 113.77, 108.36, -1.5, -70.95, -445.95, -473.73, -265.39, -55.67, 33.22, 40.16, 40.17, 81.83, 88.73, 90.16, 90.86, 108.36, 113.64, 114.15, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 136.0, 113.63, 88.78, -29.28, -479.85, -487.61, -454.86, -91.78, 15.16, 12.39, -29.28, -1.5, -1.5, 12.52, -1.23, 75.02, 123.57, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 136.55, 102.25, -15.95, -390.39, -168.17, 26.27, 95.72, 104.05, 109.61, 113.64, 115.02, 124.04, 118.91, 123.5, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 113.63, 95.72, -1.5, -320.95, -57.06, 54.05, 95.72, 95.72, 95.72, 99.88, 95.72, 95.72, 90.02, 102.66, 113.77, 117.94, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 109.61, 81.97, -70.95, -307.06, -70.95, 34.61, 94.33, 67.92, 67.94, 82.11, 92.94, 94.19, 82.11, 95.72, 112.39, 113.63, 136.55, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 113.79, 82.11, 13.77, -459.84, -487.61, -473.72, -279.28, -15.95, 12.52, 81.7, 40.17, 52.34, 40.17, 14.05, 88.73, 102.8, 104.47, 113.79, 137.39, 137.39, 137.39, 137.39, 137.39, 137.39, 113.79, 95.72, 40.17, -150.92, -333.45, -140.39, 40.16, 95.72]}, \"warnings\": [{\"type\": \"safe_multiplier_warning\", \"message\": \"Bu müşteri için ×1.05 riskli (Risk: Düşük). Minimum güvenli katsayı: ×1.100. Önerilen: ×1.10\"}, {\"type\": \"coherence_warning\", \"message\": \"Tutarsızlık: Risk seviyesi Düşük ama güvenli katsayı ×1.100 (>×1.060). Profil dağılımı düzgün ama bazı saatlerde yüksek PTF var.\"}], \"data_quality\": {\"market_data_score\": null, \"consumption_data_score\": null, \"issues\": [], \"warning\": null}, \"cache_hit\": false}",
+            "2026-05-11 15:52:13.468752",
+            "2026-05-12 15:52:13.468752",
+            0
+          ]
+        ],
+        "period_coverage": [
+          {
+            "period": "2026-01",
+            "count": 1
+          },
+          {
+            "period": "2026-02",
+            "count": 1
+          },
+          {
+            "period": "2026-04",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "name": "audit_logs",
+        "role": "audit_trail",
+        "row_count": 0,
+        "columns": [
+          {
+            "name": "id",
+            "type": "INTEGER",
+            "pk": true,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "tenant_id",
+            "type": "VARCHAR(64)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "actor_type",
+            "type": "VARCHAR(50)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "actor_id",
+            "type": "VARCHAR(100)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "action",
+            "type": "VARCHAR(20)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "target_type",
+            "type": "VARCHAR(50)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "target_id",
+            "type": "VARCHAR(100)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "details_json",
+            "type": "JSON",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "ip_address",
+            "type": "VARCHAR(45)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "user_agent",
+            "type": "VARCHAR(500)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "created_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          }
+        ],
+        "indexes": [
+          {
+            "name": "ix_audit_logs_id",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_audit_logs_created_at",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_audit_logs_tenant_id",
+            "unique": false,
+            "origin": "c"
+          }
+        ],
+        "domains_hit": [],
+        "sample_rows": [],
+        "period_coverage": null
+      },
+      {
+        "name": "consumption_hourly_data",
+        "role": "snapshot",
+        "row_count": 0,
+        "columns": [
+          {
+            "name": "id",
+            "type": "INTEGER",
+            "pk": true,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "profile_id",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "date",
+            "type": "VARCHAR(10)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "hour",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "consumption_kwh",
+            "type": "FLOAT",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "consumption_kwh"
+            ],
+            "is_numeric": true
+          }
+        ],
+        "indexes": [
+          {
+            "name": "ix_consumption_hourly_data_id",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_consumption_hourly_data_profile_id",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "sqlite_autoindex_consumption_hourly_data_1",
+            "unique": true,
+            "origin": "u"
+          }
+        ],
+        "domains_hit": [
+          "consumption_kwh"
+        ],
+        "sample_rows": [],
+        "period_coverage": null
+      },
+      {
+        "name": "consumption_profiles",
+        "role": "canonical_source",
+        "row_count": 0,
+        "columns": [
+          {
+            "name": "id",
+            "type": "INTEGER",
+            "pk": true,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "customer_id",
+            "type": "VARCHAR(100)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "customer_name",
+            "type": "VARCHAR(255)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "period",
+            "type": "VARCHAR(7)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "period"
+            ],
+            "is_numeric": false
+          },
+          {
+            "name": "profile_type",
+            "type": "VARCHAR(20)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "template_name",
+            "type": "VARCHAR(100)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "total_kwh",
+            "type": "FLOAT",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "consumption_kwh"
+            ],
+            "is_numeric": true
+          },
+          {
+            "name": "source",
+            "type": "VARCHAR(30)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "version",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "version"
+            ],
+            "is_numeric": true
+          },
+          {
+            "name": "is_active",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "status"
+            ],
+            "is_numeric": true
+          },
+          {
+            "name": "created_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "updated_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          }
+        ],
+        "indexes": [
+          {
+            "name": "idx_consumption_active",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_consumption_profiles_id",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_consumption_profiles_period",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_consumption_profiles_customer_id",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "sqlite_autoindex_consumption_profiles_1",
+            "unique": true,
+            "origin": "u"
+          }
+        ],
+        "domains_hit": [
+          "consumption_kwh",
+          "period",
+          "status",
+          "version"
+        ],
+        "sample_rows": [],
+        "period_coverage": []
+      },
+      {
+        "name": "customers",
+        "role": "canonical_source",
+        "row_count": 0,
+        "columns": [
+          {
+            "name": "id",
+            "type": "INTEGER",
+            "pk": true,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "name",
+            "type": "VARCHAR(255)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "company",
+            "type": "VARCHAR(255)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "email",
+            "type": "VARCHAR(255)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "phone",
+            "type": "VARCHAR(50)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "address",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "notes",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "created_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "updated_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          }
+        ],
+        "indexes": [
+          {
+            "name": "ix_customers_name",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_customers_id",
+            "unique": false,
+            "origin": "c"
+          }
+        ],
+        "domains_hit": [],
+        "sample_rows": [],
+        "period_coverage": null
+      },
+      {
+        "name": "data_versions",
+        "role": "canonical_source",
+        "row_count": 3,
+        "columns": [
+          {
+            "name": "id",
+            "type": "INTEGER",
+            "pk": true,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "data_type",
+            "type": "VARCHAR(30)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "period",
+            "type": "VARCHAR(7)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "period"
+            ],
+            "is_numeric": false
+          },
+          {
+            "name": "customer_id",
+            "type": "VARCHAR(100)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "version",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "version"
+            ],
+            "is_numeric": true
+          },
+          {
+            "name": "uploaded_by",
+            "type": "VARCHAR(100)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "upload_filename",
+            "type": "VARCHAR(255)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "row_count",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "quality_score",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "is_active",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "status"
+            ],
+            "is_numeric": true
+          },
+          {
+            "name": "created_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          }
+        ],
+        "indexes": [
+          {
+            "name": "idx_data_versions_lookup",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_data_versions_id",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "sqlite_autoindex_data_versions_1",
+            "unique": true,
+            "origin": "u"
+          }
+        ],
+        "domains_hit": [
+          "period",
+          "status",
+          "version"
+        ],
+        "sample_rows": [
+          [
+            1,
+            "market_data",
+            "2026-01",
+            null,
+            1,
+            null,
+            "104842_Uzlastirma_Donemi_Detayi_01_2026.xlsx",
+            744,
+            100,
+            1,
+            "2026-05-11 14:39:48"
+          ],
+          [
+            2,
+            "market_data",
+            "2026-02",
+            null,
+            1,
+            null,
+            "104842_Uzlastirma_Donemi_Detayi_02_2026.xlsx",
+            672,
+            100,
+            1,
+            "2026-05-11 14:39:48"
+          ],
+          [
+            3,
+            "market_data",
+            "2026-04",
+            null,
+            1,
+            null,
+            "104842_Uzlastirma_Donemi_Detayi_04_2026.xlsx",
+            720,
+            100,
+            1,
+            "2026-05-11 14:39:48"
+          ]
+        ],
+        "period_coverage": [
+          {
+            "period": "2026-01",
+            "count": 1
+          },
+          {
+            "period": "2026-02",
+            "count": 1
+          },
+          {
+            "period": "2026-04",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "name": "distribution_tariffs",
+        "role": "config",
+        "row_count": 8,
+        "columns": [
+          {
+            "name": "id",
+            "type": "INTEGER",
+            "pk": true,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "valid_from",
+            "type": "VARCHAR(10)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "valid_to",
+            "type": "VARCHAR(10)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "tariff_group",
+            "type": "VARCHAR(20)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "tariff_group"
+            ],
+            "is_numeric": false
+          },
+          {
+            "name": "voltage_level",
+            "type": "VARCHAR(5)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "term_type",
+            "type": "VARCHAR(20)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "unit_price_tl_per_kwh",
+            "type": "FLOAT",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "retail_tariff_price",
+              "consumption_kwh"
+            ],
+            "is_numeric": true
+          },
+          {
+            "name": "source_note",
+            "type": "VARCHAR(500)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "created_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "updated_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          }
+        ],
+        "indexes": [
+          {
+            "name": "ix_distribution_tariffs_id",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_distribution_tariffs_valid_from",
+            "unique": false,
+            "origin": "c"
+          }
+        ],
+        "domains_hit": [
+          "consumption_kwh",
+          "retail_tariff_price",
+          "tariff_group"
+        ],
+        "sample_rows": [
+          [
+            1,
+            "2025-01-01",
+            null,
+            "sanayi",
+            "OG",
+            "çift_terim",
+            0.810595,
+            "EPDK Ocak 2025 tarifesi (seed)",
+            "2026-01-18 11:44:29.105742",
+            "2026-01-18 11:44:29.105747"
+          ],
+          [
+            2,
+            "2025-01-01",
+            null,
+            "kamu_ozel",
+            "OG",
+            "çift_terim",
+            1.263293,
+            "EPDK Ocak 2025 tarifesi (seed)",
+            "2026-01-18 11:44:29.105751",
+            "2026-01-18 11:44:29.105753"
+          ],
+          [
+            3,
+            "2025-01-01",
+            null,
+            "sanayi",
+            "OG",
+            "tek_terim",
+            0.895372,
+            "EPDK Ocak 2025 tarifesi (seed)",
+            "2026-01-18 11:44:29.105755",
+            "2026-01-18 11:44:29.105757"
+          ]
+        ],
+        "period_coverage": null
+      },
+      {
+        "name": "hourly_market_prices",
+        "role": "canonical_source",
+        "row_count": 2880,
+        "columns": [
+          {
+            "name": "id",
+            "type": "INTEGER",
+            "pk": true,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "period",
+            "type": "VARCHAR(7)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "period"
+            ],
+            "is_numeric": false
+          },
+          {
+            "name": "date",
+            "type": "VARCHAR(10)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "hour",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "ptf_tl_per_mwh",
+            "type": "FLOAT",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "ptf"
+            ],
+            "is_numeric": true
+          },
+          {
+            "name": "smf_tl_per_mwh",
+            "type": "FLOAT",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "smf"
+            ],
+            "is_numeric": true
+          },
+          {
+            "name": "currency",
+            "type": "VARCHAR(3)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "source",
+            "type": "VARCHAR(30)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "version",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "version"
+            ],
+            "is_numeric": true
+          },
+          {
+            "name": "is_active",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "status"
+            ],
+            "is_numeric": true
+          },
+          {
+            "name": "created_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "updated_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          }
+        ],
+        "indexes": [
+          {
+            "name": "idx_hourly_market_period_active",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_hourly_market_prices_id",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "idx_hourly_market_date_hour",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_hourly_market_prices_period",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "sqlite_autoindex_hourly_market_prices_1",
+            "unique": true,
+            "origin": "u"
+          }
+        ],
+        "domains_hit": [
+          "period",
+          "ptf",
+          "smf",
+          "status",
+          "version"
+        ],
+        "sample_rows": [
+          [
+            1,
+            "2026-03",
+            "2026-03-01",
+            0,
+            1650.0,
+            2400.0,
+            "TRY",
+            "epias_excel",
+            1,
+            1,
+            "2026-05-01 15:59:21",
+            "2026-05-01 15:59:21"
+          ],
+          [
+            2,
+            "2026-03",
+            "2026-03-01",
+            1,
+            1417.4,
+            2400.0,
+            "TRY",
+            "epias_excel",
+            1,
+            1,
+            "2026-05-01 15:59:21",
+            "2026-05-01 15:59:21"
+          ],
+          [
+            3,
+            "2026-03",
+            "2026-03-01",
+            2,
+            1417.39,
+            2400.0,
+            "TRY",
+            "epias_excel",
+            1,
+            1,
+            "2026-05-01 15:59:21",
+            "2026-05-01 15:59:21"
+          ]
+        ],
+        "period_coverage": [
+          {
+            "period": "2026-01",
+            "count": 744
+          },
+          {
+            "period": "2026-02",
+            "count": 672
+          },
+          {
+            "period": "2026-03",
+            "count": 744
+          },
+          {
+            "period": "2026-04",
+            "count": 720
+          }
+        ]
+      },
+      {
+        "name": "incidents",
+        "role": "audit_trail",
+        "row_count": 1,
+        "columns": [
+          {
+            "name": "id",
+            "type": "INTEGER",
+            "pk": true,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "trace_id",
+            "type": "VARCHAR(50)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "tenant_id",
+            "type": "VARCHAR(50)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "invoice_id",
+            "type": "VARCHAR(50)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [
+              "invoice_reference_fk"
+            ],
+            "is_numeric": false
+          },
+          {
+            "name": "offer_id",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "severity",
+            "type": "VARCHAR(5)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "category",
+            "type": "VARCHAR(50)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "message",
+            "type": "VARCHAR(1000)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "details_json",
+            "type": "JSON",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "dedupe_key",
+            "type": "VARCHAR(64)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "occurrence_count",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "first_seen_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "last_seen_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "status",
+            "type": "VARCHAR(20)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "status"
+            ],
+            "is_numeric": false
+          },
+          {
+            "name": "resolution_note",
+            "type": "VARCHAR(1000)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "resolved_by",
+            "type": "VARCHAR(100)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "resolved_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "created_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "updated_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "provider",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "period",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [
+              "period"
+            ],
+            "is_numeric": false
+          },
+          {
+            "name": "primary_flag",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "action_type",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "action_owner",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "action_code",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "all_flags",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "secondary_flags",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "deduction_total",
+            "type": "REAL",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "routed_payload",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "dedupe_bucket",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "retry_attempt_count",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": false,
+            "default": "0",
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "retry_eligible_at",
+            "type": "TIMESTAMP",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "retry_last_attempt_at",
+            "type": "TIMESTAMP",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "retry_lock_until",
+            "type": "TIMESTAMP",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "retry_lock_by",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "retry_exhausted_at",
+            "type": "TIMESTAMP",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "external_issue_id",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "external_issue_url",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "reported_at",
+            "type": "TIMESTAMP",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "reclassified_at",
+            "type": "TIMESTAMP",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "previous_primary_flag",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "recompute_count",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": false,
+            "default": "0",
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "retry_success",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "resolution_reason",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "feedback_json",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          }
+        ],
+        "indexes": [
+          {
+            "name": "ix_incidents_tenant_id",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_incidents_id",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_incidents_category",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_incidents_created_at",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_incidents_trace_id",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_incidents_invoice_id",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_incidents_dedupe_key",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_incidents_severity",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_incidents_status",
+            "unique": false,
+            "origin": "c"
+          }
+        ],
+        "domains_hit": [
+          "invoice_reference_fk",
+          "period",
+          "status"
+        ],
+        "sample_rows": [
+          [
+            1,
+            "feedback-test",
+            "test",
+            null,
+            null,
+            "S2",
+            "MISMATCH",
+            "Test for feedback",
+            "{\"action_hint\": {\"action_class\": \"VERIFY_INVOICE_LOGIC\"}}",
+            null,
+            1,
+            "2026-02-28 13:36:42.932862",
+            "2026-02-28 13:36:42.932870",
+            "RESOLVED",
+            null,
+            null,
+            "2026-02-28 13:36:42.932187",
+            "2026-02-28 13:36:42.932874",
+            "2026-02-28 13:36:42.941725",
+            null,
+            null,
+            "INVOICE_TOTAL_MISMATCH",
+            null,
+            null,
+            null,
+            null,
+            null,
+            0.0,
+            null,
+            null,
+            0,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            0,
+            null,
+            null,
+            "{\"action_taken\": \"VERIFIED_LOGIC\", \"was_hint_correct\": true, \"actual_root_cause\": \"Missing line item\", \"resolution_time_seconds\": 120, \"feedback_at\": \"2026-02-28T13:36:42.941725+00:00\", \"feedback_by\": \"test_user\"}"
+          ]
+        ],
+        "period_coverage": [
+          {
+            "period": null,
+            "count": 1
+          }
+        ]
+      },
+      {
+        "name": "invoices",
+        "role": "snapshot",
+        "row_count": 0,
+        "columns": [
+          {
+            "name": "id",
+            "type": "VARCHAR(36)",
+            "pk": true,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "tenant_id",
+            "type": "VARCHAR(64)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "source_filename",
+            "type": "VARCHAR(255)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "content_type",
+            "type": "VARCHAR(100)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "storage_original_ref",
+            "type": "VARCHAR(700)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "storage_page1_ref",
+            "type": "VARCHAR(700)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "file_hash",
+            "type": "VARCHAR(64)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [
+              "version"
+            ],
+            "is_numeric": false
+          },
+          {
+            "name": "vendor_guess",
+            "type": "VARCHAR(50)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "invoice_period",
+            "type": "VARCHAR(10)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [
+              "invoice_period_bucket"
+            ],
+            "is_numeric": false
+          },
+          {
+            "name": "extraction_json",
+            "type": "JSON",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "validation_json",
+            "type": "JSON",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "status",
+            "type": "VARCHAR(11)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [
+              "status"
+            ],
+            "is_numeric": false
+          },
+          {
+            "name": "error_message",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "created_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "updated_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          }
+        ],
+        "indexes": [
+          {
+            "name": "ix_invoices_tenant_id",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_invoices_file_hash",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "sqlite_autoindex_invoices_1",
+            "unique": true,
+            "origin": "pk"
+          }
+        ],
+        "domains_hit": [
+          "invoice_period_bucket",
+          "status",
+          "version"
+        ],
+        "sample_rows": [],
+        "period_coverage": null
+      },
+      {
+        "name": "jobs",
+        "role": "snapshot",
+        "row_count": 0,
+        "columns": [
+          {
+            "name": "id",
+            "type": "VARCHAR(36)",
+            "pk": true,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "tenant_id",
+            "type": "VARCHAR(64)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "invoice_id",
+            "type": "VARCHAR(36)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [
+              "invoice_reference_fk"
+            ],
+            "is_numeric": false
+          },
+          {
+            "name": "job_type",
+            "type": "VARCHAR(20)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "status",
+            "type": "VARCHAR(9)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [
+              "status"
+            ],
+            "is_numeric": false
+          },
+          {
+            "name": "payload_json",
+            "type": "JSON",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "result_json",
+            "type": "JSON",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "error",
+            "type": "VARCHAR(2000)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "created_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "started_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "finished_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          }
+        ],
+        "indexes": [
+          {
+            "name": "ix_jobs_invoice_id",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_jobs_tenant_id",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "sqlite_autoindex_jobs_1",
+            "unique": true,
+            "origin": "pk"
+          }
+        ],
+        "domains_hit": [
+          "invoice_reference_fk",
+          "status"
+        ],
+        "sample_rows": [],
+        "period_coverage": null
+      },
+      {
+        "name": "market_reference_prices",
+        "role": "legacy_deprecated",
+        "row_count": 60,
+        "columns": [
+          {
+            "name": "id",
+            "type": "INTEGER",
+            "pk": true,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "period",
+            "type": "VARCHAR(7)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "period"
+            ],
+            "is_numeric": false
+          },
+          {
+            "name": "ptf_tl_per_mwh",
+            "type": "FLOAT",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "ptf"
+            ],
+            "is_numeric": true
+          },
+          {
+            "name": "yekdem_tl_per_mwh",
+            "type": "FLOAT",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "yekdem"
+            ],
+            "is_numeric": true
+          },
+          {
+            "name": "source_note",
+            "type": "VARCHAR(500)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "is_locked",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [
+              "status"
+            ],
+            "is_numeric": true
+          },
+          {
+            "name": "updated_by",
+            "type": "VARCHAR(100)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "created_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "updated_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "price_type",
+            "type": "VARCHAR(20)",
+            "pk": false,
+            "notnull": true,
+            "default": "'PTF'",
+            "domains": [
+              "price_type"
+            ],
+            "is_numeric": false
+          },
+          {
+            "name": "status",
+            "type": "VARCHAR(20)",
+            "pk": false,
+            "notnull": true,
+            "default": "'final'",
+            "domains": [
+              "status"
+            ],
+            "is_numeric": false
+          },
+          {
+            "name": "captured_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "change_reason",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [
+              "change_reason"
+            ],
+            "is_numeric": false
+          },
+          {
+            "name": "source",
+            "type": "VARCHAR(30)",
+            "pk": false,
+            "notnull": true,
+            "default": "'migration'",
+            "domains": [],
+            "is_numeric": false
+          }
+        ],
+        "indexes": [
+          {
+            "name": "ix_market_reference_prices_status",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_market_reference_prices_price_type_period",
+            "unique": true,
+            "origin": "c"
+          },
+          {
+            "name": "ix_market_reference_prices_id",
+            "unique": false,
+            "origin": "c"
+          }
+        ],
+        "domains_hit": [
+          "change_reason",
+          "period",
+          "price_type",
+          "ptf",
+          "status",
+          "yekdem"
+        ],
+        "sample_rows": [
+          [
+            1,
+            "2024-11",
+            2463.14,
+            350.0,
+            "Sample data (dev)",
+            0,
+            "seed_loader",
+            "2026-01-18 11:44:29.090454",
+            "2026-02-05 23:55:03.253499",
+            "PTF",
+            "final",
+            "2026-02-05 23:55:03.185275",
+            "Seed data refresh",
+            "seed"
+          ],
+          [
+            2,
+            "2024-12",
+            2446.22,
+            364.0,
+            "Mock data",
+            0,
+            "mock_sync",
+            "2026-01-18 11:44:29.090464",
+            "2026-02-23 17:15:49.854354",
+            "PTF",
+            "final",
+            "2026-02-24T16:39:49.998418",
+            "Seed data refresh",
+            "epias_manual"
+          ],
+          [
+            3,
+            "2025-01",
+            2508.8,
+            364.0,
+            "EPİAŞ Şeffaflık Platformu (21.04.2026)",
+            0,
+            "epias_manual",
+            "2026-01-18 11:44:29.090469",
+            "2026-04-20 16:48:51.884577",
+            "PTF",
+            "final",
+            "2026-02-05 23:55:03.185275",
+            "Seed data refresh",
+            "epias_manual"
+          ]
+        ],
+        "period_coverage": [
+          {
+            "period": "2022-01",
+            "count": 1
+          },
+          {
+            "period": "2022-02",
+            "count": 1
+          },
+          {
+            "period": "2022-03",
+            "count": 1
+          },
+          {
+            "period": "2022-04",
+            "count": 1
+          },
+          {
+            "period": "2022-05",
+            "count": 1
+          },
+          {
+            "period": "2022-06",
+            "count": 1
+          },
+          {
+            "period": "2022-07",
+            "count": 1
+          },
+          {
+            "period": "2022-08",
+            "count": 1
+          },
+          {
+            "period": "2022-09",
+            "count": 1
+          },
+          {
+            "period": "2022-10",
+            "count": 1
+          },
+          {
+            "period": "2022-11",
+            "count": 1
+          },
+          {
+            "period": "2022-12",
+            "count": 1
+          },
+          {
+            "period": "2023-01",
+            "count": 1
+          },
+          {
+            "period": "2023-02",
+            "count": 1
+          },
+          {
+            "period": "2023-03",
+            "count": 1
+          },
+          {
+            "period": "2023-04",
+            "count": 1
+          },
+          {
+            "period": "2023-05",
+            "count": 1
+          },
+          {
+            "period": "2023-06",
+            "count": 1
+          },
+          {
+            "period": "2023-07",
+            "count": 1
+          },
+          {
+            "period": "2023-08",
+            "count": 1
+          },
+          {
+            "period": "2023-09",
+            "count": 1
+          },
+          {
+            "period": "2023-10",
+            "count": 1
+          },
+          {
+            "period": "2023-11",
+            "count": 1
+          },
+          {
+            "period": "2023-12",
+            "count": 1
+          },
+          {
+            "period": "2024-01",
+            "count": 1
+          },
+          {
+            "period": "2024-02",
+            "count": 1
+          },
+          {
+            "period": "2024-03",
+            "count": 1
+          },
+          {
+            "period": "2024-04",
+            "count": 1
+          },
+          {
+            "period": "2024-05",
+            "count": 1
+          },
+          {
+            "period": "2024-06",
+            "count": 1
+          },
+          {
+            "period": "2024-07",
+            "count": 1
+          },
+          {
+            "period": "2024-08",
+            "count": 1
+          },
+          {
+            "period": "2024-09",
+            "count": 1
+          },
+          {
+            "period": "2024-10",
+            "count": 1
+          },
+          {
+            "period": "2024-11",
+            "count": 1
+          },
+          {
+            "period": "2024-12",
+            "count": 1
+          },
+          {
+            "period": "2025-01",
+            "count": 1
+          },
+          {
+            "period": "2025-02",
+            "count": 1
+          },
+          {
+            "period": "2025-03",
+            "count": 1
+          },
+          {
+            "period": "2025-04",
+            "count": 1
+          },
+          {
+            "period": "2025-05",
+            "count": 1
+          },
+          {
+            "period": "2025-06",
+            "count": 1
+          },
+          {
+            "period": "2025-07",
+            "count": 1
+          },
+          {
+            "period": "2025-08",
+            "count": 1
+          },
+          {
+            "period": "2025-09",
+            "count": 1
+          },
+          {
+            "period": "2025-10",
+            "count": 1
+          },
+          {
+            "period": "2025-11",
+            "count": 1
+          },
+          {
+            "period": "2025-12",
+            "count": 1
+          },
+          {
+            "period": "2026-01",
+            "count": 1
+          },
+          {
+            "period": "2026-02",
+            "count": 1
+          },
+          {
+            "period": "2026-03",
+            "count": 1
+          },
+          {
+            "period": "2026-04",
+            "count": 1
+          },
+          {
+            "period": "2026-05",
+            "count": 1
+          },
+          {
+            "period": "2026-06",
+            "count": 1
+          },
+          {
+            "period": "2026-07",
+            "count": 1
+          },
+          {
+            "period": "2026-08",
+            "count": 1
+          },
+          {
+            "period": "2026-09",
+            "count": 1
+          },
+          {
+            "period": "2026-10",
+            "count": 1
+          },
+          {
+            "period": "2026-11",
+            "count": 1
+          },
+          {
+            "period": "2026-12",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "name": "monthly_yekdem_prices",
+        "role": "canonical_source",
+        "row_count": 21,
+        "columns": [
+          {
+            "name": "id",
+            "type": "INTEGER",
+            "pk": true,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "period",
+            "type": "VARCHAR(7)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "period"
+            ],
+            "is_numeric": false
+          },
+          {
+            "name": "yekdem_tl_per_mwh",
+            "type": "FLOAT",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "yekdem"
+            ],
+            "is_numeric": true
+          },
+          {
+            "name": "source",
+            "type": "VARCHAR(30)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "created_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "updated_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          }
+        ],
+        "indexes": [
+          {
+            "name": "ix_monthly_yekdem_prices_id",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_monthly_yekdem_prices_period",
+            "unique": true,
+            "origin": "c"
+          }
+        ],
+        "domains_hit": [
+          "period",
+          "yekdem"
+        ],
+        "sample_rows": [
+          [
+            1,
+            "2026-03",
+            747.8,
+            "manual",
+            "2026-05-01 15:59:21",
+            "2026-05-01 15:59:21"
+          ],
+          [
+            2,
+            "2025-01",
+            364.0,
+            "mirror_from_market_reference_prices",
+            "2026-05-11 15:49:21",
+            "2026-05-11 15:49:21"
+          ],
+          [
+            3,
+            "2025-02",
+            370.0,
+            "mirror_from_market_reference_prices",
+            "2026-05-11 15:49:21",
+            "2026-05-11 15:49:21"
+          ]
+        ],
+        "period_coverage": [
+          {
+            "period": "2025-01",
+            "count": 1
+          },
+          {
+            "period": "2025-02",
+            "count": 1
+          },
+          {
+            "period": "2025-04",
+            "count": 1
+          },
+          {
+            "period": "2025-07",
+            "count": 1
+          },
+          {
+            "period": "2025-08",
+            "count": 1
+          },
+          {
+            "period": "2025-09",
+            "count": 1
+          },
+          {
+            "period": "2025-10",
+            "count": 1
+          },
+          {
+            "period": "2025-11",
+            "count": 1
+          },
+          {
+            "period": "2025-12",
+            "count": 1
+          },
+          {
+            "period": "2026-01",
+            "count": 1
+          },
+          {
+            "period": "2026-02",
+            "count": 1
+          },
+          {
+            "period": "2026-03",
+            "count": 1
+          },
+          {
+            "period": "2026-04",
+            "count": 1
+          },
+          {
+            "period": "2026-05",
+            "count": 1
+          },
+          {
+            "period": "2026-06",
+            "count": 1
+          },
+          {
+            "period": "2026-07",
+            "count": 1
+          },
+          {
+            "period": "2026-08",
+            "count": 1
+          },
+          {
+            "period": "2026-09",
+            "count": 1
+          },
+          {
+            "period": "2026-10",
+            "count": 1
+          },
+          {
+            "period": "2026-11",
+            "count": 1
+          },
+          {
+            "period": "2026-12",
+            "count": 1
+          }
+        ]
+      },
+      {
+        "name": "offers",
+        "role": "snapshot",
+        "row_count": 0,
+        "columns": [
+          {
+            "name": "id",
+            "type": "INTEGER",
+            "pk": true,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "tenant_id",
+            "type": "VARCHAR(64)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "customer_id",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "vendor",
+            "type": "VARCHAR(50)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "invoice_period",
+            "type": "VARCHAR(10)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [
+              "invoice_period_bucket"
+            ],
+            "is_numeric": false
+          },
+          {
+            "name": "consumption_kwh",
+            "type": "FLOAT",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "consumption_kwh"
+            ],
+            "is_numeric": true
+          },
+          {
+            "name": "current_unit_price",
+            "type": "FLOAT",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "retail_tariff_price"
+            ],
+            "is_numeric": true
+          },
+          {
+            "name": "distribution_unit_price",
+            "type": "FLOAT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [
+              "dist_tariff_price"
+            ],
+            "is_numeric": true
+          },
+          {
+            "name": "demand_qty",
+            "type": "FLOAT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "demand_unit_price",
+            "type": "FLOAT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [
+              "retail_tariff_price"
+            ],
+            "is_numeric": true
+          },
+          {
+            "name": "weighted_ptf",
+            "type": "FLOAT",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "ptf"
+            ],
+            "is_numeric": true
+          },
+          {
+            "name": "yekdem",
+            "type": "FLOAT",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "yekdem"
+            ],
+            "is_numeric": true
+          },
+          {
+            "name": "agreement_multiplier",
+            "type": "FLOAT",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "current_total",
+            "type": "FLOAT",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "sales_price"
+            ],
+            "is_numeric": true
+          },
+          {
+            "name": "offer_total",
+            "type": "FLOAT",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "sales_price"
+            ],
+            "is_numeric": true
+          },
+          {
+            "name": "savings_amount",
+            "type": "FLOAT",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "savings"
+            ],
+            "is_numeric": true
+          },
+          {
+            "name": "savings_ratio",
+            "type": "FLOAT",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "savings"
+            ],
+            "is_numeric": true
+          },
+          {
+            "name": "extra_items_json",
+            "type": "JSON",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "extra_items_total_tl",
+            "type": "FLOAT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "calculation_result",
+            "type": "JSON",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "extraction_result",
+            "type": "JSON",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "created_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "pdf_ref",
+            "type": "VARCHAR(700)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "status",
+            "type": "VARCHAR(50)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [
+              "status"
+            ],
+            "is_numeric": false
+          }
+        ],
+        "indexes": [
+          {
+            "name": "ix_offers_id",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_offers_tenant_id",
+            "unique": false,
+            "origin": "c"
+          }
+        ],
+        "domains_hit": [
+          "consumption_kwh",
+          "dist_tariff_price",
+          "invoice_period_bucket",
+          "ptf",
+          "retail_tariff_price",
+          "sales_price",
+          "savings",
+          "status",
+          "yekdem"
+        ],
+        "sample_rows": [],
+        "period_coverage": null
+      },
+      {
+        "name": "price_change_history",
+        "role": "audit_trail",
+        "row_count": 0,
+        "columns": [
+          {
+            "name": "id",
+            "type": "INTEGER",
+            "pk": true,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "price_record_id",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "price_type",
+            "type": "VARCHAR(20)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "price_type"
+            ],
+            "is_numeric": false
+          },
+          {
+            "name": "period",
+            "type": "VARCHAR(7)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "period"
+            ],
+            "is_numeric": false
+          },
+          {
+            "name": "action",
+            "type": "VARCHAR(10)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "old_value",
+            "type": "FLOAT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "new_value",
+            "type": "FLOAT",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "old_status",
+            "type": "VARCHAR(20)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "new_status",
+            "type": "VARCHAR(20)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "change_reason",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [
+              "change_reason"
+            ],
+            "is_numeric": false
+          },
+          {
+            "name": "updated_by",
+            "type": "VARCHAR(100)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "source",
+            "type": "VARCHAR(30)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "created_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          }
+        ],
+        "indexes": [
+          {
+            "name": "ix_price_change_history_price_record_id",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_price_change_history_id",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_price_change_history_created_at",
+            "unique": false,
+            "origin": "c"
+          }
+        ],
+        "domains_hit": [
+          "change_reason",
+          "period",
+          "price_type"
+        ],
+        "sample_rows": [],
+        "period_coverage": []
+      },
+      {
+        "name": "profile_templates",
+        "role": "config",
+        "row_count": 16,
+        "columns": [
+          {
+            "name": "id",
+            "type": "INTEGER",
+            "pk": true,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "name",
+            "type": "VARCHAR(100)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "display_name",
+            "type": "VARCHAR(200)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "description",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "hourly_weights",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "is_builtin",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "created_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "updated_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          }
+        ],
+        "indexes": [
+          {
+            "name": "ix_profile_templates_id",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "sqlite_autoindex_profile_templates_1",
+            "unique": true,
+            "origin": "u"
+          }
+        ],
+        "domains_hit": [],
+        "sample_rows": [
+          [
+            1,
+            "3_vardiya_sanayi",
+            "3 Vardiya Sanayi",
+            "7/24 kesintisiz üretim yapan sanayi tesisi. Saatlik tüketim hemen hemen düz dağılımlıdır.",
+            "[0.04166667, 0.04166667, 0.04166667, 0.04166667, 0.04166667, 0.04166667, 0.04166667, 0.04166667, 0.04166667, 0.04166667, 0.04166667, 0.04166667, 0.04166667, 0.04166667, 0.04166667, 0.04166667, 0.04166667, 0.04166667, 0.04166667, 0.04166667, 0.04166667, 0.04166667, 0.04166667, 0.04166659]",
+            1,
+            "2026-05-01 15:45:36",
+            "2026-05-01 15:45:36"
+          ],
+          [
+            2,
+            "tek_vardiya_fabrika",
+            "Tek Vardiya Fabrika",
+            "07:00-18:00 arası üretim yapan fabrika. Gece saatlerinde minimal tüketim.",
+            "[0.00965251, 0.00965251, 0.00965251, 0.00965251, 0.00965251, 0.00965251, 0.01544402, 0.05791506, 0.07722008, 0.08687259, 0.08687259, 0.08687259, 0.06756757, 0.08687259, 0.08687259, 0.08687259, 0.07722008, 0.05791506, 0.01930502, 0.00965251, 0.00965251, 0.00965251, 0.00965251, 0.00965247]",
+            1,
+            "2026-05-01 15:45:36",
+            "2026-05-01 15:45:36"
+          ],
+          [
+            3,
+            "ofis",
+            "Ofis",
+            "08:00-18:00 mesai saatlerinde yoğun tüketim. Gece ve hafta sonu minimal.",
+            "[0.00675676, 0.00675676, 0.00675676, 0.00675676, 0.00675676, 0.00675676, 0.00900901, 0.01351351, 0.07882883, 0.09009009, 0.10135135, 0.10135135, 0.06756757, 0.10135135, 0.10135135, 0.09009009, 0.07882883, 0.06756757, 0.02252252, 0.00900901, 0.00675676, 0.00675676, 0.00675676, 0.00675673]",
+            1,
+            "2026-05-01 15:45:36",
+            "2026-05-01 15:45:36"
+          ]
+        ],
+        "period_coverage": null
+      },
+      {
+        "name": "webhook_configs",
+        "role": "config",
+        "row_count": 0,
+        "columns": [
+          {
+            "name": "id",
+            "type": "INTEGER",
+            "pk": true,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "tenant_id",
+            "type": "VARCHAR(64)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "url",
+            "type": "VARCHAR(2000)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "events",
+            "type": "JSON",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "secret",
+            "type": "VARCHAR(255)",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "headers_json",
+            "type": "JSON",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "is_active",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [
+              "status"
+            ],
+            "is_numeric": true
+          },
+          {
+            "name": "last_triggered_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "success_count",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "failure_count",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "created_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "updated_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          }
+        ],
+        "indexes": [
+          {
+            "name": "ix_webhook_configs_tenant_id",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_webhook_configs_id",
+            "unique": false,
+            "origin": "c"
+          }
+        ],
+        "domains_hit": [
+          "status"
+        ],
+        "sample_rows": [],
+        "period_coverage": null
+      },
+      {
+        "name": "webhook_deliveries",
+        "role": "audit_trail",
+        "row_count": 0,
+        "columns": [
+          {
+            "name": "id",
+            "type": "INTEGER",
+            "pk": true,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "webhook_config_id",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "event_type",
+            "type": "VARCHAR(100)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "payload_json",
+            "type": "JSON",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "status",
+            "type": "VARCHAR(20)",
+            "pk": false,
+            "notnull": true,
+            "default": null,
+            "domains": [
+              "status"
+            ],
+            "is_numeric": false
+          },
+          {
+            "name": "response_status_code",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "response_body",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "error_message",
+            "type": "TEXT",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "attempt_count",
+            "type": "INTEGER",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": true
+          },
+          {
+            "name": "next_retry_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "created_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          },
+          {
+            "name": "delivered_at",
+            "type": "DATETIME",
+            "pk": false,
+            "notnull": false,
+            "default": null,
+            "domains": [],
+            "is_numeric": false
+          }
+        ],
+        "indexes": [
+          {
+            "name": "ix_webhook_deliveries_webhook_config_id",
+            "unique": false,
+            "origin": "c"
+          },
+          {
+            "name": "ix_webhook_deliveries_id",
+            "unique": false,
+            "origin": "c"
+          }
+        ],
+        "domains_hit": [
+          "status"
+        ],
+        "sample_rows": [],
+        "period_coverage": null
+      }
+    ],
+    "captured_at": "2026-05-11T23:21:28+00:00"
+  },
+  "analysis": {
+    "domain_map": {
+      "version": [
+        {
+          "table": "alembic_version",
+          "role": "infra",
+          "column": "version_num",
+          "row_count": 1,
+          "type": "VARCHAR(32)",
+          "eligible_for_duplication": false
+        },
+        {
+          "table": "analysis_cache",
+          "role": "cache",
+          "column": "params_hash",
+          "row_count": 3,
+          "type": "VARCHAR(64)",
+          "eligible_for_duplication": false
+        },
+        {
+          "table": "consumption_profiles",
+          "role": "canonical_source",
+          "column": "version",
+          "row_count": 0,
+          "type": "INTEGER",
+          "eligible_for_duplication": true
+        },
+        {
+          "table": "data_versions",
+          "role": "canonical_source",
+          "column": "version",
+          "row_count": 3,
+          "type": "INTEGER",
+          "eligible_for_duplication": true
+        },
+        {
+          "table": "hourly_market_prices",
+          "role": "canonical_source",
+          "column": "version",
+          "row_count": 2880,
+          "type": "INTEGER",
+          "eligible_for_duplication": true
+        },
+        {
+          "table": "invoices",
+          "role": "snapshot",
+          "column": "file_hash",
+          "row_count": 0,
+          "type": "VARCHAR(64)",
+          "eligible_for_duplication": false
+        }
+      ],
+      "cache_key": [
+        {
+          "table": "analysis_cache",
+          "role": "cache",
+          "column": "cache_key",
+          "row_count": 3,
+          "type": "VARCHAR(64)",
+          "eligible_for_duplication": false
+        },
+        {
+          "table": "analysis_cache",
+          "role": "cache",
+          "column": "params_hash",
+          "row_count": 3,
+          "type": "VARCHAR(64)",
+          "eligible_for_duplication": false
+        }
+      ],
+      "period": [
+        {
+          "table": "analysis_cache",
+          "role": "cache",
+          "column": "period",
+          "row_count": 3,
+          "type": "VARCHAR(7)",
+          "eligible_for_duplication": false
+        },
+        {
+          "table": "consumption_profiles",
+          "role": "canonical_source",
+          "column": "period",
+          "row_count": 0,
+          "type": "VARCHAR(7)",
+          "eligible_for_duplication": true
+        },
+        {
+          "table": "data_versions",
+          "role": "canonical_source",
+          "column": "period",
+          "row_count": 3,
+          "type": "VARCHAR(7)",
+          "eligible_for_duplication": true
+        },
+        {
+          "table": "hourly_market_prices",
+          "role": "canonical_source",
+          "column": "period",
+          "row_count": 2880,
+          "type": "VARCHAR(7)",
+          "eligible_for_duplication": true
+        },
+        {
+          "table": "incidents",
+          "role": "audit_trail",
+          "column": "period",
+          "row_count": 1,
+          "type": "TEXT",
+          "eligible_for_duplication": false
+        },
+        {
+          "table": "market_reference_prices",
+          "role": "legacy_deprecated",
+          "column": "period",
+          "row_count": 60,
+          "type": "VARCHAR(7)",
+          "eligible_for_duplication": true
+        },
+        {
+          "table": "monthly_yekdem_prices",
+          "role": "canonical_source",
+          "column": "period",
+          "row_count": 21,
+          "type": "VARCHAR(7)",
+          "eligible_for_duplication": true
+        },
+        {
+          "table": "price_change_history",
+          "role": "audit_trail",
+          "column": "period",
+          "row_count": 0,
+          "type": "VARCHAR(7)",
+          "eligible_for_duplication": false
+        }
+      ],
+      "consumption_kwh": [
+        {
+          "table": "consumption_hourly_data",
+          "role": "snapshot",
+          "column": "consumption_kwh",
+          "row_count": 0,
+          "type": "FLOAT",
+          "eligible_for_duplication": false
+        },
+        {
+          "table": "consumption_profiles",
+          "role": "canonical_source",
+          "column": "total_kwh",
+          "row_count": 0,
+          "type": "FLOAT",
+          "eligible_for_duplication": true
+        },
+        {
+          "table": "distribution_tariffs",
+          "role": "config",
+          "column": "unit_price_tl_per_kwh",
+          "row_count": 8,
+          "type": "FLOAT",
+          "eligible_for_duplication": false
+        },
+        {
+          "table": "offers",
+          "role": "snapshot",
+          "column": "consumption_kwh",
+          "row_count": 0,
+          "type": "FLOAT",
+          "eligible_for_duplication": false
+        }
+      ],
+      "status": [
+        {
+          "table": "consumption_profiles",
+          "role": "canonical_source",
+          "column": "is_active",
+          "row_count": 0,
+          "type": "INTEGER",
+          "eligible_for_duplication": true
+        },
+        {
+          "table": "data_versions",
+          "role": "canonical_source",
+          "column": "is_active",
+          "row_count": 3,
+          "type": "INTEGER",
+          "eligible_for_duplication": true
+        },
+        {
+          "table": "hourly_market_prices",
+          "role": "canonical_source",
+          "column": "is_active",
+          "row_count": 2880,
+          "type": "INTEGER",
+          "eligible_for_duplication": true
+        },
+        {
+          "table": "incidents",
+          "role": "audit_trail",
+          "column": "status",
+          "row_count": 1,
+          "type": "VARCHAR(20)",
+          "eligible_for_duplication": false
+        },
+        {
+          "table": "invoices",
+          "role": "snapshot",
+          "column": "status",
+          "row_count": 0,
+          "type": "VARCHAR(11)",
+          "eligible_for_duplication": false
+        },
+        {
+          "table": "jobs",
+          "role": "snapshot",
+          "column": "status",
+          "row_count": 0,
+          "type": "VARCHAR(9)",
+          "eligible_for_duplication": false
+        },
+        {
+          "table": "market_reference_prices",
+          "role": "legacy_deprecated",
+          "column": "is_locked",
+          "row_count": 60,
+          "type": "INTEGER",
+          "eligible_for_duplication": true
+        },
+        {
+          "table": "market_reference_prices",
+          "role": "legacy_deprecated",
+          "column": "status",
+          "row_count": 60,
+          "type": "VARCHAR(20)",
+          "eligible_for_duplication": true
+        },
+        {
+          "table": "offers",
+          "role": "snapshot",
+          "column": "status",
+          "row_count": 0,
+          "type": "VARCHAR(50)",
+          "eligible_for_duplication": false
+        },
+        {
+          "table": "webhook_configs",
+          "role": "config",
+          "column": "is_active",
+          "row_count": 0,
+          "type": "INTEGER",
+          "eligible_for_duplication": false
+        },
+        {
+          "table": "webhook_deliveries",
+          "role": "audit_trail",
+          "column": "status",
+          "row_count": 0,
+          "type": "VARCHAR(20)",
+          "eligible_for_duplication": false
+        }
+      ],
+      "tariff_group": [
+        {
+          "table": "distribution_tariffs",
+          "role": "config",
+          "column": "tariff_group",
+          "row_count": 8,
+          "type": "VARCHAR(20)",
+          "eligible_for_duplication": false
+        }
+      ],
+      "retail_tariff_price": [
+        {
+          "table": "distribution_tariffs",
+          "role": "config",
+          "column": "unit_price_tl_per_kwh",
+          "row_count": 8,
+          "type": "FLOAT",
+          "eligible_for_duplication": false
+        },
+        {
+          "table": "offers",
+          "role": "snapshot",
+          "column": "current_unit_price",
+          "row_count": 0,
+          "type": "FLOAT",
+          "eligible_for_duplication": false
+        },
+        {
+          "table": "offers",
+          "role": "snapshot",
+          "column": "demand_unit_price",
+          "row_count": 0,
+          "type": "FLOAT",
+          "eligible_for_duplication": false
+        }
+      ],
+      "ptf": [
+        {
+          "table": "hourly_market_prices",
+          "role": "canonical_source",
+          "column": "ptf_tl_per_mwh",
+          "row_count": 2880,
+          "type": "FLOAT",
+          "eligible_for_duplication": true
+        },
+        {
+          "table": "market_reference_prices",
+          "role": "legacy_deprecated",
+          "column": "ptf_tl_per_mwh",
+          "row_count": 60,
+          "type": "FLOAT",
+          "eligible_for_duplication": true
+        },
+        {
+          "table": "offers",
+          "role": "snapshot",
+          "column": "weighted_ptf",
+          "row_count": 0,
+          "type": "FLOAT",
+          "eligible_for_duplication": false
+        }
+      ],
+      "smf": [
+        {
+          "table": "hourly_market_prices",
+          "role": "canonical_source",
+          "column": "smf_tl_per_mwh",
+          "row_count": 2880,
+          "type": "FLOAT",
+          "eligible_for_duplication": true
+        }
+      ],
+      "invoice_reference_fk": [
+        {
+          "table": "incidents",
+          "role": "audit_trail",
+          "column": "invoice_id",
+          "row_count": 1,
+          "type": "VARCHAR(50)",
+          "eligible_for_duplication": false
+        },
+        {
+          "table": "jobs",
+          "role": "snapshot",
+          "column": "invoice_id",
+          "row_count": 0,
+          "type": "VARCHAR(36)",
+          "eligible_for_duplication": false
+        }
+      ],
+      "invoice_period_bucket": [
+        {
+          "table": "invoices",
+          "role": "snapshot",
+          "column": "invoice_period",
+          "row_count": 0,
+          "type": "VARCHAR(10)",
+          "eligible_for_duplication": false
+        },
+        {
+          "table": "offers",
+          "role": "snapshot",
+          "column": "invoice_period",
+          "row_count": 0,
+          "type": "VARCHAR(10)",
+          "eligible_for_duplication": false
+        }
+      ],
+      "yekdem": [
+        {
+          "table": "market_reference_prices",
+          "role": "legacy_deprecated",
+          "column": "yekdem_tl_per_mwh",
+          "row_count": 60,
+          "type": "FLOAT",
+          "eligible_for_duplication": true
+        },
+        {
+          "table": "monthly_yekdem_prices",
+          "role": "canonical_source",
+          "column": "yekdem_tl_per_mwh",
+          "row_count": 21,
+          "type": "FLOAT",
+          "eligible_for_duplication": true
+        },
+        {
+          "table": "offers",
+          "role": "snapshot",
+          "column": "yekdem",
+          "row_count": 0,
+          "type": "FLOAT",
+          "eligible_for_duplication": false
+        }
+      ],
+      "price_type": [
+        {
+          "table": "market_reference_prices",
+          "role": "legacy_deprecated",
+          "column": "price_type",
+          "row_count": 60,
+          "type": "VARCHAR(20)",
+          "eligible_for_duplication": true
+        },
+        {
+          "table": "price_change_history",
+          "role": "audit_trail",
+          "column": "price_type",
+          "row_count": 0,
+          "type": "VARCHAR(20)",
+          "eligible_for_duplication": false
+        }
+      ],
+      "change_reason": [
+        {
+          "table": "market_reference_prices",
+          "role": "legacy_deprecated",
+          "column": "change_reason",
+          "row_count": 60,
+          "type": "TEXT",
+          "eligible_for_duplication": true
+        },
+        {
+          "table": "price_change_history",
+          "role": "audit_trail",
+          "column": "change_reason",
+          "row_count": 0,
+          "type": "TEXT",
+          "eligible_for_duplication": false
+        }
+      ],
+      "dist_tariff_price": [
+        {
+          "table": "offers",
+          "role": "snapshot",
+          "column": "distribution_unit_price",
+          "row_count": 0,
+          "type": "FLOAT",
+          "eligible_for_duplication": false
+        }
+      ],
+      "sales_price": [
+        {
+          "table": "offers",
+          "role": "snapshot",
+          "column": "current_total",
+          "row_count": 0,
+          "type": "FLOAT",
+          "eligible_for_duplication": false
+        },
+        {
+          "table": "offers",
+          "role": "snapshot",
+          "column": "offer_total",
+          "row_count": 0,
+          "type": "FLOAT",
+          "eligible_for_duplication": false
+        }
+      ],
+      "savings": [
+        {
+          "table": "offers",
+          "role": "snapshot",
+          "column": "savings_amount",
+          "row_count": 0,
+          "type": "FLOAT",
+          "eligible_for_duplication": false
+        },
+        {
+          "table": "offers",
+          "role": "snapshot",
+          "column": "savings_ratio",
+          "row_count": 0,
+          "type": "FLOAT",
+          "eligible_for_duplication": false
+        }
+      ]
+    },
+    "suspected_duplications": [
+      {
+        "domain": "ptf",
+        "tables": [
+          "hourly_market_prices",
+          "market_reference_prices"
+        ],
+        "locations": [
+          {
+            "table": "hourly_market_prices",
+            "role": "canonical_source",
+            "column": "ptf_tl_per_mwh",
+            "row_count": 2880,
+            "type": "FLOAT",
+            "eligible_for_duplication": true
+          },
+          {
+            "table": "market_reference_prices",
+            "role": "legacy_deprecated",
+            "column": "ptf_tl_per_mwh",
+            "row_count": 60,
+            "type": "FLOAT",
+            "eligible_for_duplication": true
+          }
+        ],
+        "snapshot_references": [
+          "offers"
+        ],
+        "suspected_sot_candidates": [
+          "hourly_market_prices",
+          "market_reference_prices"
+        ]
+      },
+      {
+        "domain": "yekdem",
+        "tables": [
+          "market_reference_prices",
+          "monthly_yekdem_prices"
+        ],
+        "locations": [
+          {
+            "table": "market_reference_prices",
+            "role": "legacy_deprecated",
+            "column": "yekdem_tl_per_mwh",
+            "row_count": 60,
+            "type": "FLOAT",
+            "eligible_for_duplication": true
+          },
+          {
+            "table": "monthly_yekdem_prices",
+            "role": "canonical_source",
+            "column": "yekdem_tl_per_mwh",
+            "row_count": 21,
+            "type": "FLOAT",
+            "eligible_for_duplication": true
+          }
+        ],
+        "snapshot_references": [
+          "offers"
+        ],
+        "suspected_sot_candidates": [
+          "market_reference_prices",
+          "monthly_yekdem_prices"
+        ]
+      }
+    ],
+    "cross_source_period_diff": [
+      {
+        "domain": "ptf",
+        "source": "hourly_market_prices",
+        "has_periods": 4,
+        "missing_periods": [
+          "2022-01",
+          "2022-02",
+          "2022-03",
+          "2022-04",
+          "2022-05",
+          "2022-06",
+          "2022-07",
+          "2022-08",
+          "2022-09",
+          "2022-10",
+          "2022-11",
+          "2022-12",
+          "2023-01",
+          "2023-02",
+          "2023-03",
+          "2023-04",
+          "2023-05",
+          "2023-06",
+          "2023-07",
+          "2023-08",
+          "2023-09",
+          "2023-10",
+          "2023-11",
+          "2023-12",
+          "2024-01",
+          "2024-02",
+          "2024-03",
+          "2024-04",
+          "2024-05",
+          "2024-06",
+          "2024-07",
+          "2024-08",
+          "2024-09",
+          "2024-10",
+          "2024-11",
+          "2024-12",
+          "2025-01",
+          "2025-02",
+          "2025-03",
+          "2025-04",
+          "2025-05",
+          "2025-06",
+          "2025-07",
+          "2025-08",
+          "2025-09",
+          "2025-10",
+          "2025-11",
+          "2025-12",
+          "2026-05",
+          "2026-06",
+          "2026-07",
+          "2026-08",
+          "2026-09",
+          "2026-10",
+          "2026-11",
+          "2026-12"
+        ],
+        "missing_count": 56,
+        "other_sources_have": [
+          "market_reference_prices"
+        ]
+      },
+      {
+        "domain": "yekdem",
+        "source": "monthly_yekdem_prices",
+        "has_periods": 21,
+        "missing_periods": [
+          "2022-01",
+          "2022-02",
+          "2022-03",
+          "2022-04",
+          "2022-05",
+          "2022-06",
+          "2022-07",
+          "2022-08",
+          "2022-09",
+          "2022-10",
+          "2022-11",
+          "2022-12",
+          "2023-01",
+          "2023-02",
+          "2023-03",
+          "2023-04",
+          "2023-05",
+          "2023-06",
+          "2023-07",
+          "2023-08",
+          "2023-09",
+          "2023-10",
+          "2023-11",
+          "2023-12",
+          "2024-01",
+          "2024-02",
+          "2024-03",
+          "2024-04",
+          "2024-05",
+          "2024-06",
+          "2024-07",
+          "2024-08",
+          "2024-09",
+          "2024-10",
+          "2024-11",
+          "2024-12",
+          "2025-03",
+          "2025-05",
+          "2025-06"
+        ],
+        "missing_count": 39,
+        "other_sources_have": [
+          "market_reference_prices"
+        ]
+      }
+    ],
+    "f_ptf_flag": {
+      "finding_id": "F-PTF",
+      "severity": "P0",
+      "requirement": "R24 (Paralel Hesap Yolu)",
+      "title": "PTF canonical kaynak çatışması",
+      "sources": [
+        "hourly_market_prices",
+        "market_reference_prices"
+      ],
+      "suspected_sot": "hourly_market_prices",
+      "evidence_chain": [
+        "backend/app/pricing/router.py:175-188 — _load_market_records() sadece hourly_market_prices okuyor",
+        "backend/app/market_prices.py:74-82 — get_market_prices() market_reference_prices okuyor",
+        "Canlı API: POST /api/pricing/analyze period=2025-12 → 404 market_data_not_found",
+        "Canlı API: GET /api/epias/prices/2025-12 → MarketReferencePrice satırı döner (aylık PTF)"
+      ],
+      "business_impact": "Manuel mod → teklif üretimi zincirinde aylık PTF kullanılıyor; risk analizi saatlik ağırlıklı PTF kullanıyor. Aynı müşteriye farklı matematik modelle fiyat gösteriliyor.",
+      "fix_plan": "R26 Hybrid-C policy (P0-M1/M2/M3)"
+    },
+    "warnings": [
+      "10 boş tablo: audit_logs, consumption_hourly_data, consumption_profiles, customers, invoices, jobs, offers, price_change_history, webhook_configs, webhook_deliveries"
+    ],
+    "period_integrity": [
+      {
+        "table": "hourly_market_prices",
+        "role": "canonical_source",
+        "domains": [
+          "ptf"
+        ],
+        "period_count": 4,
+        "first_period": "2026-01",
+        "last_period": "2026-04",
+        "periods": [
+          "2026-01",
+          "2026-02",
+          "2026-03",
+          "2026-04"
+        ]
+      },
+      {
+        "table": "market_reference_prices",
+        "role": "legacy_deprecated",
+        "domains": [
+          "ptf",
+          "yekdem"
+        ],
+        "period_count": 60,
+        "first_period": "2022-01",
+        "last_period": "2026-12",
+        "periods": [
+          "2022-01",
+          "2022-02",
+          "2022-03",
+          "2022-04",
+          "2022-05",
+          "2022-06",
+          "2022-07",
+          "2022-08",
+          "2022-09",
+          "2022-10",
+          "2022-11",
+          "2022-12",
+          "2023-01",
+          "2023-02",
+          "2023-03",
+          "2023-04",
+          "2023-05",
+          "2023-06",
+          "2023-07",
+          "2023-08",
+          "2023-09",
+          "2023-10",
+          "2023-11",
+          "2023-12",
+          "2024-01",
+          "2024-02",
+          "2024-03",
+          "2024-04",
+          "2024-05",
+          "2024-06",
+          "2024-07",
+          "2024-08",
+          "2024-09",
+          "2024-10",
+          "2024-11",
+          "2024-12",
+          "2025-01",
+          "2025-02",
+          "2025-03",
+          "2025-04",
+          "2025-05",
+          "2025-06",
+          "2025-07",
+          "2025-08",
+          "2025-09",
+          "2025-10",
+          "2025-11",
+          "2025-12",
+          "2026-01",
+          "2026-02",
+          "2026-03",
+          "2026-04",
+          "2026-05",
+          "2026-06",
+          "2026-07",
+          "2026-08",
+          "2026-09",
+          "2026-10",
+          "2026-11",
+          "2026-12"
+        ]
+      },
+      {
+        "table": "monthly_yekdem_prices",
+        "role": "canonical_source",
+        "domains": [
+          "yekdem"
+        ],
+        "period_count": 21,
+        "first_period": "2025-01",
+        "last_period": "2026-12",
+        "periods": [
+          "2025-01",
+          "2025-02",
+          "2025-04",
+          "2025-07",
+          "2025-08",
+          "2025-09",
+          "2025-10",
+          "2025-11",
+          "2025-12",
+          "2026-01",
+          "2026-02",
+          "2026-03",
+          "2026-04",
+          "2026-05",
+          "2026-06",
+          "2026-07",
+          "2026-08",
+          "2026-09",
+          "2026-10",
+          "2026-11",
+          "2026-12"
+        ]
+      }
+    ],
+    "empty_tables": [
+      "audit_logs",
+      "consumption_hourly_data",
+      "consumption_profiles",
+      "customers",
+      "invoices",
+      "jobs",
+      "offers",
+      "price_change_history",
+      "webhook_configs",
+      "webhook_deliveries"
+    ]
+  }
+}

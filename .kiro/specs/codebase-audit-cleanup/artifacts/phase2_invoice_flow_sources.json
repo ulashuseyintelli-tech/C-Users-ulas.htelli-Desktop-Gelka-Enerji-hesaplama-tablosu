@@ -1,0 +1,488 @@
+{
+  "_meta": {
+    "script": "05_invoice_flow_sources.py",
+    "invoice_endpoint_count": 21
+  },
+  "invoice_endpoints": [
+    {
+      "method": "POST",
+      "path": "/analyze-invoice",
+      "function": "analyze_invoice",
+      "file": "backend/app/main.py",
+      "line": 776,
+      "router": "app",
+      "calls_detected": [
+        "extract_text_from_pdf",
+        "validate_extraction"
+      ],
+      "imports_extractor": null,
+      "imports_validator": "app.validator",
+      "imports_calculator": null
+    },
+    {
+      "method": "POST",
+      "path": "/calculate-offer",
+      "function": "calculate_offer_endpoint",
+      "file": "backend/app/main.py",
+      "line": 906,
+      "router": "app",
+      "calls_detected": [],
+      "imports_extractor": null,
+      "imports_validator": null,
+      "imports_calculator": null
+    },
+    {
+      "method": "POST",
+      "path": "/full-process",
+      "function": "full_process",
+      "file": "backend/app/main.py",
+      "line": 947,
+      "router": "app",
+      "calls_detected": [
+        "calculate_offer",
+        "extract_invoice_data",
+        "extract_text_from_pdf",
+        "validate_extraction"
+      ],
+      "imports_extractor": "app.extractor",
+      "imports_validator": "app.validator",
+      "imports_calculator": "app.calculator"
+    },
+    {
+      "method": "POST",
+      "path": "/offers",
+      "function": "create_offer",
+      "file": "backend/app/main.py",
+      "line": 1569,
+      "router": "app",
+      "calls_detected": [],
+      "imports_extractor": null,
+      "imports_validator": null,
+      "imports_calculator": null
+    },
+    {
+      "method": "GET",
+      "path": "/offers",
+      "function": "list_offers",
+      "file": "backend/app/main.py",
+      "line": 1612,
+      "router": "app",
+      "calls_detected": [],
+      "imports_extractor": null,
+      "imports_validator": null,
+      "imports_calculator": null
+    },
+    {
+      "method": "GET",
+      "path": "/offers/{offer_id}",
+      "function": "get_offer",
+      "file": "backend/app/main.py",
+      "line": 1649,
+      "router": "app",
+      "calls_detected": [],
+      "imports_extractor": null,
+      "imports_validator": null,
+      "imports_calculator": null
+    },
+    {
+      "method": "PUT",
+      "path": "/offers/{offer_id}/status",
+      "function": "update_offer_status",
+      "file": "backend/app/main.py",
+      "line": 1686,
+      "router": "app",
+      "calls_detected": [],
+      "imports_extractor": null,
+      "imports_validator": null,
+      "imports_calculator": null
+    },
+    {
+      "method": "POST",
+      "path": "/offers/{offer_id}/generate-pdf",
+      "function": "generate_pdf_for_offer",
+      "file": "backend/app/main.py",
+      "line": 1788,
+      "router": "app",
+      "calls_detected": [],
+      "imports_extractor": null,
+      "imports_validator": null,
+      "imports_calculator": null
+    },
+    {
+      "method": "GET",
+      "path": "/offers/{offer_id}/download",
+      "function": "download_offer_pdf",
+      "file": "backend/app/main.py",
+      "line": 1856,
+      "router": "app",
+      "calls_detected": [],
+      "imports_extractor": null,
+      "imports_validator": null,
+      "imports_calculator": null
+    },
+    {
+      "method": "POST",
+      "path": "/offers/{offer_id}/generate-html",
+      "function": "generate_html_for_offer",
+      "file": "backend/app/main.py",
+      "line": 1934,
+      "router": "app",
+      "calls_detected": [
+        "generate_offer_html"
+      ],
+      "imports_extractor": null,
+      "imports_validator": null,
+      "imports_calculator": null
+    },
+    {
+      "method": "PATCH",
+      "path": "/extraction/patch-fields",
+      "function": "patch_extraction_fields",
+      "file": "backend/app/main.py",
+      "line": 2311,
+      "router": "app",
+      "calls_detected": [
+        "validate_extraction"
+      ],
+      "imports_extractor": null,
+      "imports_validator": "app.validator",
+      "imports_calculator": null
+    },
+    {
+      "method": "POST",
+      "path": "/extraction/apply-suggested-fixes",
+      "function": "apply_suggested_fixes",
+      "file": "backend/app/main.py",
+      "line": 2361,
+      "router": "app",
+      "calls_detected": [
+        "validate_extraction"
+      ],
+      "imports_extractor": null,
+      "imports_validator": "app.validator",
+      "imports_calculator": null
+    },
+    {
+      "method": "POST",
+      "path": "/invoices",
+      "function": "upload_invoice",
+      "file": "backend/app/main.py",
+      "line": 2413,
+      "router": "app",
+      "calls_detected": [
+        "preprocess_image_bytes"
+      ],
+      "imports_extractor": null,
+      "imports_validator": null,
+      "imports_calculator": null
+    },
+    {
+      "method": "POST",
+      "path": "/invoices/{invoice_id}/extract",
+      "function": "extract_invoice",
+      "file": "backend/app/main.py",
+      "line": 2603,
+      "router": "app",
+      "calls_detected": [
+        "extract_invoice_data"
+      ],
+      "imports_extractor": "app.extractor",
+      "imports_validator": null,
+      "imports_calculator": null
+    },
+    {
+      "method": "POST",
+      "path": "/invoices/{invoice_id}/validate",
+      "function": "validate_invoice",
+      "file": "backend/app/main.py",
+      "line": 2683,
+      "router": "app",
+      "calls_detected": [
+        "validate_extraction"
+      ],
+      "imports_extractor": null,
+      "imports_validator": "app.validator",
+      "imports_calculator": null
+    },
+    {
+      "method": "PATCH",
+      "path": "/invoices/{invoice_id}/fields",
+      "function": "patch_invoice_fields",
+      "file": "backend/app/main.py",
+      "line": 2714,
+      "router": "app",
+      "calls_detected": [
+        "validate_extraction"
+      ],
+      "imports_extractor": null,
+      "imports_validator": "app.validator",
+      "imports_calculator": null
+    },
+    {
+      "method": "GET",
+      "path": "/invoices/{invoice_id}",
+      "function": "get_invoice",
+      "file": "backend/app/main.py",
+      "line": 2759,
+      "router": "app",
+      "calls_detected": [],
+      "imports_extractor": null,
+      "imports_validator": null,
+      "imports_calculator": null
+    },
+    {
+      "method": "GET",
+      "path": "/invoices",
+      "function": "list_invoices",
+      "file": "backend/app/main.py",
+      "line": 2787,
+      "router": "app",
+      "calls_detected": [],
+      "imports_extractor": null,
+      "imports_validator": null,
+      "imports_calculator": null
+    },
+    {
+      "method": "GET",
+      "path": "/invoices/{invoice_id}/download",
+      "function": "download_invoice_file",
+      "file": "backend/app/main.py",
+      "line": 2820,
+      "router": "app",
+      "calls_detected": [],
+      "imports_extractor": null,
+      "imports_validator": null,
+      "imports_calculator": null
+    },
+    {
+      "method": "POST",
+      "path": "/invoices/{invoice_id}/process",
+      "function": "process_invoice_async",
+      "file": "backend/app/main.py",
+      "line": 2904,
+      "router": "app",
+      "calls_detected": [],
+      "imports_extractor": null,
+      "imports_validator": null,
+      "imports_calculator": null
+    },
+    {
+      "method": "GET",
+      "path": "/invoices/{invoice_id}/jobs",
+      "function": "get_invoice_jobs",
+      "file": "backend/app/main.py",
+      "line": 3024,
+      "router": "app",
+      "calls_detected": [],
+      "imports_extractor": null,
+      "imports_validator": null,
+      "imports_calculator": null
+    }
+  ],
+  "legacy_validator": {
+    "module": "app.validator",
+    "entry": "validate_extraction",
+    "used_by_handlers": [
+      {
+        "method": "POST",
+        "path": "/analyze-invoice",
+        "function": "analyze_invoice"
+      },
+      {
+        "method": "POST",
+        "path": "/full-process",
+        "function": "full_process"
+      },
+      {
+        "method": "PATCH",
+        "path": "/extraction/patch-fields",
+        "function": "patch_extraction_fields"
+      },
+      {
+        "method": "POST",
+        "path": "/extraction/apply-suggested-fixes",
+        "function": "apply_suggested_fixes"
+      },
+      {
+        "method": "POST",
+        "path": "/invoices/{invoice_id}/validate",
+        "function": "validate_invoice"
+      },
+      {
+        "method": "PATCH",
+        "path": "/invoices/{invoice_id}/fields",
+        "function": "patch_invoice_fields"
+      }
+    ],
+    "reachable_from_main": true
+  },
+  "new_validation_stack": {
+    "package": "app.invoice.validation",
+    "entry_points": [
+      {
+        "module": "app.invoice.validation.validator",
+        "functions": [
+          "validate"
+        ],
+        "status": "alive_from_tests_only",
+        "imported_by_main": false,
+        "imported_by_tests": []
+      },
+      {
+        "module": "app.invoice.validation.enforcement",
+        "functions": [
+          "apply_enforcement"
+        ],
+        "status": "alive_from_tests_only",
+        "imported_by_main": false,
+        "imported_by_tests": [
+          "backend/tests/test_invoice_telemetry_g.py"
+        ]
+      },
+      {
+        "module": "app.invoice.validation.shadow",
+        "functions": [
+          "shadow_validate_hook",
+          "compare_validators"
+        ],
+        "status": "alive_from_tests_only",
+        "imported_by_main": false,
+        "imported_by_tests": [
+          "backend/tests/test_invoice_validator_shadow.py"
+        ]
+      }
+    ],
+    "reachable_from_main": false,
+    "reachable_callers_in_production": [],
+    "verdict": "DEAD",
+    "verdict_reason": "New validation stack is fully test-only; no production handler imports or calls it"
+  },
+  "source_tables": {
+    "definitions": {
+      "ptf_tables": [
+        "hourly_market_prices",
+        "market_reference_prices"
+      ],
+      "yekdem_tables": [
+        "monthly_yekdem_prices",
+        "market_reference_prices"
+      ]
+    },
+    "references_per_token": {
+      "hourly_market_prices": [
+        {
+          "file": "backend/app/pricing/schemas.py",
+          "line": 5,
+          "snippet": "- hourly_market_prices: Saatlik PTF/SMF verileri"
+        },
+        {
+          "file": "backend/app/pricing/schemas.py",
+          "line": 26,
+          "snippet": "__tablename__ = \"hourly_market_prices\""
+        }
+      ],
+      "market_reference_prices": [
+        {
+          "file": "backend/app/database.py",
+          "line": 300,
+          "snippet": "__tablename__ = \"market_reference_prices\""
+        },
+        {
+          "file": "backend/app/database.py",
+          "line": 329,
+          "snippet": "sa.UniqueConstraint('price_type', 'period', name='uq_market_reference_prices_price_type_period'),"
+        },
+        {
+          "file": "backend/app/database.py",
+          "line": 346,
+          "snippet": "FK: price_record_id → market_reference_prices.id (ON DELETE RESTRICT)"
+        },
+        {
+          "file": "backend/app/database.py",
+          "line": 354,
+          "snippet": "ForeignKey(\"market_reference_prices.id\", ondelete=\"RESTRICT\"),"
+        },
+        {
+          "file": "backend/app/pricing/yekdem_service.py",
+          "line": 105,
+          "snippet": "2. market_reference_prices (legacy tablo — YEKDEM > 0 kayıtlar için fallback)"
+        },
+        {
+          "file": "backend/app/pricing/yekdem_service.py",
+          "line": 129,
+          "snippet": "# 2. Legacy tablo — market_reference_prices (sadece YEKDEM > 0)"
+        },
+        {
+          "file": "backend/app/pricing/yekdem_service.py",
+          "line": 134,
+          "snippet": "\"SELECT yekdem_tl_per_mwh FROM market_reference_prices \""
+        },
+        {
+          "file": "backend/app/pricing/yekdem_service.py",
+          "line": 149,
+          "snippet": "source=\"mirror_from_market_reference_prices\","
+        },
+        {
+          "file": "backend/app/seed_market_prices.py",
+          "line": 92,
+          "snippet": "Load seed data into market_reference_prices table."
+        }
+      ],
+      "monthly_yekdem_prices": [
+        {
+          "file": "backend/app/pricing/schemas.py",
+          "line": 6,
+          "snippet": "- monthly_yekdem_prices: Aylık YEKDEM bedelleri"
+        },
+        {
+          "file": "backend/app/pricing/schemas.py",
+          "line": 53,
+          "snippet": "__tablename__ = \"monthly_yekdem_prices\""
+        },
+        {
+          "file": "backend/app/pricing/yekdem_service.py",
+          "line": 104,
+          "snippet": "1. monthly_yekdem_prices (risk engine tablosu — birincil kaynak)"
+        },
+        {
+          "file": "backend/app/pricing/yekdem_service.py",
+          "line": 109,
+          "snippet": "Fallback başarılı olursa, sonuç `monthly_yekdem_prices`'a da kopyalanır"
+        }
+      ]
+    },
+    "referenced_from_handlers": []
+  },
+  "flow_diagram": [
+    "POST /analyze-invoice  [analyze_invoice@backend/app/main.py:776]",
+    "  → [validator] app.validator",
+    "POST /calculate-offer  [calculate_offer_endpoint@backend/app/main.py:906]",
+    "POST /full-process  [full_process@backend/app/main.py:947]",
+    "  → [extractor] app.extractor",
+    "  → [validator] app.validator",
+    "  → [calculator] app.calculator",
+    "POST /offers  [create_offer@backend/app/main.py:1569]",
+    "GET /offers  [list_offers@backend/app/main.py:1612]",
+    "GET /offers/{offer_id}  [get_offer@backend/app/main.py:1649]",
+    "PUT /offers/{offer_id}/status  [update_offer_status@backend/app/main.py:1686]",
+    "POST /offers/{offer_id}/generate-pdf  [generate_pdf_for_offer@backend/app/main.py:1788]",
+    "GET /offers/{offer_id}/download  [download_offer_pdf@backend/app/main.py:1856]",
+    "POST /offers/{offer_id}/generate-html  [generate_html_for_offer@backend/app/main.py:1934]",
+    "PATCH /extraction/patch-fields  [patch_extraction_fields@backend/app/main.py:2311]",
+    "  → [validator] app.validator",
+    "POST /extraction/apply-suggested-fixes  [apply_suggested_fixes@backend/app/main.py:2361]",
+    "  → [validator] app.validator",
+    "POST /invoices  [upload_invoice@backend/app/main.py:2413]",
+    "POST /invoices/{invoice_id}/extract  [extract_invoice@backend/app/main.py:2603]",
+    "  → [extractor] app.extractor",
+    "POST /invoices/{invoice_id}/validate  [validate_invoice@backend/app/main.py:2683]",
+    "  → [validator] app.validator",
+    "PATCH /invoices/{invoice_id}/fields  [patch_invoice_fields@backend/app/main.py:2714]",
+    "  → [validator] app.validator",
+    "GET /invoices/{invoice_id}  [get_invoice@backend/app/main.py:2759]",
+    "GET /invoices  [list_invoices@backend/app/main.py:2787]",
+    "GET /invoices/{invoice_id}/download  [download_invoice_file@backend/app/main.py:2820]",
+    "POST /invoices/{invoice_id}/process  [process_invoice_async@backend/app/main.py:2904]",
+    "GET /invoices/{invoice_id}/jobs  [get_invoice_jobs@backend/app/main.py:3024]"
+  ]
+}

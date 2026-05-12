@@ -1,0 +1,926 @@
+{
+  "_meta": {
+    "script": "02_inventory_fe_fetches.py",
+    "scanned_root": "frontend/src",
+    "file_count": 26,
+    "test_file_count_excluded": 18,
+    "call_count_raw": 29,
+    "call_count_unique": 26,
+    "usage_distribution": {
+      "admin": 6,
+      "admin-market-prices": 9,
+      "epias": 3,
+      "health": 1,
+      "invoice-flow": 1,
+      "invoice-offer": 1,
+      "pricing": 5
+    },
+    "dynamic_path_count": 12,
+    "spot_check": {
+      "/api/pricing/analyze": true,
+      "/api/epias/prices/{period}": true,
+      "/full-process": true
+    }
+  },
+  "calls": [
+    {
+      "method": "GET",
+      "path": "/api/epias/prices/{period}",
+      "file": "frontend/src/App.tsx",
+      "line": 678,
+      "client": "fetch",
+      "raw_path": "${API_BASE}/api/epias/prices/${period}",
+      "interpolations": [
+        "period"
+      ],
+      "dynamic": true,
+      "params": {
+        "query": [],
+        "body": false
+      },
+      "usage": "epias"
+    },
+    {
+      "method": "POST",
+      "path": "/api/epias/prices/{period}",
+      "file": "frontend/src/App.tsx",
+      "line": 1190,
+      "client": "fetch",
+      "raw_path": "${API_BASE}/api/epias/prices/${period}",
+      "interpolations": [
+        "period"
+      ],
+      "dynamic": true,
+      "params": {
+        "query": [],
+        "body": true
+      },
+      "usage": "epias"
+    },
+    {
+      "method": "POST",
+      "path": "/analyze-invoice",
+      "file": "frontend/src/api.ts",
+      "line": 107,
+      "client": "api",
+      "raw_path": "/analyze-invoice",
+      "interpolations": [],
+      "dynamic": false,
+      "params": {
+        "query": [],
+        "body": false
+      },
+      "usage": "invoice-offer"
+    },
+    {
+      "method": "POST",
+      "path": "/full-process",
+      "file": "frontend/src/api.ts",
+      "line": 150,
+      "client": "api",
+      "raw_path": "/full-process?${queryParams.toString()}",
+      "interpolations": [],
+      "dynamic": true,
+      "params": {
+        "query": [
+          "<dynamic>"
+        ],
+        "body": false
+      },
+      "usage": "invoice-flow"
+    },
+    {
+      "method": "GET",
+      "path": "/health",
+      "file": "frontend/src/api.ts",
+      "line": 157,
+      "client": "api",
+      "raw_path": "/health",
+      "interpolations": [],
+      "dynamic": false,
+      "params": {
+        "query": [],
+        "body": false
+      },
+      "usage": "health"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/market-prices",
+      "file": "frontend/src/api.ts",
+      "line": 433,
+      "client": "adminApi",
+      "raw_path": "/admin/market-prices?limit=${limit}",
+      "interpolations": [
+        "limit"
+      ],
+      "dynamic": true,
+      "params": {
+        "query": [
+          "limit"
+        ],
+        "body": false
+      },
+      "usage": "admin-market-prices"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/market-prices/{period}",
+      "file": "frontend/src/api.ts",
+      "line": 439,
+      "client": "adminApi",
+      "raw_path": "/admin/market-prices/${period}",
+      "interpolations": [
+        "period"
+      ],
+      "dynamic": true,
+      "params": {
+        "query": [],
+        "body": false
+      },
+      "usage": "admin-market-prices"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/market-prices",
+      "file": "frontend/src/api.ts",
+      "line": 458,
+      "client": "adminApi",
+      "raw_path": "/admin/market-prices",
+      "interpolations": [],
+      "dynamic": false,
+      "params": {
+        "query": [],
+        "body": false
+      },
+      "usage": "admin-market-prices"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/market-prices/{period}/lock",
+      "file": "frontend/src/api.ts",
+      "line": 466,
+      "client": "adminApi",
+      "raw_path": "/admin/market-prices/${period}/lock",
+      "interpolations": [
+        "period"
+      ],
+      "dynamic": true,
+      "params": {
+        "query": [],
+        "body": false
+      },
+      "usage": "admin-market-prices"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/market-prices/{period}/unlock",
+      "file": "frontend/src/api.ts",
+      "line": 472,
+      "client": "adminApi",
+      "raw_path": "/admin/market-prices/${period}/unlock",
+      "interpolations": [
+        "period"
+      ],
+      "dynamic": true,
+      "params": {
+        "query": [],
+        "body": false
+      },
+      "usage": "admin-market-prices"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/distribution-tariffs",
+      "file": "frontend/src/api.ts",
+      "line": 496,
+      "client": "adminApi",
+      "raw_path": "/admin/distribution-tariffs",
+      "interpolations": [],
+      "dynamic": false,
+      "params": {
+        "query": [],
+        "body": false
+      },
+      "usage": "admin"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/distribution-tariffs/lookup",
+      "file": "frontend/src/api.ts",
+      "line": 523,
+      "client": "adminApi",
+      "raw_path": "/admin/distribution-tariffs/lookup?${params}",
+      "interpolations": [],
+      "dynamic": true,
+      "params": {
+        "query": [
+          "<dynamic>"
+        ],
+        "body": false
+      },
+      "usage": "admin"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/incidents",
+      "file": "frontend/src/api.ts",
+      "line": 597,
+      "client": "adminApi",
+      "raw_path": "/admin/incidents?${queryParams}",
+      "interpolations": [],
+      "dynamic": true,
+      "params": {
+        "query": [
+          "<dynamic>"
+        ],
+        "body": false
+      },
+      "usage": "admin"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/incidents/{id}",
+      "file": "frontend/src/api.ts",
+      "line": 602,
+      "client": "adminApi",
+      "raw_path": "/admin/incidents/${id}",
+      "interpolations": [
+        "id"
+      ],
+      "dynamic": true,
+      "params": {
+        "query": [],
+        "body": false
+      },
+      "usage": "admin"
+    },
+    {
+      "method": "PATCH",
+      "path": "/admin/incidents/{id}",
+      "file": "frontend/src/api.ts",
+      "line": 617,
+      "client": "adminApi",
+      "raw_path": "/admin/incidents/${id}",
+      "interpolations": [
+        "id"
+      ],
+      "dynamic": true,
+      "params": {
+        "query": [],
+        "body": false
+      },
+      "usage": "admin"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/incidents/stats",
+      "file": "frontend/src/api.ts",
+      "line": 624,
+      "client": "adminApi",
+      "raw_path": "/admin/incidents/stats",
+      "interpolations": [],
+      "dynamic": false,
+      "params": {
+        "query": [],
+        "body": false
+      },
+      "usage": "admin"
+    },
+    {
+      "method": "GET",
+      "path": "/api/epias/prices/{period}",
+      "file": "frontend/src/api.ts",
+      "line": 653,
+      "client": "api",
+      "raw_path": "/api/epias/prices/${period}?auto_fetch=${autoFetch}",
+      "interpolations": [
+        "period",
+        "auto_fetch"
+      ],
+      "dynamic": true,
+      "params": {
+        "query": [
+          "auto_fetch"
+        ],
+        "body": false
+      },
+      "usage": "epias"
+    },
+    {
+      "method": "POST",
+      "path": "/api/epias/sync/{period}",
+      "file": "frontend/src/api.ts",
+      "line": 680,
+      "client": "api",
+      "raw_path": "/api/epias/sync/${period}?${params}",
+      "interpolations": [
+        "period"
+      ],
+      "dynamic": true,
+      "params": {
+        "query": [
+          "<dynamic>"
+        ],
+        "body": false
+      },
+      "usage": "epias"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/analyze",
+      "file": "frontend/src/api.ts",
+      "line": 914,
+      "client": "fetch",
+      "raw_path": "${API_BASE}/api/pricing/analyze",
+      "interpolations": [],
+      "dynamic": false,
+      "params": {
+        "query": [],
+        "body": true
+      },
+      "usage": "pricing"
+    },
+    {
+      "method": "GET",
+      "path": "/api/pricing/periods",
+      "file": "frontend/src/api.ts",
+      "line": 930,
+      "client": "fetch",
+      "raw_path": "${API_BASE}/api/pricing/periods",
+      "interpolations": [],
+      "dynamic": false,
+      "params": {
+        "query": [],
+        "body": false
+      },
+      "usage": "pricing"
+    },
+    {
+      "method": "GET",
+      "path": "/api/pricing/templates",
+      "file": "frontend/src/api.ts",
+      "line": 939,
+      "client": "fetch",
+      "raw_path": "${API_BASE}/api/pricing/templates",
+      "interpolations": [],
+      "dynamic": false,
+      "params": {
+        "query": [],
+        "body": false
+      },
+      "usage": "pricing"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/report/pdf",
+      "file": "frontend/src/api.ts",
+      "line": 951,
+      "client": "fetch-url-ctor",
+      "raw_path": "${API_BASE}/api/pricing/report/pdf",
+      "interpolations": [],
+      "dynamic": false,
+      "params": {
+        "query": [],
+        "body": true
+      },
+      "usage": "pricing"
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/report/excel",
+      "file": "frontend/src/api.ts",
+      "line": 966,
+      "client": "fetch",
+      "raw_path": "${API_BASE}/api/pricing/report/excel",
+      "interpolations": [],
+      "dynamic": false,
+      "params": {
+        "query": [],
+        "body": true
+      },
+      "usage": "pricing"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/market-prices",
+      "file": "frontend/src/market-prices/marketPricesApi.ts",
+      "line": 31,
+      "client": "adminApi",
+      "raw_path": "/admin/market-prices",
+      "interpolations": [],
+      "dynamic": false,
+      "params": {
+        "query": [],
+        "body": false
+      },
+      "usage": "admin-market-prices"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/market-prices",
+      "file": "frontend/src/market-prices/marketPricesApi.ts",
+      "line": 59,
+      "client": "adminApi",
+      "raw_path": "/admin/market-prices",
+      "interpolations": [],
+      "dynamic": false,
+      "params": {
+        "query": [],
+        "body": false
+      },
+      "usage": "admin-market-prices"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/market-prices/import/preview",
+      "file": "frontend/src/market-prices/marketPricesApi.ts",
+      "line": 85,
+      "client": "adminApi",
+      "raw_path": "/admin/market-prices/import/preview",
+      "interpolations": [],
+      "dynamic": false,
+      "params": {
+        "query": [],
+        "body": false
+      },
+      "usage": "admin-market-prices"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/market-prices/import/apply",
+      "file": "frontend/src/market-prices/marketPricesApi.ts",
+      "line": 115,
+      "client": "adminApi",
+      "raw_path": "/admin/market-prices/import/apply",
+      "interpolations": [],
+      "dynamic": false,
+      "params": {
+        "query": [],
+        "body": false
+      },
+      "usage": "admin-market-prices"
+    },
+    {
+      "method": "GET",
+      "path": "/admin/market-prices/history",
+      "file": "frontend/src/market-prices/marketPricesApi.ts",
+      "line": 136,
+      "client": "adminApi",
+      "raw_path": "/admin/market-prices/history",
+      "interpolations": [],
+      "dynamic": false,
+      "params": {
+        "query": [],
+        "body": false
+      },
+      "usage": "admin-market-prices"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/telemetry/events",
+      "file": "frontend/src/market-prices/telemetry.ts",
+      "line": 91,
+      "client": "fetch-const",
+      "raw_path": "TELEMETRY_ENDPOINT=/admin/telemetry/events",
+      "interpolations": [],
+      "dynamic": false,
+      "params": {
+        "query": [],
+        "body": true
+      },
+      "usage": "admin-market-prices"
+    }
+  ],
+  "unique_calls": [
+    {
+      "method": "GET",
+      "path": "/admin/distribution-tariffs",
+      "usage": "admin",
+      "dynamic": false,
+      "clients": [
+        "adminApi"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 496
+        }
+      ],
+      "occurrences": 1
+    },
+    {
+      "method": "GET",
+      "path": "/admin/distribution-tariffs/lookup",
+      "usage": "admin",
+      "dynamic": true,
+      "clients": [
+        "adminApi"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 523
+        }
+      ],
+      "occurrences": 1
+    },
+    {
+      "method": "GET",
+      "path": "/admin/incidents",
+      "usage": "admin",
+      "dynamic": true,
+      "clients": [
+        "adminApi"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 597
+        }
+      ],
+      "occurrences": 1
+    },
+    {
+      "method": "GET",
+      "path": "/admin/incidents/stats",
+      "usage": "admin",
+      "dynamic": false,
+      "clients": [
+        "adminApi"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 624
+        }
+      ],
+      "occurrences": 1
+    },
+    {
+      "method": "GET",
+      "path": "/admin/incidents/{id}",
+      "usage": "admin",
+      "dynamic": true,
+      "clients": [
+        "adminApi"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 602
+        }
+      ],
+      "occurrences": 1
+    },
+    {
+      "method": "PATCH",
+      "path": "/admin/incidents/{id}",
+      "usage": "admin",
+      "dynamic": true,
+      "clients": [
+        "adminApi"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 617
+        }
+      ],
+      "occurrences": 1
+    },
+    {
+      "method": "GET",
+      "path": "/admin/market-prices",
+      "usage": "admin-market-prices",
+      "dynamic": true,
+      "clients": [
+        "adminApi"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 433
+        },
+        {
+          "file": "frontend/src/market-prices/marketPricesApi.ts",
+          "line": 31
+        }
+      ],
+      "occurrences": 2
+    },
+    {
+      "method": "POST",
+      "path": "/admin/market-prices",
+      "usage": "admin-market-prices",
+      "dynamic": false,
+      "clients": [
+        "adminApi"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 458
+        },
+        {
+          "file": "frontend/src/market-prices/marketPricesApi.ts",
+          "line": 59
+        }
+      ],
+      "occurrences": 2
+    },
+    {
+      "method": "GET",
+      "path": "/admin/market-prices/history",
+      "usage": "admin-market-prices",
+      "dynamic": false,
+      "clients": [
+        "adminApi"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/market-prices/marketPricesApi.ts",
+          "line": 136
+        }
+      ],
+      "occurrences": 1
+    },
+    {
+      "method": "POST",
+      "path": "/admin/market-prices/import/apply",
+      "usage": "admin-market-prices",
+      "dynamic": false,
+      "clients": [
+        "adminApi"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/market-prices/marketPricesApi.ts",
+          "line": 115
+        }
+      ],
+      "occurrences": 1
+    },
+    {
+      "method": "POST",
+      "path": "/admin/market-prices/import/preview",
+      "usage": "admin-market-prices",
+      "dynamic": false,
+      "clients": [
+        "adminApi"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/market-prices/marketPricesApi.ts",
+          "line": 85
+        }
+      ],
+      "occurrences": 1
+    },
+    {
+      "method": "GET",
+      "path": "/admin/market-prices/{period}",
+      "usage": "admin-market-prices",
+      "dynamic": true,
+      "clients": [
+        "adminApi"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 439
+        }
+      ],
+      "occurrences": 1
+    },
+    {
+      "method": "POST",
+      "path": "/admin/market-prices/{period}/lock",
+      "usage": "admin-market-prices",
+      "dynamic": true,
+      "clients": [
+        "adminApi"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 466
+        }
+      ],
+      "occurrences": 1
+    },
+    {
+      "method": "POST",
+      "path": "/admin/market-prices/{period}/unlock",
+      "usage": "admin-market-prices",
+      "dynamic": true,
+      "clients": [
+        "adminApi"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 472
+        }
+      ],
+      "occurrences": 1
+    },
+    {
+      "method": "POST",
+      "path": "/admin/telemetry/events",
+      "usage": "admin-market-prices",
+      "dynamic": false,
+      "clients": [
+        "fetch-const"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/market-prices/telemetry.ts",
+          "line": 91
+        }
+      ],
+      "occurrences": 1
+    },
+    {
+      "method": "POST",
+      "path": "/analyze-invoice",
+      "usage": "invoice-offer",
+      "dynamic": false,
+      "clients": [
+        "api"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 107
+        }
+      ],
+      "occurrences": 1
+    },
+    {
+      "method": "GET",
+      "path": "/api/epias/prices/{period}",
+      "usage": "epias",
+      "dynamic": true,
+      "clients": [
+        "api",
+        "fetch"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/App.tsx",
+          "line": 678
+        },
+        {
+          "file": "frontend/src/api.ts",
+          "line": 653
+        }
+      ],
+      "occurrences": 2
+    },
+    {
+      "method": "POST",
+      "path": "/api/epias/prices/{period}",
+      "usage": "epias",
+      "dynamic": true,
+      "clients": [
+        "fetch"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/App.tsx",
+          "line": 1190
+        }
+      ],
+      "occurrences": 1
+    },
+    {
+      "method": "POST",
+      "path": "/api/epias/sync/{period}",
+      "usage": "epias",
+      "dynamic": true,
+      "clients": [
+        "api"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 680
+        }
+      ],
+      "occurrences": 1
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/analyze",
+      "usage": "pricing",
+      "dynamic": false,
+      "clients": [
+        "fetch"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 914
+        }
+      ],
+      "occurrences": 1
+    },
+    {
+      "method": "GET",
+      "path": "/api/pricing/periods",
+      "usage": "pricing",
+      "dynamic": false,
+      "clients": [
+        "fetch"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 930
+        }
+      ],
+      "occurrences": 1
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/report/excel",
+      "usage": "pricing",
+      "dynamic": false,
+      "clients": [
+        "fetch"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 966
+        }
+      ],
+      "occurrences": 1
+    },
+    {
+      "method": "POST",
+      "path": "/api/pricing/report/pdf",
+      "usage": "pricing",
+      "dynamic": false,
+      "clients": [
+        "fetch-url-ctor"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 951
+        }
+      ],
+      "occurrences": 1
+    },
+    {
+      "method": "GET",
+      "path": "/api/pricing/templates",
+      "usage": "pricing",
+      "dynamic": false,
+      "clients": [
+        "fetch"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 939
+        }
+      ],
+      "occurrences": 1
+    },
+    {
+      "method": "POST",
+      "path": "/full-process",
+      "usage": "invoice-flow",
+      "dynamic": true,
+      "clients": [
+        "api"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 150
+        }
+      ],
+      "occurrences": 1
+    },
+    {
+      "method": "GET",
+      "path": "/health",
+      "usage": "health",
+      "dynamic": false,
+      "clients": [
+        "api"
+      ],
+      "files": [
+        {
+          "file": "frontend/src/api.ts",
+          "line": 157
+        }
+      ],
+      "occurrences": 1
+    }
+  ]
+}
