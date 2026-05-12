@@ -14,7 +14,7 @@ import logging
 from enum import Enum
 from typing import Optional
 
-from pydantic import ValidationError, field_validator, model_validator
+from pydantic import AliasChoices, Field, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -111,6 +111,44 @@ class GuardConfig(BaseSettings):
     drift_guard_killswitch: bool = False       # DR2.1-DR2.6: Kill-switch (ON → 0 call)
     drift_guard_fail_open: bool = True         # DR4.3: fail-open (proceed on error); False → fail-closed (block on error in enforce)
     drift_guard_provider_timeout_ms: int = 100 # DR4.6: provider call timeout (ms)
+
+    # ── PTF SoT Unification — Phase 1 T1.2 (Feature: ptf-sot-unification) ─
+    #
+    # ⚠️ TECHNICAL DEBT (known limitation):
+    # These flags are NOT real-time switches. `get_guard_config()` caches a
+    # module-level singleton on first call, so flipping the env var at runtime
+    # does NOT affect live workers — a worker/process reload is REQUIRED for the
+    # new value to take effect. Operational rollback procedure must explicitly
+    # SIGHUP/restart uvicorn workers after toggling these vars. See
+    # design.md §2.3 "Rollback süresi garantisi" — the 10-second rollback
+    # target is NOT met by this implementation and will be revisited in
+    # Phase 2 before `ptf_drift_log_enabled` defaults to True.
+    #
+    # Env var precedence (AliasChoices): first match wins →
+    #   OPS_GUARD_USE_LEGACY_PTF > USE_LEGACY_PTF
+    #   OPS_GUARD_PTF_DRIFT_LOG_ENABLED > PTF_DRIFT_LOG_ENABLED
+    # The prefixed form keeps ops-guard naming convention; the bare form is
+    # accepted because rollback runbooks prefer short names.
+    use_legacy_ptf: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("OPS_GUARD_USE_LEGACY_PTF", "USE_LEGACY_PTF"),
+        description=(
+            "PTF SoT guard switch: True → readers fall back to legacy table "
+            "(market_reference_prices). Phase 1-3 rollback lever only. "
+            "Requires worker/process reload to take effect."
+        ),
+    )
+    ptf_drift_log_enabled: bool = Field(
+        default=False,  # Phase 2 T2.4 will flip default to True after dual-read is wired.
+        validation_alias=AliasChoices(
+            "OPS_GUARD_PTF_DRIFT_LOG_ENABLED", "PTF_DRIFT_LOG_ENABLED"
+        ),
+        description=(
+            "Enable canonical↔legacy drift log writes in the Phase 2 dual-read "
+            "window. Default False in Phase 1 to prevent log/storage spam "
+            "before dispatcher exists. Requires worker/process reload to take effect."
+        ),
+    )
 
     # ── Validators ────────────────────────────────────────────────────────
 
@@ -306,6 +344,9 @@ _FALLBACK_DEFAULTS = dict(
     drift_guard_killswitch=False,
     drift_guard_fail_open=True,
     drift_guard_provider_timeout_ms=100,
+    # PTF SoT Unification — Phase 1 T1.2
+    use_legacy_ptf=False,
+    ptf_drift_log_enabled=False,
 )
 
 

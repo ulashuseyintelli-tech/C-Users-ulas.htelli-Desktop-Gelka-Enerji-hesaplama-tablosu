@@ -608,3 +608,180 @@ class TestWrapperConfigBackoffMonotonicity:
         assert config.wrapper_retry_backoff_base_ms == 500
         assert config.wrapper_retry_backoff_cap_ms == 5000
         gc_mod._guard_config = None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PTF SoT Unification — Phase 1 T1.2
+# Feature: ptf-sot-unification
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestPtfSotGuardSwitchDefaults:
+    """Phase 1 T1.2 — guard switch fields ship OFF by default (R3, design §2.1)."""
+
+    def test_use_legacy_ptf_default_false(self):
+        config = GuardConfig()
+        assert config.use_legacy_ptf is False
+
+    def test_ptf_drift_log_enabled_default_false(self):
+        """Phase 1 ships drift log disabled; Phase 2 T2.4 flips default to True
+        once the dispatcher exists. Early enablement produces log noise and
+        false positives before dual-read path is wired."""
+        config = GuardConfig()
+        assert config.ptf_drift_log_enabled is False
+
+
+class TestPtfSotGuardSwitchEnvBinding:
+    """Both prefixed and bare env var forms must be accepted (operational ergonomics)."""
+
+    def test_prefixed_env_sets_use_legacy_ptf(self):
+        with patch.dict(os.environ, {"OPS_GUARD_USE_LEGACY_PTF": "true"}, clear=False):
+            config = GuardConfig()
+            assert config.use_legacy_ptf is True
+
+    def test_bare_env_sets_use_legacy_ptf(self):
+        with patch.dict(
+            os.environ, {"USE_LEGACY_PTF": "true"}, clear=False
+        ):
+            # Ensure prefixed form is NOT set (clear=False leaves other vars alone;
+            # tests above may have cached OPS_GUARD_*, so defensively unset it)
+            os.environ.pop("OPS_GUARD_USE_LEGACY_PTF", None)
+            config = GuardConfig()
+            assert config.use_legacy_ptf is True
+
+    def test_prefixed_env_sets_ptf_drift_log_enabled(self):
+        with patch.dict(
+            os.environ, {"OPS_GUARD_PTF_DRIFT_LOG_ENABLED": "true"}, clear=False
+        ):
+            config = GuardConfig()
+            assert config.ptf_drift_log_enabled is True
+
+    def test_bare_env_sets_ptf_drift_log_enabled(self):
+        with patch.dict(
+            os.environ, {"PTF_DRIFT_LOG_ENABLED": "true"}, clear=False
+        ):
+            os.environ.pop("OPS_GUARD_PTF_DRIFT_LOG_ENABLED", None)
+            config = GuardConfig()
+            assert config.ptf_drift_log_enabled is True
+
+
+class TestPtfSotGuardSwitchAliasPrecedence:
+    """AliasChoices: first alias wins → OPS_GUARD_* takes precedence over bare."""
+
+    def test_prefixed_wins_when_both_set_use_legacy_ptf(self):
+        """Precedence invariant: OPS_GUARD_USE_LEGACY_PTF > USE_LEGACY_PTF."""
+        with patch.dict(
+            os.environ,
+            {
+                "OPS_GUARD_USE_LEGACY_PTF": "true",
+                "USE_LEGACY_PTF": "false",
+            },
+            clear=False,
+        ):
+            config = GuardConfig()
+            assert config.use_legacy_ptf is True  # prefixed "true" wins
+
+    def test_prefixed_wins_when_both_set_inverse_use_legacy_ptf(self):
+        """Symmetric check: prefixed False beats bare True."""
+        with patch.dict(
+            os.environ,
+            {
+                "OPS_GUARD_USE_LEGACY_PTF": "false",
+                "USE_LEGACY_PTF": "true",
+            },
+            clear=False,
+        ):
+            config = GuardConfig()
+            assert config.use_legacy_ptf is False  # prefixed "false" wins
+
+    def test_prefixed_wins_when_both_set_drift_log(self):
+        """Same precedence rule applies to ptf_drift_log_enabled."""
+        with patch.dict(
+            os.environ,
+            {
+                "OPS_GUARD_PTF_DRIFT_LOG_ENABLED": "true",
+                "PTF_DRIFT_LOG_ENABLED": "false",
+            },
+            clear=False,
+        ):
+            config = GuardConfig()
+            assert config.ptf_drift_log_enabled is True
+
+
+class TestPtfSotGuardSwitchFallbackInclusion:
+    """Fallback defaults dict must include the new fields — HD-4 invariant."""
+
+    def test_fallback_includes_use_legacy_ptf_false(self):
+        import app.guard_config as gc_mod
+
+        gc_mod._guard_config = None
+        with patch.dict(
+            os.environ, {"OPS_GUARD_SLO_AVAILABILITY_TARGET": "not_a_float"}
+        ):
+            with patch("app.ptf_metrics.get_ptf_metrics"):
+                config = load_guard_config()
+        assert config.use_legacy_ptf is False
+        gc_mod._guard_config = None
+
+    def test_fallback_includes_ptf_drift_log_enabled_false(self):
+        import app.guard_config as gc_mod
+
+        gc_mod._guard_config = None
+        with patch.dict(
+            os.environ, {"OPS_GUARD_SLO_AVAILABILITY_TARGET": "not_a_float"}
+        ):
+            with patch("app.ptf_metrics.get_ptf_metrics"):
+                config = load_guard_config()
+        assert config.ptf_drift_log_enabled is False
+        gc_mod._guard_config = None
+
+
+class TestPtfSotGuardSwitchRequiresReload:
+    """⚠️ TRIPWIRE TEST — documents known technical debt.
+
+    `get_guard_config()` caches a module-level singleton on first call; env
+    var changes therefore do NOT take effect until worker/process reload.
+    Operational runbooks must reflect this: toggling USE_LEGACY_PTF at
+    runtime without a worker restart has NO effect on in-flight traffic.
+
+    This test exists to fail loudly if someone later switches to a
+    per-request config read (e.g., via lru_cache removal or TTL), which
+    would invalidate the current rollback documentation. If you are here
+    because this test broke after a config refactor, update the docstring
+    on `use_legacy_ptf` / `ptf_drift_log_enabled` in guard_config.py to
+    remove the "Requires worker/process reload" warning.
+    """
+
+    def test_kill_switch_requires_config_reload(self):
+        """Proves the singleton-cache tripwire: env toggle mid-flight is a no-op."""
+        import app.guard_config as gc_mod
+
+        # Seed singleton with default (False)
+        gc_mod._guard_config = None
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("OPS_GUARD_USE_LEGACY_PTF", None)
+            os.environ.pop("USE_LEGACY_PTF", None)
+            first = get_guard_config()
+            assert first.use_legacy_ptf is False
+
+            # Flip env var mid-process
+            with patch.dict(
+                os.environ, {"OPS_GUARD_USE_LEGACY_PTF": "true"}, clear=False
+            ):
+                # Singleton is cached — same instance, same value (stale)
+                second = get_guard_config()
+                assert second is first
+                assert second.use_legacy_ptf is False, (
+                    "If this fails, get_guard_config() has been refactored "
+                    "to re-read env at runtime. Update the 'Requires worker "
+                    "reload' warnings in guard_config.py docstrings."
+                )
+
+                # Only an explicit reload picks up the new value
+                gc_mod._guard_config = None
+                third = get_guard_config()
+                assert third.use_legacy_ptf is True
+                assert third is not first
+
+        # Cleanup
+        gc_mod._guard_config = None
