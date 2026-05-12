@@ -578,6 +578,21 @@ class DistributionInfo(BaseModel):
     tariff_key: Optional[str] = Field(default=None, description="EPDK tarife anahtarı")
 
 
+class CacheInfo(BaseModel):
+    """Cache observability metadata (Decision 9 — pricing-cache-key-completeness).
+
+    Production rollout sırasında v1↔v2 key version izolasyonunu gözlemlenebilir
+    kılar. `cache_hit` (mevcut alan) geriye uyumluluk için korunur; yeni consumer
+    bu yapılandırılmış objeyi kullanır.
+    """
+    hit: bool = Field(..., description="Cache hit flag — mevcut cache_hit ile eşit")
+    key_version: str = Field(..., description="Request zamanında aktif key version (canlıda 'v2')")
+    cached_key_version: Optional[str] = Field(
+        default=None,
+        description="Cache kaydının key version'u (hit durumunda), miss'te None",
+    )
+
+
 class AnalyzeResponse(BaseModel):
     """Tam fiyatlama analizi yanıtı — POST /api/pricing/analyze."""
     status: str = Field(default="ok")
@@ -603,6 +618,11 @@ class AnalyzeResponse(BaseModel):
     warnings: list[dict] = Field(default_factory=list)
     data_quality: DataQualityReport
     cache_hit: bool = Field(default=False)
+    cache: Optional[CacheInfo] = Field(
+        default=None,
+        description="Yapılandırılmış cache observability (Decision 9). "
+                    "cache_hit ile birlikte gelir; cache.hit == cache_hit invariant.",
+    )
 
 
 class SimulateResponse(BaseModel):

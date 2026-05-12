@@ -71,6 +71,7 @@ def _require_pricing_admin(x_admin_key: str | None = Header(default=None, alias=
 from .models import (
     AnalyzeRequest,
     AnalyzeResponse,
+    CacheInfo,
     SimulateRequest,
     SimulateResponse,
     CompareRequest,
@@ -120,6 +121,7 @@ from .profile_templates import (
     BUILTIN_TEMPLATES,
 )
 from .pricing_cache import (
+    CACHE_KEY_VERSION,
     build_cache_key,
     get_cached_result,
     set_cached_result,
@@ -453,6 +455,10 @@ def analyze(
     period = req.period
 
     # ── Cache check ────────────────────────────────────────────────────
+    # T7 / Decision 9: build_cache_key çağrısına 5 yeni alan geçirilir
+    # (t1_kwh, t2_kwh, t3_kwh, use_template, voltage_level). Bu alanlar
+    # response'u etkilediği için key'de de yer almalı — aksi halde LOW/HIGH
+    # profilleri aynı cache kaydına collide eder (pricing-cache-key-completeness).
     imbalance_dict = req.imbalance_params.model_dump()
     cache_key = build_cache_key(
         customer_id=req.customer_id,
@@ -462,11 +468,24 @@ def analyze(
         imbalance_params=imbalance_dict,
         template_name=req.template_name,
         template_monthly_kwh=req.template_monthly_kwh,
+        t1_kwh=req.t1_kwh,
+        t2_kwh=req.t2_kwh,
+        t3_kwh=req.t3_kwh,
+        use_template=req.use_template,
+        voltage_level=req.voltage_level,
     )
 
     cached = get_cached_result(db, cache_key)
     if cached:
         cached["cache_hit"] = True
+        # Decision 9: yapılandırılmış cache observability.
+        # v2 key çağrısı v1 kayıtlarına match olamaz (izolasyon), o yüzden
+        # cached_key_version her zaman CACHE_KEY_VERSION ile eşit.
+        cached["cache"] = {
+            "hit": True,
+            "key_version": CACHE_KEY_VERSION,
+            "cached_key_version": CACHE_KEY_VERSION,
+        }
         return cached
 
     # 1. Piyasa verisi yükle
@@ -701,6 +720,11 @@ def analyze(
         warnings=warnings,
         data_quality=DataQualityReport(),
         cache_hit=False,
+        cache=CacheInfo(
+            hit=False,
+            key_version=CACHE_KEY_VERSION,
+            cached_key_version=None,
+        ),
     )
 
     # ── Cache write ────────────────────────────────────────────────────

@@ -39,6 +39,14 @@ logger = logging.getLogger(__name__)
 # TTL yapılandırması: env var veya varsayılan 24 saat
 PRICING_CACHE_TTL_HOURS = int(os.getenv("PRICING_CACHE_TTL_HOURS", "24"))
 
+# Cache key version (T1 / Decision 1 — pricing-cache-key-completeness).
+# v1 key'leri t1_kwh/t2_kwh/t3_kwh/use_template/voltage_level alanlarını key'e
+# dahil etmiyordu → farklı tüketim profilleri aynı cache kaydına collide ediyordu
+# (P0 finansal hata, B1 baseline'da kanıtlandı).
+# v2 bump'ı eski kayıtları hash seviyesinde izole eder; eski v1 satırları TTL ile
+# doğal olarak temizlenir (tablo DDL değişmez, TRUNCATE yok).
+CACHE_KEY_VERSION = "v2"
+
 
 def build_cache_key(
     customer_id: Optional[str],
@@ -48,10 +56,31 @@ def build_cache_key(
     imbalance_params: dict,
     template_name: Optional[str] = None,
     template_monthly_kwh: Optional[float] = None,
+    t1_kwh: Optional[float] = None,
+    t2_kwh: Optional[float] = None,
+    t3_kwh: Optional[float] = None,
+    use_template: Optional[bool] = None,
+    voltage_level: Optional[str] = None,
 ) -> str:
     """Analiz parametrelerinden SHA256 cache key oluştur.
 
     Tüm parametreler dahil — eksik parametre = yanlış cache hit riski.
+
+    Key formülüne `_cache_version` prefix'i eklenir (T1 / Decision 1); eski v1
+    kayıtları aynı core-7 argümanla çağrılsa bile v2 ile farklı key üretir.
+
+    T2 / Decision 2: 5 yeni alan (`t1_kwh`, `t2_kwh`, `t3_kwh`, `use_template`,
+    `voltage_level`) key'e dahil edilir. Bu alanlar response'u doğrudan
+    etkilediği için (tüketim toplamı, zaman dilimi dağılımı, dağıtım bedeli)
+    key'e girmeden cache kontaminasyonu üretiyorlardı (B1 baseline'da kanıtlandı).
+
+    T3 / Decision 10: `voltage_level=None` canonical `"og"` değerine normalize
+    edilir (handler default'u ile aynı). None/og aynı cache key üretir; `"ag"`
+    farklı.
+
+    T4 / Decision 11: Float alanlar `round()` ile sabit precision'a normalize
+    edilir. kWh alanları 4 hane (input precision'ının üstünde tampon); mevcut
+    core alanlar kendi precision'larını korur.
 
     Args:
         customer_id: Müşteri kimliği (None ise şablon kullanılıyor).
@@ -61,11 +90,32 @@ def build_cache_key(
         imbalance_params: Dengesizlik parametreleri dict.
         template_name: Şablon adı (opsiyonel).
         template_monthly_kwh: Şablon aylık tüketim (opsiyonel).
+        t1_kwh: Gündüz (T1) tüketimi kWh. None = verilmemiş.
+        t2_kwh: Puant (T2) tüketimi kWh. None = verilmemiş.
+        t3_kwh: Gece (T3) tüketimi kWh. None = verilmemiş.
+        use_template: Şablon modu flag. None = belirtilmemiş (False ile farklıdır:
+            None validate edilmemiş durumu temsil eder, False ise T1/T2/T3 zorunlu).
+        voltage_level: Gerilim seviyesi. None/empty → canonical "og".
 
     Returns:
         64 karakter SHA256 hash string.
+
+    Requirements: pricing-cache-key-completeness 2.1-2.9, 3.1-3.8.
     """
+    # T4 / Decision 11: float normalization
+    t1_normalized = round(t1_kwh, 4) if t1_kwh is not None else None
+    t2_normalized = round(t2_kwh, 4) if t2_kwh is not None else None
+    t3_normalized = round(t3_kwh, 4) if t3_kwh is not None else None
+
+    # T3 / Decision 10: voltage_level canonical normalize
+    voltage_normalized = voltage_level or "og"
+
+    # Decision 2: use_template None korunur (bool() dönüşümü YAPILMAZ — semantic
+    # difference: None = validate edilmemiş vs False = explicitly chosen).
+    use_tpl_normalized = use_template if use_template is not None else None
+
     key_data = {
+        "_cache_version": CACHE_KEY_VERSION,
         "customer_id": customer_id or "__template__",
         "period": period,
         "multiplier": round(multiplier, 6),
@@ -77,6 +127,11 @@ def build_cache_key(
         },
         "template_name": template_name,
         "template_monthly_kwh": round(template_monthly_kwh, 2) if template_monthly_kwh else None,
+        "t1_kwh": t1_normalized,
+        "t2_kwh": t2_normalized,
+        "t3_kwh": t3_normalized,
+        "use_template": use_tpl_normalized,
+        "voltage_level": voltage_normalized,
     }
 
     # Deterministik JSON (sorted keys)
