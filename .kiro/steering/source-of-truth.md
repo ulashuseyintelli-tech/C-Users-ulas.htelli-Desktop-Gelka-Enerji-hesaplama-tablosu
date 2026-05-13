@@ -14,7 +14,7 @@ inclusion: always
 
 | Domain | Canonical kaynak | Yazıcı | Okuyucular | Deprecated | Migration durumu | Severity | Devir spec'i |
 |---|---|---|---|---|---|---|---|
-| **PTF** (saatlik, TL/MWh) | `hourly_market_prices` | admin EPİAŞ sync / `pricing_router` | `pricing_router::analyze/simulate/compare/report`, `main.py::epias endpoints` | `market_reference_prices` (legacy manuel mod) | `parallel_unresolved` | **P0** | `ptf-sot-unification` |
+| **PTF** (saatlik, TL/MWh) | `hourly_market_prices` | admin EPİAŞ sync / `pricing_router` | `pricing_router::analyze/simulate/compare/report`, `main.py::epias endpoints` | `market_reference_prices` (legacy manuel mod) | `write_locked` (Phase 1 tamam, freeze tag `phase1-ptf-sot-freeze` @ `dee54a8`) | **P0** | `ptf-sot-unification` |
 | **YEKDEM** (aylık, TL/MWh) | `monthly_yekdem_prices` | admin sync / bulk import | `calculator` (dolaylı), `validator` (dolaylı) | `market_reference_prices` (legacy YEKDEM rows, 39 eksik dönem) | `legacy_rows_exist` | **P1** | `yekdem-legacy-migration` |
 | **invoice validation** | `app.validator::validate_extraction` *(legacy, canlı)* | main.py handler'ları | `/analyze-invoice`, `/full-process`, `/extraction/*`, `/invoices/{id}/validate`, `/invoices/{id}/extract` | — (yeni stack hâlâ bağlanmadı, DEAD) | `new_stack_dead` | **P1** | `invoice-validation-prod-hardening` |
 | **pdf_jobs** (async) | **belirlenmedi** (şu an sync inline üretim canlı) | — | — | `app.pdf_api.router` (orphan, 3 endpoint wire değil) | `router_unregistered` | **P1** | `pdf-render-worker` |

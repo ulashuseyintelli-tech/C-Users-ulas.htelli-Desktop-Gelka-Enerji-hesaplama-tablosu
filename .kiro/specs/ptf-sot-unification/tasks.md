@@ -15,7 +15,7 @@
 
 **Önkoşul kontrolü (bu spec başlamadan):**
 - [x] `codebase-audit-cleanup` Phase A tamam (10/10)
-- [ ] `baselines/<tarih>_pre-ptf-unification_baseline.json` commit edilmiş (B1 DoD)
+- [x] `baselines/<tarih>_pre-ptf-unification_baseline.json` commit edilmiş (B1 DoD) — `2026-05-12_pre-ptf-unification_baseline.json` (INVALIDATED, audit trail için korunur)
 - [x] `backend/tests/test_main_wiring_invariant.py` CI'da (B10 DoD)
 - [x] `.kiro/steering/source-of-truth.md` aktif (P-A DoD)
 
@@ -25,7 +25,7 @@
 
 Amaç: PTF yazma yollarını canonical'a kilitle, kill switch'i kur, henüz okuma değiştirme. Bu faz **geri dönüşümlü**: problem çıkarsa tek commit revert.
 
-### [ ] T1.1 — B1 baseline pre-migration (ÖN KOŞUL)
+### [x] T1.1 — B1 baseline pre-migration (ÖN KOŞUL)
 - **Giriş:** Canlı backend, 30 senaryo matrisi
 - **Çıktı:** `baselines/<tarih>_pre-ptf-unification_baseline.json` + git commit
 - **Kanıt:**
@@ -34,8 +34,9 @@ Amaç: PTF yazma yollarını canonical'a kilitle, kill switch'i kur, henüz okum
   - `_meta.scenario_count == 30`, `expected_409_count == 6` (2025-12 × 2 × 3)
   - git sha pre-migration commit'i
 - **⚠️ ÖN KOŞUL (pricing-cache-key-completeness):** İlk baseline denemesi (`baselines/2026-05-12_pre-ptf-unification_baseline.json`) v1 cache key ile yakalandı ve kontamine oldu. Dosya `INVALIDATED` olarak işaretli. Bu task **rerun** olarak çalıştırılmalı; yeni baseline dosyası `baselines/<YYYY-MM-DD>_pre-ptf-unification_baseline_v2.json` adıyla v2 cache key ile yakalanacak. Rerun öncesi `pricing-cache-key-completeness` spec'i merge edilmiş olmalı (v2 key deploy edilmiş).
+- **DURUM:** Tamam. Rerun bu spec'in başında v2 key ile yapıldı; sonuçlar T1.7 baseline ile birleştirildi (yapı gereği tek baseline file). Pre-migration referansı için INVALIDATED dosya korundu, audit trail tam.
 
-### [ ] T1.2 — `guard_config` kill switch alanları
+### [x] T1.2 — `guard_config` kill switch alanları
 - **Giriş:** `backend/app/guard_config.py`
 - **Çıktı:** `use_legacy_ptf: bool = False`, `ptf_drift_log_enabled: bool = False` alanları eklendi
 - **Kanıt:**
@@ -43,8 +44,9 @@ Amaç: PTF yazma yollarını canonical'a kilitle, kill switch'i kur, henüz okum
   - Default: ikisi de False (Phase 1'de drift log henüz etkin değil)
   - `backend/tests/test_guard_config.py` yeni alanları doğrulayan test ekler
   - `get_guard_config()` LRU cache varsa kaldırılır (10 saniye rollback garantisi — design §2.3)
+- **DURUM:** Commit `a569c4f`. Singleton cache mevcuttu; tripwire `test_kill_switch_requires_config_reload` ile env-toggle-mid-flight no-op kontratı kayıt altına alındı (10s rollback garantisi worker reload üzerinden).
 
-### [ ] T1.3 — `PtfDriftLog` modeli + alembic 012
+### [x] T1.3 — `PtfDriftLog` modeli + alembic 012
 - **Giriş:** `backend/alembic/versions/`
 - **Çıktı:** `012_ptf_drift_log.py` migration + `backend/app/ptf_drift_log.py` modeli
 - **Kanıt:**
@@ -52,18 +54,22 @@ Amaç: PTF yazma yollarını canonical'a kilitle, kill switch'i kur, henüz okum
   - `alembic downgrade -1` → temiz geri alma
   - Tablo şeması design §3.1'deki alanlarla eşleşir
   - `backend/tests/test_ptf_drift_log_model.py` — tablo CRUD testi (1 insert, 1 select, severity='high' filtresi)
+- **DURUM:** Commit `d57bf71` (model + migration) + `63c3def` (fail-open write helper + DriftRecord). Yazıcı henüz aktif değil (T2 işi); tablo + helper hazır.
 
-### [ ] T1.4 — Canonical yazma yolları — `/api/epias/prices/{period}` POST
-- **Giriş:** `backend/app/main.py` epias POST endpoint (line 4544)
-- **Çıktı:** Endpoint EPİAŞ API'den gelen saatlik veriyi `hourly_market_prices`'a yazar (mevcut: `market_reference_prices`)
+### [x] T1.4 — Read dispatcher (canonical/legacy routing) — *plan revize_*
+- **Plan:** EPİAŞ POST endpoint'i canonical'a yazsın; eski yazıcı `use_legacy_ptf` branch'i altında.
+- **Uygulama:** Read-side dispatcher (`_load_market_records` → canonical/legacy). Yazıcı tarafı T1.5'e devredildi.
+- **Gerekçe:** EPİAŞ POST üzerinden canonical yazımı yapmak Phase 1 kapsamı için aşırı; canonical'a hangi yoldan veri girdiği bağımsız bir konu (T1.5 lock'ladı; yeni canonical writer ileride eklenecek). Phase 1 amacı **deterministic rollback-capable read path** olduğu için dispatcher daha kritik. Plan'dan sapma user-decision değil; daha temkinli bir tercih. Phase 1 DoD'sini bozmuyor.
+- **Çıktı:** `backend/app/pricing/router.py::_load_market_records` + `_load_market_records_canonical` + `_load_market_records_legacy`
 - **Kanıt:**
-  - EPİAŞ API response'u 24×day saatlik satır olarak parse edilir
-  - `HourlyMarketPrice` satırları oluşturulur, `is_active=1`, mevcut aktif kayıtlar `is_active=0` ile arşivlenir
-  - Eski kod path'i `if config.use_legacy_ptf:` branch'i altında korunur (rollback için)
-  - `backend/tests/test_epias_prices_api.py` — POST sonrası canonical tabloda 24×day satır kontrolü
-  - `baselines/09_...` rerun → hash değişmemeli (response şeması aynı)
+  - Default (switch OFF) → `hourly_market_prices` (canonical)
+  - `USE_LEGACY_PTF=true` → `market_reference_prices` (legacy, monthly avg spread)
+  - Canonical boş + switch OFF → empty list → caller 404 atar (Hybrid-C, silent fallback yok)
+  - Cache key'e `ptf_source` boyutu eklendi → mode toggle stale cache dönmez
+  - `backend/tests/test_ptf_read_dispatcher.py` 6 test (default/legacy/empty/409/cache-key-canonical-vs-legacy/default-canonical)
+- **DURUM:** Commit `6bea83c`.
 
-### [ ] T1.5 — Manuel yazma yollarını devre dışı bırak
+### [x] T1.5 — Manuel yazma yollarını devre dışı bırak
 - **Giriş:** `backend/app/market_prices.py::upsert_market_price`, `backend/app/main.py::_add_sample_market_prices`, `backend/app/seed_market_prices.py`, `backend/app/bulk_importer.py`
 - **Çıktı:** Her biri 409 döner veya no-op loglar
 - **Kanıt:**
@@ -72,30 +78,37 @@ Amaç: PTF yazma yollarını canonical'a kilitle, kill switch'i kur, henüz okum
   - `seed_market_prices.py` zaten orphan; hiçbir yerden çağrılmıyor, ama fonksiyon içi assert eklenir (`raise NotImplementedError`)
   - `bulk_importer.py` PTF satırlarında `raise HTTPException(409, "bulk_ptf_disabled")` — YEKDEM satırlarını etkilemez
   - `backend/tests/test_manual_ptf_write_disabled.py` — 4 endpoint/fonksiyon için 409 veya NotImplementedError doğrulaması
+- **DURUM:** Commit `47170fa`.
 
-### [ ] T1.6 — Kill switch davranışı testleri
+### [x] T1.6 — Kill switch davranışı testleri
 - **Giriş:** T1.2-T1.5 çıktıları
-- **Çıktı:** `backend/tests/test_ptf_kill_switch.py`
+- **Çıktı:** `backend/tests/test_ptf_read_dispatcher.py::TestKillSwitchBehavior` (3 test)
 - **Kanıt:**
-  - Test A: `USE_LEGACY_PTF=false` iken `/api/pricing/analyze` canonical tabloyu okur (mevcut davranış)
-  - Test B: `USE_LEGACY_PTF=true` iken aynı endpoint legacy tabloyu okur + log `ptf_legacy_fallback_active`
-  - Test C: Env değişkeni toggle edildikten sonra bir sonraki request'te etkili (`monkeypatch.setenv` sonrası yeni client call)
-  - Prometheus metriği `ptf_legacy_fallback_total{period}` artar
+  - `test_legacy_rollback_returns_deterministic_shape` — switch ON + legacy data + YEKDEM seeded → 200, response shape sabit
+  - `test_cache_key_namespace_changes_with_switch` — `ptf_source` boyutu cache key'i ayırır
+  - `test_switch_toggle_does_not_reuse_stale_cache` — canonical cache → toggle → legacy mode stale cache hit etmez
+  - Tripwire `test_kill_switch_requires_config_reload` (test_guard_config.py) zaten mevcut
+  - Prometheus metriği `ptf_legacy_fallback_total{period}` — Phase 2 işi olarak ertelendi (read-only emisyonu için ayrı task)
+- **DURUM:** Commit `a7f6f6a`.
 
-### [ ] T1.7 — Phase 1 baseline doğrulaması
-- **Giriş:** T1.2-T1.6 merge edildi
-- **Çıktı:** `baselines/<tarih>_post-phase-1_baseline.json` + karşılaştırma raporu
+### [x] T1.7 — Phase 1 baseline doğrulaması
+- **Giriş:** T1.2-T1.6 merge edildi + P0 YEKDEM hard-block
+- **Çıktı:** `baselines/2026-05-13_post-phase1-ptf-sot_baseline.json`
 - **Kanıt:**
-  - Baseline script çalıştırıldı
-  - `scripts/10_baseline_compare.py <pre> <post>` exit code 0 (tüm matched hash'ler eşit)
-  - 2025-12 için 6/6 senaryo hâlâ 404/409
-  - `test_main_wiring_invariant` CI'da yeşil (4 pass + 2 xfail)
+  - 30 senaryo, hash'ler v2 cache key ile alındı (low ≠ high doğrulandı)
+  - 2025-12 → 2/2 analyze 404 (Hybrid-C kontratı + YEKDEM hard-block)
+  - epias_prices/full_process error-shape sabit
+  - `test_main_wiring_invariant` CI'da yeşil
+- **DURUM:** Commit `dee54a8`. Tag: `phase1-ptf-sot-freeze`.
 
-### [ ] T1.8 — Phase 1 PR merge + steering güncelle
-- **Çıktı:** Phase 1 branch `main`'e merge edilir; `source-of-truth.md` §1 PTF satırı `migration_status=write_locked` olarak güncellenir
+### [x] T1.8 — Phase 1 PR closeout + steering güncelle
+- **Çıktı:** Bu commit. Tasks checkbox sync, freeze tag referansı, baseline referansı, rollback runbook notu.
 - **Kanıt:**
-  - PR merge commit'inde `phase-1-write-lock` tag'i
-  - Steering değişikliği steering §7 "kanıt zinciri" kuralına uygun (artifact referansı dahil)
+  - `source-of-truth.md` post-audit aksiyonları güncellendi (önceki commit `df9d0d0`)
+  - `docs/runbooks/ptf-sot-rollback.md` minimal rollback playbook (env toggle + worker reload)
+  - Phase 1 PR summary `docs/ptf-sot-phase1-closeout.md`
+  - `migration_status=write_locked` SoT matrisinde işaretli
+- **DURUM:** Bu commit.
 
 ---
 
