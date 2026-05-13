@@ -314,41 +314,19 @@ async def startup_event():
 def _add_sample_market_prices():
     """
     Sample PTF/YEKDEM verisi ekle (eğer yoksa).
-    Production'da admin panelden girilmeli.
+    
+    ⚠️ Phase 1 T1.5 (ptf-sot-unification): Legacy PTF seed DISABLED.
+    Manual legacy PTF writes are no longer permitted. Canonical PTF source
+    is hourly_market_prices (EPİAŞ Excel upload). This function is a no-op
+    with an explicit warning log so operators know the seed was skipped.
     """
-    from .database import SessionLocal, MarketReferencePrice
-    
-    sample_data = [
-        ("2024-11", 2850.0, 350.0),
-        ("2024-12", 2920.0, 355.0),
-        ("2025-01", 2974.1, 364.0),
-        ("2025-02", 3050.0, 370.0),
-    ]
-    
-    db = SessionLocal()
-    try:
-        for period, ptf, yekdem in sample_data:
-            existing = db.query(MarketReferencePrice).filter(
-                MarketReferencePrice.period == period
-            ).first()
-            
-            if not existing:
-                record = MarketReferencePrice(
-                    period=period,
-                    ptf_tl_per_mwh=ptf,
-                    yekdem_tl_per_mwh=yekdem,
-                    source_note="Sample data (dev)",
-                    is_locked=0
-                )
-                db.add(record)
-                logger.info(f"Sample market price added: {period}")
-        
-        db.commit()
-    except Exception as e:
-        logger.warning(f"Could not add sample market prices: {e}")
-        db.rollback()
-    finally:
-        db.close()
+    logger.warning(
+        "[PTF-SOT] _add_sample_market_prices SKIPPED: "
+        "manual legacy PTF writes disabled (Phase 1 T1.5). "
+        "PTF data must come through canonical hourly_market_prices upload. "
+        "This seed function will be removed in Phase 4."
+    )
+    return  # No-op — legacy PTF seed disabled
 
 
 def _seed_distribution_tariffs():

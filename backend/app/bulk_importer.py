@@ -224,7 +224,23 @@ class BulkImporter:
     ) -> ImportPreview:
         """Preview import results without committing.
         Validates: Requirements 6.1, 6.2, 6.3
+
+        Phase 1 T1.5: PTF preview still returns 200 (read-only operation)
+        but includes a warning that apply will be blocked.
         """
+        # ── Phase 1 T1.5: PTF preview warning (apply disabled) ───────────
+        ptf_apply_blocked = (price_type == "PTF")
+        extra_errors: List[Dict] = []
+        if ptf_apply_blocked:
+            extra_errors.append({
+                "row": 0, "field": "price_type",
+                "error": (
+                    "PTF bulk import apply devre dışı. Preview sonuçları bilgi "
+                    "amaçlıdır; apply çağrısı 409 dönecektir. PTF verisi artık "
+                    "yalnızca saatlik EPİAŞ Excel yüklemesi ile yazılır."
+                ),
+                "error_code": "PTF_APPLY_DISABLED_WARNING",
+            })
         valid_rows = 0
         invalid_rows = 0
         new_records = 0
@@ -286,7 +302,8 @@ class BulkImporter:
             total_rows=len(rows), valid_rows=valid_rows,
             invalid_rows=invalid_rows, new_records=new_records,
             updates=updates, unchanged=unchanged,
-            final_conflicts=final_conflicts, rows=rows, errors=errors,
+            final_conflicts=final_conflicts, rows=rows,
+            errors=extra_errors + errors,
         )
 
     def apply(
@@ -297,7 +314,28 @@ class BulkImporter:
     ) -> ImportResult:
         """Apply import: validate and upsert rows.
         Validates: Requirements 5.3, 5.4, 5.5, 5.6, 5.7, 5.8
+
+        ⚠️ Phase 1 T1.5: PTF bulk apply is DISABLED.
+        Preview is still allowed (read-only) but apply raises for PTF.
+        YEKDEM bulk apply remains functional.
         """
+        # ── Phase 1 T1.5: PTF bulk apply lock ────────────────────────────
+        if price_type == "PTF":
+            return ImportResult(
+                success=False,
+                accepted_count=0,
+                rejected_count=len(rows),
+                rejected_rows=[{
+                    "row_index": 0,
+                    "error_code": "bulk_ptf_import_disabled",
+                    "field": "price_type",
+                    "message": (
+                        "Toplu PTF import devre dışı. PTF verisi artık yalnızca "
+                        "saatlik EPİAŞ Excel yüklemesi ile hourly_market_prices "
+                        "tablosuna yazılır. YEKDEM bulk import hâlâ aktif."
+                    ),
+                }],
+            )
         rejected_rows: List[Dict] = []
         accepted_count = 0
         valid_rows: List[ImportRow] = []

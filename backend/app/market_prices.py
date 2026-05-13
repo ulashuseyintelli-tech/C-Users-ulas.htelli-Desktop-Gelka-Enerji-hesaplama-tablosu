@@ -183,29 +183,21 @@ def upsert_market_prices(
     """
     Piyasa fiyatlarını ekle veya güncelle.
     
-    Backward compatibility:
-    - status=None → yeni kayıtlarda "provisional", mevcut kayıtlarda değiştirilmez
-    - Null status DB kayıtları "final" olarak kabul edilir (Requirement 1.6)
-    - price_type default "PTF"
-    - captured_at default datetime.utcnow()
-    - source default "epias_manual"
-    
-    Args:
-        db: Database session
-        period: Dönem (YYYY-MM format)
-        ptf_tl_per_mwh: PTF fiyatı
-        yekdem_tl_per_mwh: YEKDEM fiyatı
-        source_note: Kaynak notu
-        updated_by: Güncelleyen kullanıcı
-        status: Durum (provisional/final, None=backward compat)
-        price_type: Fiyat tipi (default: "PTF")
-        captured_at: Verinin alındığı tarih (default: now UTC)
-        change_reason: Değişiklik nedeni (audit)
-        source: Kaynak (epias_manual/epias_api/migration/seed)
-    
-    Returns:
-        (success, message)
+    ⚠️ PTF WRITE LOCK (Phase 1 T1.5 — ptf-sot-unification):
+    Manual PTF writes to market_reference_prices are DISABLED.
+    PTF data must come through canonical hourly_market_prices (EPİAŞ Excel upload).
+    YEKDEM-only updates are still allowed through this function.
     """
+    # ── Phase 1 T1.5: PTF write lock ─────────────────────────────────────
+    # Legacy PTF write is disabled. Canonical source = hourly_market_prices.
+    # YEKDEM writes pass through (separate SoT, not yet migrated).
+    if price_type == "PTF" and ptf_tl_per_mwh is not None and ptf_tl_per_mwh > 0:
+        return (False, (
+            "manual_ptf_write_disabled: Manuel PTF yazımı devre dışı bırakıldı. "
+            "PTF verisi artık yalnızca saatlik EPİAŞ Excel yüklemesi ile "
+            "hourly_market_prices tablosuna yazılır. "
+            "Bu endpoint yalnızca YEKDEM güncellemeleri için kullanılabilir."
+        ))
     from .database import MarketReferencePrice
     
     # Guardrail kontrolleri
