@@ -177,25 +177,126 @@ def _calculate_distribution_info(
 def _load_market_records(
     db: Session, period: str,
 ) -> list[ParsedMarketRecord]:
-    """PTF read dispatcher — canonical vs legacy source selection.
+    """PTF read dispatcher — canonical, dual-read, or legacy rollback.
 
-    Phase 1 T1.4 (ptf-sot-unification): guard switch determines source.
-    Default (use_legacy_ptf=False): canonical hourly_market_prices.
-    Rollback (use_legacy_ptf=True): legacy market_reference_prices.
+    Phase 1 T1.4 + Phase 2 T2.1 (ptf-sot-unification): three-way dispatch.
 
-    Silent fallback YASAK: canonical boşsa boş liste döner → caller 409 atar.
-    Legacy'de veri olsa bile switch OFF ise canonical kullanılır.
+    Precedence (kill switch always wins):
+      1. use_legacy_ptf=True               → legacy reader only (Phase 1 rollback)
+      2. ptf_drift_log_enabled=True        → dual-read (canonical authoritative,
+                                              legacy shadow, drift log best-effort)
+      3. otherwise (Phase 1 default)       → canonical reader only
 
-    Drift compare/log yok (T2.2 işi). Dual-write yok.
+    Silent fallback YASAK: canonical boşsa boş liste döner → caller 404 atar.
+    Dual-read modu da bu kontratı korur — legacy varlığı 404'ü engellemez.
+
+    The dual-read path NEVER changes the response (canonical authoritative);
+    legacy reads are observe-only and any failure is swallowed.
     """
     from ..guard_config import get_guard_config
 
     config = get_guard_config()
 
+    # 1. Kill switch — emergency rollback. Always wins. Drift log not consulted.
     if config.use_legacy_ptf:
         return _load_market_records_legacy(db, period)
 
+    # 2. Dual-read observe — Phase 2 default once T2.4 flips the flag.
+    if config.ptf_drift_log_enabled:
+        return _load_market_records_dual(db, period)
+
+    # 3. Canonical-only — Phase 1 frozen behavior, also Phase 2 default until T2.4.
     return _load_market_records_canonical(db, period)
+
+
+def _load_market_records_dual(
+    db: Session, period: str,
+) -> list[ParsedMarketRecord]:
+    """Dual-read scaffold (T2.1) — canonical authoritative, legacy shadow.
+
+    Contract:
+      - Canonical reader is the SOURCE OF TRUTH for the response. Its result
+        is returned unchanged. If canonical is empty → empty list returned →
+        caller raises 404 (Hybrid-C). Legacy presence MUST NOT mask this.
+      - Legacy reader is called purely for observability. Any failure
+        (exception, empty result, type error) is swallowed — pricing is not
+        impacted.
+      - Drift recording is best-effort. The actual compute_drift + record_drift
+        wiring lands in T2.2; T2.1 only emits a debug log line so we can
+        confirm the dual path executed in real traffic.
+
+    The function NEVER raises out of the legacy/drift side. The canonical
+    reader is allowed to raise (DB connection issues, etc.) — those are real
+    pricing failures and should propagate as before.
+    """
+    canonical_records = _load_market_records_canonical(db, period)
+
+    legacy_records: list[ParsedMarketRecord] | None = None
+    try:
+        legacy_records = _load_market_records_legacy(db, period)
+    except Exception as exc:  # noqa: BLE001 — observe-only must not fail request
+        logger.warning(
+            "[PTF-DUAL] legacy shadow read failed (suppressed) period=%s err=%s",
+            period, exc,
+        )
+        legacy_records = None
+
+    # T2.1: drift compute is a no-op stub. Real wiring comes in T2.2.
+    # Defense in depth: even though _maybe_record_drift has its own try/except,
+    # we wrap the call here so that if T2.2 (or any future patch) ever removes
+    # the inner guard, the dispatcher still cannot leak telemetry exceptions
+    # into the pricing response. observe-only is a hard contract.
+    try:
+        _maybe_record_drift(db, period, canonical_records, legacy_records)
+    except Exception as exc:  # noqa: BLE001 — telemetry must not fail request
+        logger.warning(
+            "[PTF-DUAL] drift recorder raised through inner guard (suppressed) "
+            "period=%s err=%s",
+            period, exc,
+        )
+
+    # Authoritative return — canonical only. Legacy is never seen by caller.
+    return canonical_records
+
+
+def _maybe_record_drift(
+    db: Session,
+    period: str,
+    canonical_records: list[ParsedMarketRecord],
+    legacy_records: list[ParsedMarketRecord] | None,
+) -> None:
+    """T2.1 stub — debug telemetry only, no compute, no DB write.
+
+    Records that the dual path actually executed and reports the canonical /
+    legacy row counts so we can answer two operational questions in real
+    traffic before T2.2 lands:
+      1. Did dual_read run at all? (singleton cache may have returned a stale
+         GuardConfig that masked the toggle.)
+      2. Did legacy shadow read return anything? (legacy table may be empty
+         for the period — that's fine, just want to know.)
+
+    No drift math, no severity classification, no DB write here. T2.2 will
+    replace this body with compute_drift + write_drift_record. The signature
+    is stable so T2.2 is a body-swap, not a wiring change.
+
+    NEVER raises. Any unexpected error is logged and swallowed; the pricing
+    response is unaffected.
+    """
+    try:
+        canonical_count = len(canonical_records)
+        legacy_count = len(legacy_records) if legacy_records is not None else None
+        logger.debug(
+            "[PTF-DUAL] dual_read active period=%s canonical_count=%d legacy_count=%s",
+            period,
+            canonical_count,
+            legacy_count if legacy_count is not None else "shadow_failed",
+        )
+    except Exception as exc:  # noqa: BLE001 — telemetry must not fail request
+        logger.warning(
+            "[PTF-DUAL] _maybe_record_drift unexpected error (suppressed) "
+            "period=%s err=%s",
+            period, exc,
+        )
 
 
 def _load_market_records_canonical(
