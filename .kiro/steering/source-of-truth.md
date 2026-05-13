@@ -102,5 +102,7 @@ Bu matris şu artifact'lara dayanır (`.kiro/specs/codebase-audit-cleanup/artifa
 
 - **2026-05-12** — `baselines/2026-05-12_pre-ptf-unification_baseline.json` alındı; **INVALIDATED** (cache key collision, pricing-cache-key-completeness kapsamında yeniden alınacak)
 - **2026-05-12** — `pricing-cache-key-completeness` P0 bugfix spec'i açıldı ve tamamlandı: `build_cache_key` 7→12 alan, `CACHE_KEY_VERSION=v2`, response'a `CacheInfo` eklendi, 44 test yeşil (22 regression + 17 PBT + 5 integration)
+- **2026-05-13** — `ptf-sot-unification` Phase 1 tamamlandı (T1.1–T1.7): guard switches, drift persistence, fail-open telemetry, read dispatcher, legacy write lock, kill switch behavior tests, YEKDEM hard-block merge. Tag: `phase1-ptf-sot-freeze` @ `dee54a8`
+- **2026-05-13** — `baselines/2026-05-13_post-phase1-ptf-sot_baseline.json` alındı; **VALID** (30 snapshot, v2 cache key, low≠high hash doğrulandı, 2025-12 Hybrid-C 404 beklenen). Supersedes invalidated 2026-05-12 baseline.
 
 > **Değiştirme kuralı:** bu steering'e yeni bir canonical karar eklenecekse, önce ilgili artifact'ta kanıt güncellenmeli. "Benim kararımdır" tipi değişiklik yasak (R1).
