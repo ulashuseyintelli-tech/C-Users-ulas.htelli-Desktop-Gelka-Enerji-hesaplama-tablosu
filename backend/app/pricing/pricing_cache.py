@@ -61,6 +61,7 @@ def build_cache_key(
     t3_kwh: Optional[float] = None,
     use_template: Optional[bool] = None,
     voltage_level: Optional[str] = None,
+    ptf_source: str = "canonical",
 ) -> str:
     """Analiz parametrelerinden SHA256 cache key oluştur.
 
@@ -132,6 +133,7 @@ def build_cache_key(
         "t3_kwh": t3_normalized,
         "use_template": use_tpl_normalized,
         "voltage_level": voltage_normalized,
+        "ptf_source": ptf_source,
     }
 
     # Deterministik JSON (sorted keys)

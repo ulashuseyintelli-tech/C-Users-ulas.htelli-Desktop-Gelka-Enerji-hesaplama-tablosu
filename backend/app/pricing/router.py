@@ -177,7 +177,35 @@ def _calculate_distribution_info(
 def _load_market_records(
     db: Session, period: str,
 ) -> list[ParsedMarketRecord]:
-    """DB'den aktif piyasa verilerini yükle ve ParsedMarketRecord'a dönüştür."""
+    """PTF read dispatcher — canonical vs legacy source selection.
+
+    Phase 1 T1.4 (ptf-sot-unification): guard switch determines source.
+    Default (use_legacy_ptf=False): canonical hourly_market_prices.
+    Rollback (use_legacy_ptf=True): legacy market_reference_prices.
+
+    Silent fallback YASAK: canonical boşsa boş liste döner → caller 409 atar.
+    Legacy'de veri olsa bile switch OFF ise canonical kullanılır.
+
+    Drift compare/log yok (T2.2 işi). Dual-write yok.
+    """
+    from ..guard_config import get_guard_config
+
+    config = get_guard_config()
+
+    if config.use_legacy_ptf:
+        return _load_market_records_legacy(db, period)
+
+    return _load_market_records_canonical(db, period)
+
+
+def _load_market_records_canonical(
+    db: Session, period: str,
+) -> list[ParsedMarketRecord]:
+    """Canonical reader: hourly_market_prices (SoT).
+
+    Returns empty list if no active records exist for the period.
+    Caller is responsible for raising 409 on empty result (Hybrid-C contract).
+    """
     rows = (
         db.query(HourlyMarketPrice)
         .filter(
@@ -195,6 +223,56 @@ def _load_market_records(
         )
         for r in rows
     ]
+
+
+def _load_market_records_legacy(
+    db: Session, period: str,
+) -> list[ParsedMarketRecord]:
+    """Legacy fallback reader: market_reference_prices (aylık ortalama PTF).
+
+    ⚠️ WARNING: This path is NOT financially equivalent to canonical hourly PTF.
+    Rollback only. The monthly average is spread uniformly across all hours of
+    the month (typically 744 for 31-day months). This produces a flat profile
+    that does NOT reflect real intra-day price variation.
+
+    Use case: emergency rollback when canonical data is suspected corrupt.
+    NOT a normal operating mode. Phase 4 deletes this function entirely.
+
+    Returns empty list if no PTF record exists for the period.
+    """
+    from ..database import MarketReferencePrice
+    import calendar
+    from datetime import date as date_type
+
+    row = (
+        db.query(MarketReferencePrice)
+        .filter(
+            MarketReferencePrice.period == period,
+            MarketReferencePrice.price_type == "PTF",
+        )
+        .first()
+    )
+    if row is None:
+        return []
+
+    # Spread monthly average across all hours of the month
+    year, month = int(period[:4]), int(period[5:7])
+    days_in_month = calendar.monthrange(year, month)[1]
+    ptf = row.ptf_tl_per_mwh
+
+    records: list[ParsedMarketRecord] = []
+    for day in range(1, days_in_month + 1):
+        d = date_type(year, month, day)
+        date_str = d.isoformat()
+        for hour in range(24):
+            records.append(ParsedMarketRecord(
+                period=period,
+                date=date_str,
+                hour=hour,
+                ptf_tl_per_mwh=ptf,
+                smf_tl_per_mwh=ptf,  # Legacy has no SMF; use PTF as proxy
+            ))
+    return records
 
 
 def _load_consumption_records(
@@ -460,6 +538,10 @@ def analyze(
     # response'u etkilediği için key'de de yer almalı — aksi halde LOW/HIGH
     # profilleri aynı cache kaydına collide eder (pricing-cache-key-completeness).
     imbalance_dict = req.imbalance_params.model_dump()
+    # T1.4: ptf_source cache key'e girmeli — switch toggle sonrası stale cache
+    # hit'i önler. Canonical ve legacy farklı sonuç üretir; aynı key = bug.
+    from ..guard_config import get_guard_config
+    _ptf_source = "legacy" if get_guard_config().use_legacy_ptf else "canonical"
     cache_key = build_cache_key(
         customer_id=req.customer_id,
         period=period,
@@ -473,6 +555,7 @@ def analyze(
         t3_kwh=req.t3_kwh,
         use_template=req.use_template,
         voltage_level=req.voltage_level,
+        ptf_source=_ptf_source,
     )
 
     cached = get_cached_result(db, cache_key)
