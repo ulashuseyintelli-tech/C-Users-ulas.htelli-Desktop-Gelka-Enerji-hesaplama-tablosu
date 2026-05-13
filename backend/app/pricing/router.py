@@ -589,23 +589,27 @@ def analyze(
         t1_kwh=req.t1_kwh, t2_kwh=req.t2_kwh, t3_kwh=req.t3_kwh,
     )
 
-    # 3. YEKDEM — graceful fallback when missing
+    # 3. YEKDEM — hard-block when missing (P0 financial safety)
+    # Incomplete market data = hard failure. A financial system does not
+    # produce "approximate" results with missing cost components.
+    # No fallback, no approximation, no previous-month reuse.
     warnings = []
     yekdem_record = get_yekdem(db, period)
     if not yekdem_record:
-        yekdem = 0.0
-        warnings.append({
-            "type": "critical_missing_data",
-            "severity": "high",
-            "impact": "pricing_accuracy_low",
-            "message": (
-                f"{period} dönemi için YEKDEM verisi bulunamadı, "
-                f"hesaplama 0 YEKDEM ile yapıldı."
-            ),
-            "yekdem_unit_price": 0,
-        })
-    else:
-        yekdem = yekdem_record.yekdem_tl_per_mwh
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "yekdem_data_not_found",
+                "message": (
+                    f"{period} dönemi için YEKDEM verisi bulunamadı. "
+                    f"Eksik YEKDEM ile analiz yapılamaz — fiyatlama doğruluğu garanti edilemez. "
+                    f"Lütfen admin panelinden YEKDEM verisini yükleyin."
+                ),
+                "period": period,
+                "resolution": "POST /api/pricing/yekdem ile dönem YEKDEM değerini ekleyin.",
+            },
+        )
+    yekdem = yekdem_record.yekdem_tl_per_mwh
 
     # 4. Ağırlıklı fiyat hesapla
     weighted = calculate_weighted_prices(market_records, consumption_records)
