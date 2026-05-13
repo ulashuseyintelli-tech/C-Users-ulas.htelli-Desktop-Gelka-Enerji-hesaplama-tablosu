@@ -397,3 +397,101 @@ class TestAlembicMigration012Roundtrip:
                 ).fetchall()
             }
         assert "ptf_drift_log" in tables_final
+
+
+# ── Fail-open write helper tests ─────────────────────────────────────────────
+
+from app.ptf_drift_log import DriftRecord, write_drift_record
+
+
+class TestWriteDriftRecordFailOpen:
+    """Critical invariant: DB insert failure MUST NOT propagate to caller.
+
+    If this test fails, a drift-logging outage becomes a pricing outage.
+    That is the single most dangerous failure mode in the PTF migration.
+    """
+
+    def test_successful_write_returns_true(self, db_session):
+        """Happy path: valid record → committed → True."""
+        session, _ = db_session
+        rec = DriftRecord(
+            period="2026-03",
+            canonical_price=2500.0,
+            legacy_price=2498.0,
+            delta_abs=2.0,
+            delta_pct=0.08,
+            severity="low",
+            request_hash=_fake_request_hash("happy-path"),
+        )
+        result = write_drift_record(session, rec)
+        assert result is True
+        # Verify row landed
+        from app.ptf_drift_log import PtfDriftLog
+
+        count = session.query(PtfDriftLog).count()
+        assert count == 1
+
+    def test_db_error_returns_false_not_raises(self, db_session):
+        """DB insert fails → returns False, does NOT raise into pricing path."""
+        from unittest.mock import patch as mock_patch
+
+        session, _ = db_session
+        rec = DriftRecord(
+            period="2026-03",
+            canonical_price=2500.0,
+            severity="low",
+            request_hash=_fake_request_hash("db-dead"),
+        )
+        # Simulate a DB failure by making commit raise OperationalError
+        with mock_patch.object(
+            session, "commit", side_effect=Exception("simulated DB failure")
+        ):
+            # This MUST NOT raise
+            result = write_drift_record(session, rec)
+        assert result is False
+
+    def test_check_constraint_violation_returns_false(self, db_session):
+        """Invalid severity → CHECK fails → returns False, no raise."""
+        session, _ = db_session
+        rec = DriftRecord(
+            period="2026-03",
+            canonical_price=2500.0,
+            severity="critical",  # violates CHECK
+            request_hash=_fake_request_hash("bad-severity"),
+        )
+        result = write_drift_record(session, rec)
+        assert result is False
+
+    def test_none_record_returns_false(self, db_session):
+        """Defensive: None record → False, no raise."""
+        session, _ = db_session
+        result = write_drift_record(session, None)
+        assert result is False
+
+    def test_short_hash_returns_false(self, db_session):
+        """request_hash too short → CHECK fails → False."""
+        session, _ = db_session
+        rec = DriftRecord(
+            period="2026-03",
+            canonical_price=2500.0,
+            severity="low",
+            request_hash="tooshort",  # 8 chars, needs 64
+        )
+        result = write_drift_record(session, rec)
+        assert result is False
+
+    def test_successful_write_with_null_legacy(self, db_session):
+        """Legacy read failure path: legacy_price=None still writes."""
+        session, _ = db_session
+        rec = DriftRecord(
+            period="2026-01",
+            canonical_price=3000.0,
+            legacy_price=None,
+            delta_abs=None,
+            delta_pct=None,
+            severity="low",
+            request_hash=_fake_request_hash("legacy-miss-write"),
+            customer_id=7,
+        )
+        result = write_drift_record(session, rec)
+        assert result is True

@@ -53,6 +53,11 @@ Tech-debt notes:
   they land in T2.2 alongside dispatcher wiring so the skeleton stays small.
 """
 
+from __future__ import annotations
+
+import logging
+from typing import Any
+
 from sqlalchemy import (
     CheckConstraint,
     Column,
@@ -65,6 +70,8 @@ from sqlalchemy import (
 )
 
 from .database import Base
+
+logger = logging.getLogger(__name__)
 
 
 class PtfDriftLog(Base):
@@ -118,3 +125,133 @@ class PtfDriftLog(Base):
             f"<PtfDriftLog id={self.id} period={self.period!r} "
             f"severity={self.severity!r} delta_pct={self.delta_pct}>"
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fail-open write helper (Phase 1 T1.3 — persistence-only skeleton)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Purpose
+# -------
+# Provide a single, narrow entry point for writing a drift observation to the
+# `ptf_drift_log` table that is GUARANTEED to never raise. The caller (which
+# arrives in T2.2) computes drift and hands a fully-formed row; this helper
+# inserts it.
+#
+# Why fail-open is locked at this layer
+# -------------------------------------
+# Drift observability is a side-channel. A drift-write outage MUST NOT become a
+# pricing outage. Concretely: if the DB connection dies, the table is locked,
+# the row violates a CHECK, the SQLAlchemy session is in a bad state, etc.,
+# this function logs a warning and returns False. The caller proceeds with the
+# canonical price as if no drift logging existed.
+#
+# Scope discipline (T1.3 vs T2.2 vs T2.4)
+# ---------------------------------------
+#   T1.3 (here):  write surface only. Caller hands a finished record.
+#                 No drift math, no canonical/legacy comparison, no severity
+#                 classification, no request-hash construction.
+#   T2.2:         compute_drift() + record_drift() — given canonical/legacy
+#                 numbers, produce a record and call write_drift_record() below.
+#   T2.4:         flip ptf_drift_log_enabled default to True after dual-read
+#                 dispatcher (T2.1) is wired.
+#
+# This helper is intentionally NOT called from any production path yet. It
+# exists so the persistence surface can be unit-tested for fail-open semantics
+# in isolation, and so T2.2 has a stable target to import.
+
+class DriftRecord:
+    """Plain in-memory drift observation, decoupled from SQLAlchemy session.
+
+    The caller in T2.2 will populate this. Keeping it as a tiny dataclass-like
+    object (rather than handing a `PtfDriftLog` instance directly) means the
+    write helper owns session lifecycle and the caller can't accidentally
+    attach a stray object to its own session.
+    """
+
+    __slots__ = (
+        "period",
+        "canonical_price",
+        "legacy_price",
+        "delta_abs",
+        "delta_pct",
+        "severity",
+        "request_hash",
+        "customer_id",
+    )
+
+    def __init__(
+        self,
+        *,
+        period: str,
+        canonical_price: float,
+        severity: str,
+        request_hash: str,
+        legacy_price: float | None = None,
+        delta_abs: float | None = None,
+        delta_pct: float | None = None,
+        customer_id: int | None = None,
+    ) -> None:
+        self.period = period
+        self.canonical_price = canonical_price
+        self.legacy_price = legacy_price
+        self.delta_abs = delta_abs
+        self.delta_pct = delta_pct
+        self.severity = severity
+        self.request_hash = request_hash
+        self.customer_id = customer_id
+
+
+def write_drift_record(db_session: Any, record: DriftRecord) -> bool:
+    """Best-effort, fail-open insert of a single drift observation.
+
+    Contract:
+        - On success: row committed, returns True.
+        - On ANY failure (DB error, CHECK violation, type error, session in bad
+          state, etc.): rolls back if possible, logs a warning, returns False.
+        - NEVER raises. Pricing pipeline depends on this guarantee.
+
+    Args:
+        db_session: An active SQLAlchemy session. Caller owns its lifecycle.
+        record: Pre-built DriftRecord. Caller (T2.2) is responsible for drift
+                math, severity classification, and request-hash construction.
+
+    Returns:
+        True if the row landed and was committed. False if anything went wrong.
+    """
+    if record is None:
+        # Defensive: a None record is a programmer error, but we still don't
+        # raise into the pricing path.
+        logger.warning("[PTF-DRIFT] write_drift_record received None — skipped")
+        return False
+
+    try:
+        row = PtfDriftLog(
+            period=record.period,
+            canonical_price=record.canonical_price,
+            legacy_price=record.legacy_price,
+            delta_abs=record.delta_abs,
+            delta_pct=record.delta_pct,
+            severity=record.severity,
+            request_hash=record.request_hash,
+            customer_id=record.customer_id,
+        )
+        db_session.add(row)
+        db_session.commit()
+        return True
+    except Exception as exc:  # noqa: BLE001 — fail-open is the contract
+        # Best-effort rollback. If the session itself is the problem, this
+        # also fails silently — that's still acceptable. The pricing path
+        # has its own session and is unaffected either way.
+        try:
+            db_session.rollback()
+        except Exception:  # pragma: no cover — secondary failure path
+            pass
+        logger.warning(
+            "[PTF-DRIFT] write_drift_record failed (fail-open) "
+            "period=%s severity=%s err=%s",
+            getattr(record, "period", "<unknown>"),
+            getattr(record, "severity", "<unknown>"),
+            exc,
+        )
+        return False
