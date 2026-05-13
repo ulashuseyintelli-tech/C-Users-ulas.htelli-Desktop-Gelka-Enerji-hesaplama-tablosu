@@ -79,11 +79,15 @@ class PtfDriftLog(Base):
 
     __tablename__ = "ptf_drift_log"
     __table_args__ = (
-        # severity is constrained to the two values the Phase 2 dashboard expects;
-        # any third value means "pipeline bug" and should fail CHECK rather than
-        # pollute the series.
+        # severity is constrained to the three values the Phase 2 dashboard
+        # expects: 'low' / 'high' (drift severities) and 'missing_legacy'
+        # (operational state — legacy read returned empty/None, so no delta
+        # was computed). Any fourth value means "pipeline bug" and should
+        # fail CHECK rather than pollute the series.
+        # Migration 013 widened this from the 2-value version in 012.
         CheckConstraint(
-            "severity IN ('low', 'high')", name="ck_ptf_drift_log_severity"
+            "severity IN ('low', 'high', 'missing_legacy')",
+            name="ck_ptf_drift_log_severity",
         ),
         # request_hash must be a 64-char sha256 hex; enforce length to catch
         # accidental md5/sha1 or raw bytes smuggled through the writer.
@@ -255,3 +259,205 @@ def write_drift_record(db_session: Any, record: DriftRecord) -> bool:
             exc,
         )
         return False
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Drift computation + record helpers (Phase 2 T2.2)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# These functions wrap the write_drift_record() persistence layer with the
+# actual canonical↔legacy comparison. They are pure-Python (no DB query)
+# except for record_drift() which calls write_drift_record(). Anyone wiring
+# drift telemetry into a new code path imports record_drift() and hands it
+# the two record lists already loaded by the dispatcher.
+#
+# Design contracts:
+#   1. NEVER raise. compute_drift returns None on bad input; record_drift
+#      catches everything and returns False.
+#   2. Symmetric drift baseline. delta_pct uses max(|canonical|, |legacy|),
+#      not canonical alone. Otherwise the drift % becomes biased toward the
+#      authoritative side and the threshold gate stops being neutral.
+#   3. Six-decimal rounding on delta_abs and delta_pct. Without rounding,
+#      float jitter creates dashboard noise and flaky tests.
+#   4. missing_legacy is a first-class severity (not a NULL-coded hack), so
+#      Phase 3 readiness queries can group on `severity` directly.
+#
+# Phase 2 observation threshold (DRIFT_HIGH_PCT) is observation-only telemetry,
+# NOT an automated cutover gate. Operators read severity counts in the Phase 2
+# decision review (T2.6) and decide. Migration is never auto-aborted by drift.
+
+# Phase 2 observation threshold only.
+# Not yet an automated cutover gate.
+DRIFT_HIGH_PCT: float = 0.5
+
+_DRIFT_ROUND_NDIGITS: int = 6
+
+
+def _weighted_avg_ptf(records) -> float | None:
+    """Mean of ptf_tl_per_mwh across ParsedMarketRecord items.
+
+    Returns None for empty / None inputs, never raises. We treat this as
+    "no data available" so the caller can decide between missing_legacy
+    (legacy side) and "skip drift entirely" (canonical side).
+    """
+    if records is None:
+        return None
+    try:
+        n = len(records)
+    except TypeError:
+        return None
+    if n == 0:
+        return None
+    try:
+        total = 0.0
+        for r in records:
+            total += float(r.ptf_tl_per_mwh)
+        return total / n
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def compute_drift(
+    canonical_records,
+    legacy_records,
+    *,
+    period: str,
+    request_hash: str,
+    customer_id: int | None = None,
+) -> DriftRecord | None:
+    """Compute canonical↔legacy drift and produce a DriftRecord.
+
+    Args:
+        canonical_records: list of ParsedMarketRecord from canonical reader.
+        legacy_records: list of ParsedMarketRecord from legacy reader, or None.
+        period: YYYY-MM, copied into the record.
+        request_hash: SHA-256 hex (64 chars). Caller is responsible for shape.
+        customer_id: optional, copied into the record.
+
+    Returns:
+        DriftRecord ready for write_drift_record(), or None if canonical
+        is unusable (the caller raises 404 anyway, so no row is needed).
+
+    Severity classification:
+        - canonical missing/empty           → return None (no record)
+        - legacy missing/empty/unreadable   → severity='missing_legacy',
+                                              delta_abs/pct = None,
+                                              legacy_price = None
+        - both present, equal               → severity='low',
+                                              delta_abs = 0.0, delta_pct = 0.0
+        - both present, |drift| <= 0.5%     → severity='low'
+        - both present, |drift| > 0.5%      → severity='high'
+
+    Symmetric drift formula:
+        baseline = max(|canonical_avg|, |legacy_avg|)
+        delta_pct = (|delta_abs| / baseline) * 100  if baseline > 0
+                  = 0.0                              if both averages are 0
+                  = None                             on division anomaly
+
+    Both delta_abs and delta_pct are rounded to 6 decimals to suppress
+    float jitter in telemetry and tests.
+
+    NEVER raises.
+    """
+    canonical_avg = _weighted_avg_ptf(canonical_records)
+    if canonical_avg is None:
+        return None  # caller raises 404; nothing useful to log
+
+    canonical_price = round(float(canonical_avg), _DRIFT_ROUND_NDIGITS)
+
+    legacy_avg = _weighted_avg_ptf(legacy_records)
+    if legacy_avg is None:
+        return DriftRecord(
+            period=period,
+            canonical_price=canonical_price,
+            legacy_price=None,
+            delta_abs=None,
+            delta_pct=None,
+            severity="missing_legacy",
+            request_hash=request_hash,
+            customer_id=customer_id,
+        )
+
+    try:
+        legacy_price = round(float(legacy_avg), _DRIFT_ROUND_NDIGITS)
+        delta_abs_raw = canonical_price - legacy_price
+        delta_abs = round(delta_abs_raw, _DRIFT_ROUND_NDIGITS)
+
+        # Symmetric baseline — neutral between canonical and legacy.
+        # Both-zero case is "no drift" (severity=low, deltas=0), not None.
+        baseline = max(abs(canonical_price), abs(legacy_price))
+        if baseline == 0.0:
+            # canonical_avg == 0 AND legacy_avg == 0 → identical empty market
+            delta_pct = 0.0
+        else:
+            delta_pct = round(
+                (abs(delta_abs) / baseline) * 100.0,
+                _DRIFT_ROUND_NDIGITS,
+            )
+
+        severity = "low" if abs(delta_pct) <= DRIFT_HIGH_PCT else "high"
+    except (TypeError, ValueError, ArithmeticError) as exc:
+        # Defensive: any numeric anomaly → record a missing_legacy row so
+        # the operational signal is not lost, and log the cause.
+        logger.warning(
+            "[PTF-DRIFT] compute_drift numeric anomaly (degraded to missing_legacy) "
+            "period=%s err=%s",
+            period, exc,
+        )
+        return DriftRecord(
+            period=period,
+            canonical_price=canonical_price,
+            legacy_price=None,
+            delta_abs=None,
+            delta_pct=None,
+            severity="missing_legacy",
+            request_hash=request_hash,
+            customer_id=customer_id,
+        )
+
+    return DriftRecord(
+        period=period,
+        canonical_price=canonical_price,
+        legacy_price=legacy_price,
+        delta_abs=delta_abs,
+        delta_pct=delta_pct,
+        severity=severity,
+        request_hash=request_hash,
+        customer_id=customer_id,
+    )
+
+
+def record_drift(
+    db_session,
+    canonical_records,
+    legacy_records,
+    *,
+    period: str,
+    request_hash: str,
+    customer_id: int | None = None,
+) -> bool:
+    """Compute drift and persist it. Best-effort, fail-open.
+
+    Returns True if a row was committed, False if compute returned None
+    (canonical unusable) or write_drift_record failed. NEVER raises.
+    """
+    try:
+        record = compute_drift(
+            canonical_records, legacy_records,
+            period=period,
+            request_hash=request_hash,
+            customer_id=customer_id,
+        )
+    except Exception as exc:  # noqa: BLE001 — fail-open is the contract
+        logger.warning(
+            "[PTF-DRIFT] record_drift compute step raised (suppressed) "
+            "period=%s err=%s",
+            period, exc,
+        )
+        return False
+
+    if record is None:
+        return False
+
+    return write_drift_record(db_session, record)

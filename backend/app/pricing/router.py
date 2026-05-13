@@ -18,6 +18,7 @@ Requirements: 15.1–15.4, 16.1–16.8, 19.1–19.4
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from typing import Optional
@@ -265,22 +266,29 @@ def _maybe_record_drift(
     canonical_records: list[ParsedMarketRecord],
     legacy_records: list[ParsedMarketRecord] | None,
 ) -> None:
-    """T2.1 stub — debug telemetry only, no compute, no DB write.
+    """T2.2 — compute canonical↔legacy drift and persist via fail-open writer.
 
-    Records that the dual path actually executed and reports the canonical /
-    legacy row counts so we can answer two operational questions in real
-    traffic before T2.2 lands:
-      1. Did dual_read run at all? (singleton cache may have returned a stale
-         GuardConfig that masked the toggle.)
-      2. Did legacy shadow read return anything? (legacy table may be empty
-         for the period — that's fine, just want to know.)
+    Calls into `app.ptf_drift_log.record_drift`, which:
+      1. Computes the symmetric weighted-PTF delta (compute_drift).
+      2. Classifies severity ('low' / 'high' / 'missing_legacy').
+      3. Persists via write_drift_record (best-effort, fail-open).
 
-    No drift math, no severity classification, no DB write here. T2.2 will
-    replace this body with compute_drift + write_drift_record. The signature
-    is stable so T2.2 is a body-swap, not a wiring change.
+    Operational telemetry preserved from T2.1: a debug line reports whether
+    the dual path executed and the canonical/legacy row counts. This stays
+    valuable for confirming dual-read is alive even when severity='low'
+    (which would otherwise be invisible in dashboards).
 
-    NEVER raises. Any unexpected error is logged and swallowed; the pricing
-    response is unaffected.
+    `request_hash` for T2.2 uses period + counts (collision-tolerant for the
+    Phase 2 window). Phase 2.3 may upgrade this to canonicalized request
+    parameters once we see whether collision actually matters in practice.
+
+    TODO Phase 2.3: request_hash should use canonicalized request parameters
+    (multiplier, profile kWh, voltage_level, etc.) instead of just counts.
+    Counts collide across distinct requests in the same period; this is fine
+    for severity-rate dashboards but bad for "same drift repeating?" dedupe.
+
+    NEVER raises. Defensive try/except both inside compute_drift /
+    record_drift AND at the dispatcher call site (defense in depth).
     """
     try:
         canonical_count = len(canonical_records)
@@ -290,6 +298,24 @@ def _maybe_record_drift(
             period,
             canonical_count,
             legacy_count if legacy_count is not None else "shadow_failed",
+        )
+
+        # T2.2: collision-tolerant request_hash. SHA-256 over a stable string;
+        # 64 hex chars satisfies the model's CHECK constraint.
+        from ..ptf_drift_log import record_drift as _record_drift_fn
+
+        legacy_count_str = (
+            "missing" if legacy_count is None else str(legacy_count)
+        )
+        seed = f"{period}|c={canonical_count}|l={legacy_count_str}"
+        request_hash = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+
+        _record_drift_fn(
+            db,
+            canonical_records,
+            legacy_records,
+            period=period,
+            request_hash=request_hash,
         )
     except Exception as exc:  # noqa: BLE001 — telemetry must not fail request
         logger.warning(
