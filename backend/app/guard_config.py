@@ -121,8 +121,9 @@ class GuardConfig(BaseSettings):
     # new value to take effect. Operational rollback procedure must explicitly
     # SIGHUP/restart uvicorn workers after toggling these vars. See
     # design.md §2.3 "Rollback süresi garantisi" — the 10-second rollback
-    # target is NOT met by this implementation and will be revisited in
-    # Phase 2 before `ptf_drift_log_enabled` defaults to True.
+    # target is NOT met by this implementation.
+    # T2.4 DONE: ptf_drift_log_enabled now defaults to True (dual-read active).
+    # Rollback: set OPS_GUARD_PTF_DRIFT_LOG_ENABLED=false + restart workers.
     #
     # Env var precedence (AliasChoices): first match wins →
     #   OPS_GUARD_USE_LEGACY_PTF > USE_LEGACY_PTF
@@ -139,14 +140,15 @@ class GuardConfig(BaseSettings):
         ),
     )
     ptf_drift_log_enabled: bool = Field(
-        default=False,  # Phase 2 T2.4 will flip default to True after dual-read is wired.
+        default=True,  # T2.4 DONE — dual-read active by default. Rollback: OPS_GUARD_PTF_DRIFT_LOG_ENABLED=false
         validation_alias=AliasChoices(
             "OPS_GUARD_PTF_DRIFT_LOG_ENABLED", "PTF_DRIFT_LOG_ENABLED"
         ),
         description=(
             "Enable canonical↔legacy drift log writes in the Phase 2 dual-read "
-            "window. Default False in Phase 1 to prevent log/storage spam "
-            "before dispatcher exists. Requires worker/process reload to take effect."
+            "window. Default True since T2.4 (dual-read dispatcher wired in T2.1). "
+            "Set to false to disable drift logging and revert to canonical-only reads. "
+            "Requires worker/process reload to take effect."
         ),
     )
 
@@ -344,9 +346,9 @@ _FALLBACK_DEFAULTS = dict(
     drift_guard_killswitch=False,
     drift_guard_fail_open=True,
     drift_guard_provider_timeout_ms=100,
-    # PTF SoT Unification — Phase 1 T1.2
+    # PTF SoT Unification — Phase 1 T1.2, T2.4 flipped default to True
     use_legacy_ptf=False,
-    ptf_drift_log_enabled=False,
+    ptf_drift_log_enabled=True,
 )
 
 

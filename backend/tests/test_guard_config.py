@@ -623,16 +623,28 @@ class TestPtfSotGuardSwitchDefaults:
         config = GuardConfig()
         assert config.use_legacy_ptf is False
 
-    def test_ptf_drift_log_enabled_default_false(self):
-        """Phase 1 ships drift log disabled; Phase 2 T2.4 flips default to True
-        once the dispatcher exists. Early enablement produces log noise and
-        false positives before dual-read path is wired."""
+    def test_ptf_drift_log_enabled_default_true(self):
+        """T2.4 flipped drift log default to True — dual-read is now active
+        by default. Operators can disable via OPS_GUARD_PTF_DRIFT_LOG_ENABLED=false."""
         config = GuardConfig()
-        assert config.ptf_drift_log_enabled is False
+        assert config.ptf_drift_log_enabled is True
 
 
 class TestPtfSotGuardSwitchEnvBinding:
     """Both prefixed and bare env var forms must be accepted (operational ergonomics)."""
+
+    def test_explicit_false_env_disables_drift_log_prefixed(self):
+        """T2.4 rollback path: OPS_GUARD_PTF_DRIFT_LOG_ENABLED=false overrides default True."""
+        with patch.dict(os.environ, {"OPS_GUARD_PTF_DRIFT_LOG_ENABLED": "false"}, clear=False):
+            config = GuardConfig()
+            assert config.ptf_drift_log_enabled is False
+
+    def test_explicit_false_env_disables_drift_log_bare(self):
+        """T2.4 rollback path: PTF_DRIFT_LOG_ENABLED=false overrides default True."""
+        with patch.dict(os.environ, {"PTF_DRIFT_LOG_ENABLED": "false"}, clear=False):
+            os.environ.pop("OPS_GUARD_PTF_DRIFT_LOG_ENABLED", None)
+            config = GuardConfig()
+            assert config.ptf_drift_log_enabled is False
 
     def test_prefixed_env_sets_use_legacy_ptf(self):
         with patch.dict(os.environ, {"OPS_GUARD_USE_LEGACY_PTF": "true"}, clear=False):
@@ -723,7 +735,7 @@ class TestPtfSotGuardSwitchFallbackInclusion:
         assert config.use_legacy_ptf is False
         gc_mod._guard_config = None
 
-    def test_fallback_includes_ptf_drift_log_enabled_false(self):
+    def test_fallback_includes_ptf_drift_log_enabled_true(self):
         import app.guard_config as gc_mod
 
         gc_mod._guard_config = None
@@ -732,7 +744,7 @@ class TestPtfSotGuardSwitchFallbackInclusion:
         ):
             with patch("app.ptf_metrics.get_ptf_metrics"):
                 config = load_guard_config()
-        assert config.ptf_drift_log_enabled is False
+        assert config.ptf_drift_log_enabled is True
         gc_mod._guard_config = None
 
 

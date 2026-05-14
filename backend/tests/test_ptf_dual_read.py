@@ -121,10 +121,11 @@ def _analyze_request_body(period="2026-03"):
 class TestDualReadDispatcher:
     """T2.1 — dispatcher routes to dual path only when drift log enabled."""
 
-    def test_default_off_dual_path_not_taken(self, db_session):
-        """Default (drift log disabled) → dual fonksiyonu çağrılmaz; canonical-only."""
+    def test_default_on_dual_path_taken(self, db_session):
+        """Default (T2.4: drift log enabled by default) → dual fonksiyonu çağrılır."""
         _seed_canonical(db_session, period="2026-03", days=1, ptf=3000.0)
         _seed_legacy(db_session, period="2026-03", ptf=2000.0)
+        _seed_yekdem(db_session, period="2026-03")
 
         _reset_guard_config()
         with patch.dict(os.environ, {}, clear=False):
@@ -132,17 +133,28 @@ class TestDualReadDispatcher:
             os.environ.pop("USE_LEGACY_PTF", None)
             os.environ.pop("OPS_GUARD_PTF_DRIFT_LOG_ENABLED", None)
             os.environ.pop("PTF_DRIFT_LOG_ENABLED", None)
+            _reset_guard_config()
 
-            with patch("app.pricing.router._load_market_records_dual") as dual_spy:
+            from app.pricing import router as router_mod
+
+            original_dual = router_mod._load_market_records_dual
+            call_count = {"n": 0}
+
+            def spying_dual(db, period):
+                call_count["n"] += 1
+                return original_dual(db, period)
+
+            with patch.object(router_mod, "_load_market_records_dual",
+                              side_effect=spying_dual):
                 from app.pricing.router import _load_market_records
                 records = _load_market_records(db_session, "2026-03")
 
-                assert dual_spy.called is False, (
-                    "Default path must NOT invoke _load_market_records_dual"
+                assert call_count["n"] >= 1, (
+                    "Default path (T2.4) must invoke _load_market_records_dual"
                 )
 
         _reset_guard_config()
-        # Canonical reader returned 24 hourly rows — Phase 1 default behavior intact.
+        # Canonical reader returned 24 hourly rows — canonical authoritative.
         assert len(records) == 24
         assert records[0].ptf_tl_per_mwh == 3000.0
 
@@ -373,6 +385,70 @@ class TestDualReadDispatcher:
 
                 assert dual_spy.called is False, (
                     "Kill switch must override drift log flag — dual path forbidden"
+                )
+
+        _reset_guard_config()
+
+        # Legacy spreads monthly avg flat across the month (March = 31 days × 24).
+        assert len(records) == 31 * 24
+        assert all(r.ptf_tl_per_mwh == 2000.0 for r in records)
+
+    def test_explicit_false_env_overrides_default_to_canonical_only(self, db_session):
+        """OPS_GUARD_PTF_DRIFT_LOG_ENABLED=false → dual NOT called, canonical-only.
+
+        T2.4 rollback invariant: operators can disable dual-read by setting
+        the env var to false, even though the default is now True.
+        """
+        _seed_canonical(db_session, period="2026-03", days=1, ptf=3000.0)
+        _seed_legacy(db_session, period="2026-03", ptf=2000.0)
+
+        _reset_guard_config()
+        with patch.dict(os.environ, {
+            "OPS_GUARD_PTF_DRIFT_LOG_ENABLED": "false",
+        }, clear=False):
+            os.environ.pop("OPS_GUARD_USE_LEGACY_PTF", None)
+            os.environ.pop("USE_LEGACY_PTF", None)
+            _reset_guard_config()
+
+            with patch("app.pricing.router._load_market_records_dual") as dual_spy:
+                from app.pricing.router import _load_market_records
+                records = _load_market_records(db_session, "2026-03")
+
+                assert dual_spy.called is False, (
+                    "Explicit false env must disable dual-read — canonical-only path"
+                )
+
+        _reset_guard_config()
+        # Canonical reader returned 24 hourly rows.
+        assert len(records) == 24
+        assert records[0].ptf_tl_per_mwh == 3000.0
+
+    def test_kill_switch_overrides_default_dual_without_explicit_drift_flag(self, db_session):
+        """ONLY OPS_GUARD_USE_LEGACY_PTF=true, no drift_log env → legacy path, dual NOT called.
+
+        MOST CRITICAL INVARIANT: Kill switch takes precedence even when
+        ptf_drift_log_enabled defaults to True (T2.4). The kill switch
+        branch is evaluated BEFORE the drift log branch in the dispatcher.
+        """
+        _seed_canonical(db_session, period="2026-03", days=1, ptf=3000.0)
+        _seed_legacy(db_session, period="2026-03", ptf=2000.0)
+
+        _reset_guard_config()
+        with patch.dict(os.environ, {
+            "OPS_GUARD_USE_LEGACY_PTF": "true",
+        }, clear=False):
+            # Explicitly remove drift log env — rely on default (True)
+            os.environ.pop("OPS_GUARD_PTF_DRIFT_LOG_ENABLED", None)
+            os.environ.pop("PTF_DRIFT_LOG_ENABLED", None)
+            _reset_guard_config()
+
+            with patch("app.pricing.router._load_market_records_dual") as dual_spy:
+                from app.pricing.router import _load_market_records
+                records = _load_market_records(db_session, "2026-03")
+
+                assert dual_spy.called is False, (
+                    "Kill switch MUST override default dual-read — "
+                    "dual path forbidden when use_legacy_ptf=True"
                 )
 
         _reset_guard_config()

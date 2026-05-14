@@ -186,7 +186,8 @@ def _load_market_records(
       1. use_legacy_ptf=True               → legacy reader only (Phase 1 rollback)
       2. ptf_drift_log_enabled=True        → dual-read (canonical authoritative,
                                               legacy shadow, drift log best-effort)
-      3. otherwise (Phase 1 default)       → canonical reader only
+                                              [T2.4: this is now the default path]
+      3. ptf_drift_log_enabled=False       → canonical reader only (explicit opt-out)
 
     Silent fallback YASAK: canonical boşsa boş liste döner → caller 404 atar.
     Dual-read modu da bu kontratı korur — legacy varlığı 404'ü engellemez.
@@ -202,11 +203,11 @@ def _load_market_records(
     if config.use_legacy_ptf:
         return _load_market_records_legacy(db, period)
 
-    # 2. Dual-read observe — Phase 2 default once T2.4 flips the flag.
+    # 2. Dual-read observe — Phase 2 default (T2.4 flipped the flag to True).
     if config.ptf_drift_log_enabled:
         return _load_market_records_dual(db, period)
 
-    # 3. Canonical-only — Phase 1 frozen behavior, also Phase 2 default until T2.4.
+    # 3. Canonical-only — reachable via explicit OPS_GUARD_PTF_DRIFT_LOG_ENABLED=false.
     return _load_market_records_canonical(db, period)
 
 

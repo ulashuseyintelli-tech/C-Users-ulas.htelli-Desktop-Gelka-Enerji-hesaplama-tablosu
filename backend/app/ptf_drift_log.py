@@ -157,8 +157,8 @@ class PtfDriftLog(Base):
 #                 classification, no request-hash construction.
 #   T2.2:         compute_drift() + record_drift() — given canonical/legacy
 #                 numbers, produce a record and call write_drift_record() below.
-#   T2.4:         flip ptf_drift_log_enabled default to True after dual-read
-#                 dispatcher (T2.1) is wired.
+#   T2.4 (done):  flip ptf_drift_log_enabled default to True — dual-read
+#                 is now the default path. Rollback: set env var to false.
 #
 # This helper is intentionally NOT called from any production path yet. It
 # exists so the persistence surface can be unit-tested for fail-open semantics

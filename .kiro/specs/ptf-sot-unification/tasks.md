@@ -127,7 +127,7 @@ Amaç: Canonical ve legacy okumaları yan yana tut, farkı ölç, response sadec
   - `GET /metrics` endpoint'i bu metrikleri expose eder
   - Grafana panel eklenir (monitoring/grafana/ptf-migration-dashboard.json)
 
-### [ ] T2.4 — `ptf_drift_log_enabled=True` toggle
+### [x] T2.4 — `ptf_drift_log_enabled=True` toggle
 - **Giriş:** guard_config default
 - **Çıktı:** Default değer Phase 2'de True olur; env override edilebilir
 - **Kanıt:**
