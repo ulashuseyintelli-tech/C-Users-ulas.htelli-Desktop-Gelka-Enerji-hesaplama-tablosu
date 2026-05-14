@@ -441,6 +441,10 @@ def record_drift(
 
     Returns True if a row was committed, False if compute returned None
     (canonical unusable) or write_drift_record failed. NEVER raises.
+
+    Side effect (T2.3): emits Prometheus metrics for every successful
+    compute_drift result, regardless of whether the DB write succeeds.
+    Metrics emission is itself wrapped in try/except (defense in depth).
     """
     try:
         record = compute_drift(
@@ -460,4 +464,72 @@ def record_drift(
     if record is None:
         return False
 
+    # T2.3: surface drift event to Prometheus before the DB write so a
+    # write outage does not also mask the observability. Metrics emission
+    # is fail-open — see _emit_drift_metrics docstring.
+    _emit_drift_metrics(record)
+
     return write_drift_record(db_session, record)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Prometheus emission helper (Phase 2 T2.3 — fail-open observability)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Why this exists
+# ---------------
+# The drift log table is the authoritative telemetry source (R10 gate
+# decision input). Prometheus is a secondary surface for live operators —
+# faster to query, easier to dashboard, but lossy under retention. T2.3
+# adds Prometheus emission so the Phase 2 dual-read window is observable
+# in real time without re-querying SQLite.
+#
+# Locked invariants
+# -----------------
+#   1. NEVER raises. A metrics-client outage (registry corruption, label
+#      cardinality blow-up bug, etc.) MUST NOT propagate into the pricing
+#      response. This is enforced both here and at the dispatcher
+#      (`_maybe_record_drift` in pricing/router.py also has a top-level
+#      try/except — defense in depth).
+#   2. Lazy import of `get_ptf_metrics`. The metrics module loads its own
+#      dependencies (prometheus_client) and registers default metrics at
+#      import time. Lazy-importing keeps `ptf_drift_log` importable in
+#      contexts where prometheus_client is unavailable (e.g. an alembic
+#      offline run that imports the model class for autogenerate).
+#   3. Closed-set severity. The PtfDriftLog CHECK constraint already
+#      restricts severity to {low, high, missing_legacy}; the metrics
+#      module re-validates so a future severity addition that misses the
+#      metrics registration is reported as a warning, not a Prometheus
+#      "unknown_label" silent failure.
+
+def _emit_drift_metrics(record: DriftRecord) -> None:
+    """Best-effort, fail-open Prometheus emission for a drift observation.
+
+    Increments `ptf_drift_observed_total{period,severity}` and sets the
+    `ptf_canonical_monthly_avg{period}` gauge. Both calls are wrapped in
+    a single broad try/except — the contract is that this helper NEVER
+    raises out of the pricing path.
+    """
+    if record is None:
+        return
+    try:
+        # Lazy import — prometheus_client may not be installed in alembic
+        # offline contexts, and the singleton initializes its registry on
+        # first import (which may itself fail in degraded environments).
+        from .ptf_metrics import get_ptf_metrics
+
+        metrics = get_ptf_metrics()
+        metrics.inc_ptf_drift_observed(
+            period=record.period, severity=record.severity,
+        )
+        metrics.set_ptf_canonical_monthly_avg(
+            period=record.period, value=record.canonical_price,
+        )
+    except Exception as exc:  # noqa: BLE001 — fail-open is the contract
+        logger.warning(
+            "[PTF-DRIFT] metrics emission failed (suppressed) "
+            "period=%s severity=%s err=%s",
+            getattr(record, "period", "<unknown>"),
+            getattr(record, "severity", "<unknown>"),
+            exc,
+        )

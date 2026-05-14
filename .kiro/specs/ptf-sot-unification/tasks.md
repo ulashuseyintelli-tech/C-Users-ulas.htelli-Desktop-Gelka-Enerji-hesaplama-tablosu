@@ -119,7 +119,7 @@ Amaç: Canonical ve legacy okumaları yan yana tut, farkı ölç, response sadec
   - Sync DB insert (async değil — Phase 2 pencere kısa, design §U3)
   - `backend/tests/test_ptf_drift_computation.py` — hypothesis property: `compute_drift(a, b).diff_abs == compute_drift(b, a).diff_abs`
 
-### [ ] T2.3 — Drift metrikleri + Prometheus
+### [x] T2.3 — Drift metrikleri + Prometheus
 - **Giriş:** `backend/app/ptf_metrics.py`
 - **Çıktı:** `ptf_drift_observed_total{period,severity}`, `ptf_canonical_monthly_avg{period}` metrikleri
 - **Kanıt:**

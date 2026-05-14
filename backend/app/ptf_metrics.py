@@ -255,6 +255,27 @@ class PTFMetrics:
             registry=self._registry,
         )
 
+        # ── PTF SoT Migration metrics (Feature: ptf-sot-unification, T2.3) ─
+        # Phase 2 dual-read observability. These metrics surface canonical↔legacy
+        # drift events captured by record_drift() into Prometheus/Grafana.
+        # Naming follows design.md §9 (NOT the ptf_admin_ prefix used elsewhere)
+        # because tasks.md T2.3 binds the names verbatim.
+        # Cardinality is bounded: ~24 active periods × 3 severity values = 72 series
+        # for the counter, ~24 series for the gauge. Both stay well under the 100-series
+        # informal cap for this dashboard.
+        self._ptf_drift_observed_total = Counter(
+            "ptf_drift_observed_total",
+            "Canonical↔legacy PTF drift observations during dual-read window (Phase 2)",
+            labelnames=["period", "severity"],
+            registry=self._registry,
+        )
+        self._ptf_canonical_monthly_avg = Gauge(
+            "ptf_canonical_monthly_avg",
+            "Canonical-side aggregate PTF (TL/MWh) computed by compute_drift, per period",
+            labelnames=["period"],
+            registry=self._registry,
+        )
+
         # ── PDF Render Endpoint metrics (Feature: PR-3 Observability) ─────
         self._pdf_render_requests_total = Counter(
             "ptf_admin_pdf_render_requests_total",
@@ -560,6 +581,60 @@ class PTFMetrics:
             logger.warning(f"[METRICS] Invalid drift_evaluation outcome: {outcome}")
             return
         self._drift_evaluation_total.labels(mode=mode, outcome=outcome).inc()
+
+    # ── PTF SoT Migration metrics (Feature: ptf-sot-unification, Task T2.3) ─
+    #
+    # These methods are called from `app.ptf_drift_log.record_drift` to surface
+    # canonical↔legacy drift observations into Prometheus. They MUST be
+    # fail-open: a metrics outage MUST NOT propagate into the pricing path.
+    # The caller is also responsible for try/except (defense in depth), but
+    # we additionally validate labels here (closed-set severity, period kept
+    # as opaque string — bounded by the active dual-read window).
+
+    _VALID_PTF_DRIFT_SEVERITIES = frozenset({"low", "high", "missing_legacy"})
+
+    def inc_ptf_drift_observed(self, period: str, severity: str) -> None:
+        """Increment ptf_drift_observed_total{period,severity} counter.
+
+        Bounded cardinality: ~24 active periods × 3 severities = 72 series.
+        Invalid severity → log warning, no increment, no raise (fail-open).
+        """
+        if severity not in self._VALID_PTF_DRIFT_SEVERITIES:
+            logger.warning(
+                "[METRICS] Invalid ptf_drift_observed severity: %r", severity
+            )
+            return
+        if not period:
+            logger.warning("[METRICS] Empty period for ptf_drift_observed")
+            return
+        self._ptf_drift_observed_total.labels(
+            period=period, severity=severity
+        ).inc()
+
+    def set_ptf_canonical_monthly_avg(self, period: str, value: float) -> None:
+        """Set ptf_canonical_monthly_avg{period} gauge.
+
+        Records the canonical-side weighted PTF that compute_drift produced.
+        Useful for correlating drift severity spikes against the canonical
+        average drift dashboard line.
+
+        Invalid value (None, NaN, non-numeric) → log warning, no update.
+        """
+        if not period:
+            logger.warning("[METRICS] Empty period for ptf_canonical_monthly_avg")
+            return
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            logger.warning(
+                "[METRICS] Non-numeric ptf_canonical_monthly_avg value: %r", value
+            )
+            return
+        # NaN guard — Prometheus accepts NaN but it's almost always a bug here.
+        if v != v:  # NaN check
+            logger.warning("[METRICS] NaN ptf_canonical_monthly_avg ignored")
+            return
+        self._ptf_canonical_monthly_avg.labels(period=period).set(v)
 
     # ── PDF Render Endpoint metrics (Feature: PR-3 Observability) ─────────
     # Namespace: ptf_admin_pdf_render_*

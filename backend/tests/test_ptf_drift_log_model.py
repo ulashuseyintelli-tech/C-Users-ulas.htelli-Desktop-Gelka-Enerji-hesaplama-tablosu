@@ -360,14 +360,16 @@ class TestAlembicMigration012Roundtrip:
                 ).fetchall()
             }
         assert "ptf_drift_log" in tables
-        assert version == "012_add_ptf_drift_log_table"
+        assert version == "013_extend_ptf_drift_severity"
         # All three secondary indexes must be present.
         assert "ix_ptf_drift_log_created_at" in indexes
         assert "ix_ptf_drift_log_period" in indexes
         assert "ix_ptf_drift_log_request_hash" in indexes
 
         # Downgrade: drop the table + return to 011.
-        down = _run("downgrade", "-1")
+        # T2.2 added migration 013 (severity CHECK extension). Roundtrip is
+        # head → 011, which is two downgrade steps now (013 → 012 → 011).
+        down = _run("downgrade", "011_market_prices_ptf_admin")
         assert down.returncode == 0, (
             f"alembic downgrade -1 failed:\nstdout={down.stdout}\nstderr={down.stderr}"
         )

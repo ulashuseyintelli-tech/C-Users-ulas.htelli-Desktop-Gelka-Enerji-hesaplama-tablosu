@@ -1,0 +1,214 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "type": "datasource",
+      "pluginId": "prometheus"
+    }
+  ],
+  "title": "PTF Migration — Phase 2 Dual-Read Drift",
+  "uid": "ptf-migration-overview",
+  "tags": ["ptf-admin", "ptf-migration", "phase-2", "observability"],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "time": { "from": "now-24h", "to": "now" },
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "version": 1,
+  "description": "Phase 2 dual-read drift observability for ptf-sot-unification spec. canonical=hourly_market_prices is authoritative; legacy=market_reference_prices is shadow. This dashboard tracks the drift between the two during the dual-read window. Observation-only — no automated decisions are driven from these series. The R10 gate decision (T2.6) consumes the ptf_drift_log table directly.",
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "options": [],
+        "refresh": 1,
+        "regex": ""
+      },
+      {
+        "name": "period",
+        "type": "query",
+        "datasource": { "uid": "$datasource", "type": "prometheus" },
+        "query": "label_values(ptf_drift_observed_total, period)",
+        "current": {},
+        "hide": 0,
+        "includeAll": true,
+        "multi": true,
+        "options": [],
+        "refresh": 2,
+        "regex": ""
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 100,
+      "title": "Drift Observations",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "panels": []
+    },
+    {
+      "id": 1,
+      "title": "Drift Rate by Severity",
+      "description": "Per-second rate of drift observations split by severity. Phase 2 gate criterion (R10): severity=high should stay below 5% of total during the dual-read window.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "datasource": { "uid": "$datasource", "type": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(ptf_drift_observed_total{period=~\"$period\"}[5m])) by (severity)",
+          "legendFormat": "{{severity}}",
+          "refId": "A",
+          "datasource": { "uid": "$datasource", "type": "prometheus" }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "pointSize": 5,
+            "showPoints": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": "low" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "#73BF69", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byRegexp", "options": "high" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "#F2495C", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byRegexp", "options": "missing_legacy" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "#FADE2A", "mode": "fixed" } }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "title": "Drift Total by Period (24h)",
+      "description": "Cumulative drift observations over the last 24 hours, broken out by period and severity. Helps spot a single bad period dragging the gate metric.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "datasource": { "uid": "$datasource", "type": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(increase(ptf_drift_observed_total{period=~\"$period\"}[24h])) by (period, severity)",
+          "legendFormat": "{{period}} / {{severity}}",
+          "refId": "A",
+          "datasource": { "uid": "$datasource", "type": "prometheus" }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "pointSize": 5,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "Canonical Monthly Avg PTF (TL/MWh)",
+      "description": "Canonical-side weighted PTF per period — the value that compute_drift uses as the baseline. Gauge updates every drift_record call so it tracks live state of canonical reads.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "datasource": { "uid": "$datasource", "type": "prometheus" },
+      "targets": [
+        {
+          "expr": "ptf_canonical_monthly_avg{period=~\"$period\"}",
+          "legendFormat": "{{period}}",
+          "refId": "A",
+          "datasource": { "uid": "$datasource", "type": "prometheus" }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyTRY",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 0,
+            "pointSize": 5,
+            "showPoints": "auto"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "Severity Distribution (last 24h)",
+      "description": "Pie chart of drift severity distribution over the last 24 hours. The Phase 2 readiness review (T2.6) consults the underlying ptf_drift_log table for the actual gate decision; this panel is a visual check.",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "datasource": { "uid": "$datasource", "type": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(increase(ptf_drift_observed_total{period=~\"$period\"}[24h])) by (severity)",
+          "legendFormat": "{{severity}}",
+          "refId": "A",
+          "datasource": { "uid": "$datasource", "type": "prometheus" }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": "low" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "#73BF69", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byRegexp", "options": "high" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "#F2495C", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byRegexp", "options": "missing_legacy" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "#FADE2A", "mode": "fixed" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "displayLabels": ["name", "percent"],
+        "legend": { "displayMode": "list", "placement": "right" },
+        "pieType": "donut",
+        "tooltip": { "mode": "single" }
+      }
+    }
+  ]
+}
