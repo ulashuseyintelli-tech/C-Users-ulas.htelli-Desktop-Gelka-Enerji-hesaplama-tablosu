@@ -125,6 +125,10 @@ app = FastAPI(
 from .pricing.router import pricing_router
 app.include_router(pricing_router)
 
+# Invoice Reconciliation Engine router
+from .recon.router import recon_router
+app.include_router(recon_router)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Security - API Key Authentication + Rate Limiting

@@ -126,8 +126,8 @@ _TARIFFS_APR_2026: list[DistributionTariff] = [
     # Çerkezköy: Tüm kalemler kWh'ye bölünmüş toplam = 0.604 TL/kWh
     # (Sabit 3681/23910 + Değişken 0.135 + Tek Terim DB 0.315 = ~0.604)
     DistributionTariff("osb_cerkezkoy", "OG", "tek_terim", 0.60400),  # Çerkezköy OSB toplam
-    # İkitelli: İletim (0.23) + OSB Dağıtım (0.580532) = 0.810532 TL/kWh
-    DistributionTariff("osb_ikitelli", "OG", "tek_terim", 0.81053),   # İkitelli OSB toplam
+    # İkitelli: İletim (0.23) + OSB Dağıtım (0.98167) = 1.21167 TL/kWh (Nisan 2026 fatura güncel)
+    DistributionTariff("osb_ikitelli", "OG", "tek_terim", 1.21167),   # İkitelli OSB toplam
 ]
 
 # Dönem → tarife tablosu eşleştirmesi
@@ -200,6 +200,12 @@ def normalize_tariff_group(raw: str) -> str:
     raw_normalized = unicodedata.normalize('NFKC', raw)
     tr_map = str.maketrans('İIŞĞÜÖÇ', 'iışğüöç')
     raw_lower = raw_normalized.translate(tr_map).lower().strip()
+    
+    # OSB tarifeleri — en spesifik, önce kontrol et
+    if "ikitelli" in raw_lower or "osb_ikitelli" in raw_lower:
+        return "osb_ikitelli"
+    if "çerkezköy" in raw_lower or "cerkezkoy" in raw_lower or "osb_cerkezkoy" in raw_lower:
+        return "osb_cerkezkoy"
     
     # Şehit Gazi - en spesifik, önce kontrol et
     if "şehit" in raw_lower or "sehit" in raw_lower or "gazi" in raw_lower:

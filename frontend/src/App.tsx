@@ -2,6 +2,7 @@
 import { Upload, FileText, Zap, TrendingDown, AlertCircle, CheckCircle, Loader2, RefreshCw, Download, Settings } from 'lucide-react';
 import { fullProcess, downloadPdf, FullProcessResponse, pricingAnalyze, pricingGetTemplates, pricingDownloadPdf, pricingDownloadExcel, PricingAnalyzeResponse, normalizeInvoicePeriod, API_BASE, TemplateItem } from './api';
 import AdminPanel from './AdminPanel';
+import ReconPage from './recon/ReconPage';
 import { generateBayiRaporPdf } from './bayiRapor';
 
 // EPDK Dağıtım Tarifeleri — Backend API'den çekilir
@@ -195,6 +196,7 @@ function App() {
   
   // Admin panel state
   const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [showReconPage, setShowReconPage] = useState(false);
   
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -928,6 +930,11 @@ function App() {
     return <AdminPanel onBack={() => setShowAdminPanel(false)} />;
   }
 
+  // Recon page göster
+  if (showReconPage) {
+    return <ReconPage onBack={() => setShowReconPage(false)} />;
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex flex-col overflow-auto">
       {/* Header */}
@@ -943,13 +950,22 @@ function App() {
                 <p className="text-xs text-gray-500">Fatura Analiz Sistemi</p>
               </div>
             </div>
-            <button
-              onClick={() => setShowAdminPanel(true)}
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-              title="Admin Panel"
-            >
-              <Settings className="w-5 h-5 text-gray-500" />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setShowReconPage(true)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                title="Fatura Mutabakat"
+              >
+                <FileText className="w-5 h-5 text-gray-500" />
+              </button>
+              <button
+                onClick={() => setShowAdminPanel(true)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                title="Admin Panel"
+              >
+                <Settings className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
           </div>
         </div>
       </header>
