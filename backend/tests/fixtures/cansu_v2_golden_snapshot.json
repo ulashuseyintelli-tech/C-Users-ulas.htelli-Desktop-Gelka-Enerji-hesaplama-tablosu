@@ -1,0 +1,98 @@
+{
+  "_fixture_metadata": {
+    "excel_source": "Cansu Saatlik Tuketim Ocak-Nisan 2026.xlsx",
+    "gelka_margin_multiplier": 1.05,
+    "invoice_markup_factor": 1.2,
+    "notes": "Deterministic synthetic PTF/YEKDEM seed. Numbers are reproducible: reference_energy_cost = sum(consumption × PTF / 1000) + total_kwh × YEKDEM / 1000. declared_total_tl = round(ref × invoice_markup_factor, 2). gelka_estimate = round(ref × gelka_margin_multiplier, 2).",
+    "ptf_tl_per_mwh": 3000.0,
+    "yekdem_tl_per_mwh": 400.0
+  },
+  "api_version": 2,
+  "periods": {
+    "2026-01": {
+      "cost_inputs": {
+        "complete": true,
+        "period_end": "2026-01-31",
+        "period_start": "2026-01-01",
+        "ptf_source": "hourly_market_prices",
+        "total_hours": 744,
+        "yekdem_source": "monthly_yekdem_prices"
+      },
+      "gelka_estimate_tl": 694053.87,
+      "potential_savings_tl": 99150.55,
+      "quote_block_reason": null,
+      "quote_blocked": false,
+      "reference_energy_cost_tl": 661003.68,
+      "supplier_markup_pct": 20.0,
+      "supplier_markup_tl": 132200.74
+    },
+    "2026-02": {
+      "cost_inputs": {
+        "complete": true,
+        "period_end": "2026-02-28",
+        "period_start": "2026-02-01",
+        "ptf_source": "hourly_market_prices",
+        "total_hours": 672,
+        "yekdem_source": "monthly_yekdem_prices"
+      },
+      "gelka_estimate_tl": 696614.84,
+      "potential_savings_tl": 99516.4,
+      "quote_block_reason": null,
+      "quote_blocked": false,
+      "reference_energy_cost_tl": 663442.7,
+      "supplier_markup_pct": 20.0,
+      "supplier_markup_tl": 132688.54
+    },
+    "2026-03": {
+      "cost_inputs": {
+        "complete": true,
+        "period_end": "2026-03-31",
+        "period_start": "2026-03-01",
+        "ptf_source": "hourly_market_prices",
+        "total_hours": 744,
+        "yekdem_source": "monthly_yekdem_prices"
+      },
+      "gelka_estimate_tl": 670077.34,
+      "potential_savings_tl": 95725.33,
+      "quote_block_reason": null,
+      "quote_blocked": false,
+      "reference_energy_cost_tl": 638168.89,
+      "supplier_markup_pct": 20.0,
+      "supplier_markup_tl": 127633.78
+    },
+    "2026-04": {
+      "cost_inputs": {
+        "complete": true,
+        "period_end": "2026-04-30",
+        "period_start": "2026-04-01",
+        "ptf_source": "hourly_market_prices",
+        "total_hours": 553,
+        "yekdem_source": "monthly_yekdem_prices"
+      },
+      "gelka_estimate_tl": 668503.29,
+      "potential_savings_tl": 95500.47,
+      "quote_block_reason": null,
+      "quote_blocked": false,
+      "reference_energy_cost_tl": 636669.8,
+      "supplier_markup_pct": 20.0,
+      "supplier_markup_tl": 127333.96
+    }
+  },
+  "status": "ok",
+  "summary": {
+    "annual_projection": {
+      "annualized_potential_savings_tl": 1169678.25,
+      "annualized_reference_cost_tl": 7797855.21,
+      "annualized_supplier_markup_tl": 1559571.06,
+      "based_on_periods": 4,
+      "label": "tahmini yıllık projeksiyon"
+    },
+    "partial_period_count": 0,
+    "total_gelka_estimate_tl": 2729249.34,
+    "total_period_count": 4,
+    "total_potential_savings_tl": 389892.75,
+    "total_reference_energy_cost_tl": 2599285.07,
+    "total_supplier_markup_tl": 519857.02,
+    "valid_period_count": 4
+  }
+}

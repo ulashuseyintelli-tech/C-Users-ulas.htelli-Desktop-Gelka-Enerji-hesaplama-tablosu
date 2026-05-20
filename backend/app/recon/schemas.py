@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -229,6 +229,20 @@ class CostComparison(BaseModel):
     message: str  # "Tasarruf potansiyeli: X TL (%Y)" veya "Mevcut tedarikçi avantajlı: ..."
 
 
+class CostInputs(BaseModel):
+    """v2: Referans maliyet hesaplama context metadata.
+
+    Her zaman dolu döner — fail-closed durumda bile complete=False ile.
+    SoT constraint'i Literal type ile runtime'a taşınmıştır.
+    """
+    ptf_source: Literal["hourly_market_prices"] = "hourly_market_prices"
+    yekdem_source: Literal["monthly_yekdem_prices"] = "monthly_yekdem_prices"
+    period_start: str  # YYYY-MM-DD (dönemin ilk günü)
+    period_end: str  # YYYY-MM-DD (dönemin son günü)
+    total_hours: int  # parse edilen saatlik kayıt sayısı
+    complete: bool  # True: PTF+YEKDEM tam, False: eksik veri var
+
+
 class PeriodResult(BaseModel):
     """Tek dönem mutabakat sonucu."""
     period: str
@@ -251,17 +265,26 @@ class PeriodResult(BaseModel):
     quote_block_reason: Optional[str] = None
     warnings: list[str] = Field(default_factory=list)
 
+    # ── v2 cost headline fields ──────────────────────────────────────────────
+    reference_energy_cost_tl: Optional[float] = None
+    supplier_markup_tl: Optional[float] = None
+    supplier_markup_pct: Optional[float] = None
+    gelka_estimate_tl: Optional[float] = None
+    potential_savings_tl: Optional[float] = None
+    cost_inputs: CostInputs  # Required — her zaman dolu, fail-closed'da complete=False
+
 
 class ReconReport(BaseModel):
     """Tam mutabakat raporu — API response.
 
-    Response contract (immutable v1):
-    - api_version: always 1 (for future versioning)
-    - status: "ok" (full success) | "partial" (parse+recon ok, quote blocked) | "error"
+    Response contract (v2):
+    - api_version: 2 (bumped from 1 — semantic contract upgrade)
+    - status: "ok" (full success) | "partial" (parse+recon ok, quote blocked or ref cost missing) | "error"
     - When status="partial": quote outputs are None, quote_blocked=true in periods
     - No savings/quote message generated when status="partial"
+    - v2 fields (reference_energy_cost_tl, supplier_markup_*, cost_inputs) always present on PeriodResult
     """
-    api_version: int = 1
+    api_version: int = 2
     status: str = "ok"  # "ok" | "partial" | "error"
     format_detected: ExcelFormat
     parse_stats: dict  # total_rows, successful_rows, failed_rows
