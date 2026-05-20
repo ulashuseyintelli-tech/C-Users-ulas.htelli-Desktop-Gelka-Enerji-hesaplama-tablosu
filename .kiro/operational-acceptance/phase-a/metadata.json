@@ -1,0 +1,86 @@
+{
+  "run_id": "RUN-001",
+  "phase": "Phase A — Operational Acceptance",
+  "started_at": "2026-05-17T13:36:54+03:00",
+  "completed_at": "2026-05-17T18:00:00+03:00",
+  "status": "suspended",
+  "suspension_reason": "Information hierarchy mismatch — moved to invoice-recon-engine-v2-cost-headline spec",
+  "backend_port": 8000,
+  "frontend_url": "http://localhost:3000",
+  "api_base": "http://127.0.0.1:8000",
+  "api_base_modified": false,
+  "db_modes": {
+    "mode_a_production": {
+      "database_url": "sqlite:///./gelka_enerji.db",
+      "scenarios": ["S-01", "S-02", "S-03", "S-04", "S-05", "S-08", "S-09", "S-10", "S-11", "S-12", "S-13", "S-14"],
+      "start_script": ".kiro/operational-acceptance/phase-a/scripts/start_backend_mode_a.ps1"
+    },
+    "mode_b_isolated_empty": {
+      "database_url": "sqlite:///<repo>/.kiro/operational-acceptance/phase-a/test_db/empty_market_data.db",
+      "scenarios": ["S-06", "S-07"],
+      "start_script": ".kiro/operational-acceptance/phase-a/scripts/start_backend_mode_b_empty.ps1",
+      "policy": "delete-and-recreate-on-each-start"
+    }
+  },
+  "production_db_integrity": {
+    "path": "backend/gelka_enerji.db",
+    "baseline_sha256": "D14531875DB2547101FD025CA557B72041FBB1C2B8DF5CC263079CB5710D9AEA",
+    "baseline_size_bytes": 1232896,
+    "baseline_mtime": "2026-05-14T11:57:33.6425961+03:00",
+    "post_run_sha256": null,
+    "post_run_status": "pending",
+    "verify_script": ".tmp/check_prod_db_unchanged.ps1"
+  },
+  "electron_status": {
+    "stopped_pids": [12832, 22068, 8072, 8428, 10912, 16056],
+    "port_8000_freed": true
+  },
+  "operator": "ulas.htelli",
+  "scope": {
+    "feature": "invoice-recon-engine",
+    "backend_route": "POST /api/recon/analyze",
+    "frontend_page": "frontend/src/recon/ReconPage.tsx"
+  },
+  "environment": {
+    "os": "Microsoft Windows NT 10.0.26200.0",
+    "python": "3.13.7",
+    "node": "v24.11.1",
+    "browser": "<FILL: chrome|edge|firefox + version>"
+  },
+  "git": {
+    "head_sha": "3c7c4c97d0075b214597bd01f0be7790c8680504",
+    "head_short": "3c7c4c97",
+    "working_tree_dirty": true,
+    "modified_files": [
+      "frontend/src/recon/ReconPage.tsx",
+      "frontend/src/recon/types.ts"
+    ]
+  },
+  "dataset": {
+    "name": "Cansu Saatlik Tuketim Ocak-Nisan 2026.xlsx",
+    "size_bytes": 117440,
+    "sha256": "ADB85E7B210D502D6F8FFA18AD6143B6392AFE46C12373EFC81BA258C7CB2F4A",
+    "rows": 2715,
+    "columns": 9,
+    "sheet_name": "Rapor Sonuçları - 1",
+    "period_coverage": "Ocak-Nisan 2026 (Jan/Feb/Mar/partial Apr)"
+  },
+  "test_suite_baseline": {
+    "recon_tests_passing": 97,
+    "verified_at": "2026-05-15T00:00:00+03:00",
+    "test_files": [
+      "tests/test_recon_splitter_classifier.py",
+      "tests/test_recon_reconciler.py",
+      "tests/test_recon_api.py",
+      "tests/test_recon_pbt.py",
+      "tests/test_recon_cansu_golden.py"
+    ]
+  },
+  "results_summary": {
+    "total_scenarios": 14,
+    "pass": 0,
+    "fail": 0,
+    "blocked": 0,
+    "skipped": 0
+  }
+}

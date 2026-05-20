@@ -1,7 +1,10 @@
 import { useState, useRef, useCallback } from 'react';
 import { ArrowLeft, Upload, Loader2, ChevronDown, ChevronUp, AlertTriangle, CheckCircle, XCircle } from 'lucide-react';
 import { analyzeRecon, ReconApiError } from './reconApi';
-import { ReconReport, ReconRequest, InvoiceInput, PeriodResult, ReconciliationItem } from './types';
+import { ReconReport, ReconRequest, InvoiceInput, PeriodResult } from './types';
+import { parseTurkishNumber } from './numberFormat';
+import { PeriodCardV2 } from './PeriodCardV2';
+import { MultiPeriodSummaryV2 } from './MultiPeriodSummaryV2';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Fatura Mutabakat Analizi — Upload & Results Page
@@ -18,22 +21,30 @@ export default function ReconPage({ onBack }: ReconPageProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Invoice input (optional, collapsible)
+  // NOTE: All numeric fields stored as raw strings so users can type Turkish format
+  // ("32.257,08", "3,08", "1.21167" etc.). Parsed via parseTurkishNumber on submit.
   const [showInvoiceInput, setShowInvoiceInput] = useState(false);
-  const [invoiceInput, setInvoiceInput] = useState<InvoiceInput>({
+  const [invoiceInput, setInvoiceInput] = useState({
     period: '',
-    unit_price: undefined,
-    discount_pct: undefined,
-    distribution_unit_price: undefined,
-    declared_t1_kwh: undefined,
-    declared_t2_kwh: undefined,
-    declared_t3_kwh: undefined,
-    declared_total_kwh: undefined,
+    unit_price: '',
+    discount_pct: '',
+    distribution_unit_price: '',
+    declared_t1_kwh: '',
+    declared_t2_kwh: '',
+    declared_t3_kwh: '',
+    declared_total_kwh: '',
+    declared_total_tl: '',  // v2 — energy bill total in TL (drives cost headline)
   });
 
   // Request state
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<ReconReport | null>(null);
+  // Snapshot of invoices submitted with the latest analyze call. Used by the
+  // results renderer to surface declared_total_tl in the cost headline cell
+  // (backend echoes it indirectly via supplier_markup_tl, but the headline
+  // needs the raw figure even when ref cost is null — REQ-6.1).
+  const [submittedInvoices, setSubmittedInvoices] = useState<InvoiceInput[]>([]);
 
   // ── File Handling ──
 
@@ -71,12 +82,26 @@ export default function ReconPage({ onBack }: ReconPageProps) {
     try {
       // Build request body if invoice input is provided
       let requestBody: ReconRequest | undefined;
+      let invoicesForRender: InvoiceInput[] = [];
       if (showInvoiceInput && invoiceInput.period) {
-        requestBody = { invoice_input: invoiceInput };
+        const invoice: InvoiceInput = {
+          period: invoiceInput.period,
+          unit_price_tl_per_kwh: parseTurkishNumber(invoiceInput.unit_price),
+          discount_pct: parseTurkishNumber(invoiceInput.discount_pct),
+          distribution_unit_price_tl_per_kwh: parseTurkishNumber(invoiceInput.distribution_unit_price),
+          declared_t1_kwh: parseTurkishNumber(invoiceInput.declared_t1_kwh),
+          declared_t2_kwh: parseTurkishNumber(invoiceInput.declared_t2_kwh),
+          declared_t3_kwh: parseTurkishNumber(invoiceInput.declared_t3_kwh),
+          declared_total_kwh: parseTurkishNumber(invoiceInput.declared_total_kwh),
+          declared_total_tl: parseTurkishNumber(invoiceInput.declared_total_tl),
+        };
+        requestBody = { invoices: [invoice] };
+        invoicesForRender = [invoice];
       }
 
       const result = await analyzeRecon(file, requestBody);
       setReport(result);
+      setSubmittedInvoices(invoicesForRender);
     } catch (err) {
       if (err instanceof ReconApiError) {
         setError(err.message);
@@ -90,59 +115,55 @@ export default function ReconPage({ onBack }: ReconPageProps) {
 
   // ── Invoice Input Helpers ──
 
-  const updateInvoiceField = (field: keyof InvoiceInput, value: string) => {
-    setInvoiceInput(prev => ({
-      ...prev,
-      [field]: value === '' ? undefined : (field === 'period' ? value : parseFloat(value)),
-    }));
+  const updateInvoiceField = (field: string, value: string) => {
+    setInvoiceInput(prev => ({ ...prev, [field]: value }));
   };
 
   // ── Render ──
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex flex-col">
+    <div className="min-h-screen bg-gradient-to-br from-indigo-100 via-blue-50 to-violet-100 flex flex-col">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 flex-shrink-0">
-        <div className="max-w-5xl mx-auto px-4 py-3">
+      <header className="bg-white/70 backdrop-blur-md border-b border-indigo-200/60 flex-shrink-0 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 py-2.5">
           <div className="flex items-center gap-3">
             <button
               onClick={onBack}
-              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              className="p-1.5 hover:bg-white/60 rounded-lg transition-colors"
               title="Geri"
             >
-              <ArrowLeft className="w-5 h-5 text-gray-600" />
+              <ArrowLeft className="w-5 h-5 text-indigo-700" />
             </button>
-            <h1 className="text-lg font-bold text-gray-900">Fatura Mutabakat Analizi</h1>
+            <h1 className="text-lg font-bold bg-gradient-to-r from-blue-700 to-violet-700 bg-clip-text text-transparent">Fatura Mutabakat Analizi</h1>
           </div>
         </div>
       </header>
 
-      <main className="flex-1 max-w-5xl mx-auto px-4 py-6 w-full space-y-6">
+      <main className="flex-1 max-w-7xl mx-auto px-4 py-2 w-full space-y-2">
         {/* File Upload Section */}
-        <section className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-sm font-semibold text-gray-700 mb-3">Excel Dosyası Yükle</h2>
+        <section className="bg-gradient-to-br from-blue-50 to-cyan-50 rounded-xl border border-blue-200/70 shadow-sm p-3">
+          <h2 className="text-xs font-semibold text-blue-800 mb-1.5 uppercase tracking-wide">Excel Dosyası Yükle</h2>
           <div
             onDrop={handleDrop}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onClick={() => fileInputRef.current?.click()}
-            className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
+            className={`border-2 border-dashed rounded-lg p-2.5 text-center cursor-pointer transition-colors ${
               dragActive
-                ? 'border-blue-400 bg-blue-50'
+                ? 'border-blue-500 bg-blue-100'
                 : file
-                ? 'border-green-300 bg-green-50'
-                : 'border-gray-300 hover:border-gray-400 hover:bg-gray-50'
+                ? 'border-emerald-400 bg-emerald-50'
+                : 'border-blue-300 hover:border-blue-400 hover:bg-blue-50/60 bg-white/60'
             }`}
           >
-            <Upload className={`w-8 h-8 mx-auto mb-2 ${file ? 'text-green-500' : 'text-gray-400'}`} />
-            {file ? (
-              <p className="text-sm text-green-700 font-medium">{file.name}</p>
-            ) : (
-              <>
-                <p className="text-sm text-gray-600">Dosyayı sürükleyin veya tıklayın</p>
-                <p className="text-xs text-gray-400 mt-1">.xlsx veya .xls (maks. 50 MB)</p>
-              </>
-            )}
+            <div className="flex items-center justify-center gap-2">
+              <Upload className={`w-4 h-4 ${file ? 'text-emerald-600' : 'text-blue-500'}`} />
+              {file ? (
+                <p className="text-sm text-emerald-700 font-medium">{file.name}</p>
+              ) : (
+                <p className="text-sm text-blue-700">Dosyayı sürükleyin veya tıklayın <span className="text-blue-400">(.xlsx / .xls, maks. 50 MB)</span></p>
+              )}
+            </div>
           </div>
           <input
             ref={fileInputRef}
@@ -157,36 +178,48 @@ export default function ReconPage({ onBack }: ReconPageProps) {
         </section>
 
         {/* Optional Invoice Input (Collapsible) */}
-        <section className="bg-white rounded-xl border border-gray-200">
+        <section className="bg-gradient-to-br from-violet-50 to-fuchsia-50 rounded-xl border border-violet-200/70 shadow-sm">
           <button
             onClick={() => setShowInvoiceInput(!showInvoiceInput)}
-            className="w-full px-6 py-3 flex items-center justify-between text-left"
+            className="w-full px-3 py-1.5 flex items-center justify-between text-left"
           >
-            <span className="text-sm font-semibold text-gray-700">Fatura Bilgileri (Opsiyonel)</span>
+            <span className="text-xs font-semibold text-violet-800 uppercase tracking-wide">Fatura Bilgileri (Opsiyonel)</span>
             {showInvoiceInput ? (
-              <ChevronUp className="w-4 h-4 text-gray-400" />
+              <ChevronUp className="w-4 h-4 text-violet-600" />
             ) : (
-              <ChevronDown className="w-4 h-4 text-gray-400" />
+              <ChevronDown className="w-4 h-4 text-violet-600" />
             )}
           </button>
           {showInvoiceInput && (
-            <div className="px-6 pb-5 grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="px-3 pb-2 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2">
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Dönem (YYYY-MM)</label>
+                <label className="block text-xs text-gray-500 mb-1">Dönem</label>
                 <input
-                  type="text"
-                  placeholder="2026-04"
+                  type="month"
                   value={invoiceInput.period || ''}
                   onChange={(e) => updateInvoiceField('period', e.target.value)}
                   className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
               <div>
+                <label className="block text-xs text-gray-500 mb-1">Toplam fatura tutarı (TL)</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="örn. 598.791,42"
+                  value={invoiceInput.declared_total_tl}
+                  onChange={(e) => updateInvoiceField('declared_total_tl', e.target.value)}
+                  className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                />
+                <p className="mt-0.5 text-[10px] text-gray-500">Enerji bedeli toplamı (TL). Boş bırakılabilir.</p>
+              </div>
+              <div>
                 <label className="block text-xs text-gray-500 mb-1">Birim Fiyat (TL/kWh)</label>
                 <input
-                  type="number"
-                  step="0.01"
-                  value={invoiceInput.unit_price ?? ''}
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="örn. 3,08"
+                  value={invoiceInput.unit_price}
                   onChange={(e) => updateInvoiceField('unit_price', e.target.value)}
                   className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 />
@@ -194,9 +227,10 @@ export default function ReconPage({ onBack }: ReconPageProps) {
               <div>
                 <label className="block text-xs text-gray-500 mb-1">İndirim (%)</label>
                 <input
-                  type="number"
-                  step="0.1"
-                  value={invoiceInput.discount_pct ?? ''}
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="örn. 4,77"
+                  value={invoiceInput.discount_pct}
                   onChange={(e) => updateInvoiceField('discount_pct', e.target.value)}
                   className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 />
@@ -204,9 +238,10 @@ export default function ReconPage({ onBack }: ReconPageProps) {
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Dağıtım B.F. (TL/kWh)</label>
                 <input
-                  type="number"
-                  step="0.01"
-                  value={invoiceInput.distribution_unit_price ?? ''}
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="örn. 0,895372"
+                  value={invoiceInput.distribution_unit_price}
                   onChange={(e) => updateInvoiceField('distribution_unit_price', e.target.value)}
                   className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 />
@@ -214,9 +249,10 @@ export default function ReconPage({ onBack }: ReconPageProps) {
               <div>
                 <label className="block text-xs text-gray-500 mb-1">T1 kWh (Beyan)</label>
                 <input
-                  type="number"
-                  step="0.01"
-                  value={invoiceInput.declared_t1_kwh ?? ''}
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="örn. 87.525,085"
+                  value={invoiceInput.declared_t1_kwh}
                   onChange={(e) => updateInvoiceField('declared_t1_kwh', e.target.value)}
                   className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 />
@@ -224,9 +260,10 @@ export default function ReconPage({ onBack }: ReconPageProps) {
               <div>
                 <label className="block text-xs text-gray-500 mb-1">T2 kWh (Beyan)</label>
                 <input
-                  type="number"
-                  step="0.01"
-                  value={invoiceInput.declared_t2_kwh ?? ''}
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="örn. 41.397,409"
+                  value={invoiceInput.declared_t2_kwh}
                   onChange={(e) => updateInvoiceField('declared_t2_kwh', e.target.value)}
                   className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 />
@@ -234,9 +271,10 @@ export default function ReconPage({ onBack }: ReconPageProps) {
               <div>
                 <label className="block text-xs text-gray-500 mb-1">T3 kWh (Beyan)</label>
                 <input
-                  type="number"
-                  step="0.01"
-                  value={invoiceInput.declared_t3_kwh ?? ''}
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="örn. 65.490,353"
+                  value={invoiceInput.declared_t3_kwh}
                   onChange={(e) => updateInvoiceField('declared_t3_kwh', e.target.value)}
                   className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 />
@@ -244,9 +282,10 @@ export default function ReconPage({ onBack }: ReconPageProps) {
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Toplam kWh (Beyan)</label>
                 <input
-                  type="number"
-                  step="0.01"
-                  value={invoiceInput.declared_total_kwh ?? ''}
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="örn. 194.412,847"
+                  value={invoiceInput.declared_total_kwh}
                   onChange={(e) => updateInvoiceField('declared_total_kwh', e.target.value)}
                   className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 />
@@ -259,7 +298,7 @@ export default function ReconPage({ onBack }: ReconPageProps) {
         <button
           onClick={handleSubmit}
           disabled={!file || loading}
-          className="w-full py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+          className="w-full py-2.5 bg-gradient-to-r from-blue-600 to-violet-600 text-white font-semibold rounded-lg hover:from-blue-700 hover:to-violet-700 disabled:from-slate-300 disabled:to-slate-300 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md"
         >
           {loading ? (
             <span className="flex items-center justify-center gap-2">
@@ -273,97 +312,87 @@ export default function ReconPage({ onBack }: ReconPageProps) {
 
         {/* Error State (Red) */}
         {error && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
             <XCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
             <p className="text-sm text-red-700">{error}</p>
           </div>
         )}
 
         {/* Results */}
-        {report && <ReconResults report={report} />}
+        {report && (
+          <ReconResults
+            report={report}
+            submittedInvoices={submittedInvoices}
+          />
+        )}
       </main>
     </div>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Results Component
+// Results Component (v2)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function ReconResults({ report }: { report: ReconReport }) {
+function ReconResults({
+  report,
+  submittedInvoices,
+}: {
+  report: ReconReport;
+  submittedInvoices: InvoiceInput[];
+}) {
   const isPartial = report.status === 'partial';
   const hasBlockedPeriods = report.periods.some(p => p.quote_blocked);
 
-  return (
-    <div className="space-y-4">
-      {/* Status Banner */}
-      {isPartial && hasBlockedPeriods ? (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
-          <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm font-medium text-amber-700">Kısmi Sonuç</p>
-            <p className="text-xs text-amber-600 mt-1">
-              Bazı dönemler için teklif oluşturulamıyor. Detaylar aşağıda.
-            </p>
-          </div>
-        </div>
-      ) : (
-        <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
-          <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm font-medium text-green-700">Analiz Tamamlandı</p>
-            <p className="text-xs text-green-600 mt-1">
-              Tüm dönemler başarıyla analiz edildi.
-            </p>
-          </div>
-        </div>
-      )}
+  // Lookup: period → declared_total_tl from the in-flight request body.
+  const declaredTotalByPeriod = new Map<string, number | undefined>();
+  for (const inv of submittedInvoices) {
+    declaredTotalByPeriod.set(inv.period, inv.declared_total_tl);
+  }
 
-      {/* Parse Stats */}
-      <div className="bg-white rounded-xl border border-gray-200 p-5">
-        <h3 className="text-sm font-semibold text-gray-700 mb-3">Dosya Bilgileri</h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-          <div>
-            <span className="text-gray-500">Format:</span>
-            <span className="ml-2 font-medium text-gray-900">{report.format_detected}</span>
-          </div>
-          <div>
-            <span className="text-gray-500">Toplam Satır:</span>
-            <span className="ml-2 font-medium text-gray-900">{report.parse_stats.total_rows}</span>
-          </div>
-          <div>
-            <span className="text-gray-500">Başarılı:</span>
-            <span className="ml-2 font-medium text-green-700">{report.parse_stats.parsed_rows}</span>
-          </div>
-          <div>
-            <span className="text-gray-500">Hatalı:</span>
-            <span className={`ml-2 font-medium ${report.parse_stats.error_rows > 0 ? 'text-red-700' : 'text-gray-900'}`}>
-              {report.parse_stats.error_rows}
-            </span>
-          </div>
+  return (
+    <div className="space-y-2">
+      {/* Status + Parse Stats — combined compact bar (kept from v1, amber-only) */}
+      <div className={`rounded-lg px-3 py-2 flex items-center justify-between gap-4 flex-wrap shadow-sm ${
+        isPartial && hasBlockedPeriods
+          ? 'bg-gradient-to-r from-amber-100 to-orange-100 border border-amber-300'
+          : 'bg-gradient-to-r from-emerald-100 to-teal-100 border border-emerald-300'
+      }`}>
+        <div className="flex items-center gap-2">
+          {isPartial && hasBlockedPeriods ? (
+            <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+          ) : (
+            <CheckCircle className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+          )}
+          <p className={`text-sm font-semibold ${isPartial && hasBlockedPeriods ? 'text-amber-800' : 'text-emerald-800'}`}>
+            {isPartial && hasBlockedPeriods ? 'Kısmi Sonuç' : 'Analiz Tamamlandı'}
+          </p>
+          <span className={`text-xs ${isPartial && hasBlockedPeriods ? 'text-amber-700' : 'text-emerald-700'}`}>
+            · Format <span className="font-medium">{report.format_detected}</span> · {report.parse_stats.successful_rows}/{report.parse_stats.total_rows} satır
+            {report.parse_stats.failed_rows > 0 && <span className="text-red-700"> · {report.parse_stats.failed_rows} hata</span>}
+          </span>
         </div>
-        {report.parse_stats.errors.length > 0 && (
-          <div className="mt-3 text-xs text-red-600 space-y-1">
-            {report.parse_stats.errors.slice(0, 5).map((err, i) => (
-              <p key={i}>• {err}</p>
-            ))}
-            {report.parse_stats.errors.length > 5 && (
-              <p className="text-gray-500">...ve {report.parse_stats.errors.length - 5} hata daha</p>
-            )}
-          </div>
-        )}
       </div>
 
-      {/* Period Results */}
-      {report.periods.map((period, idx) => (
-        <PeriodCard key={idx} period={period} isPartial={isPartial} />
-      ))}
+      {/* Multi-period summary v2 — only renders when summary is non-null */}
+      {report.summary && <MultiPeriodSummaryV2 summary={report.summary} />}
 
-      {/* Warnings */}
+      {/* Period cards (v2) */}
+      <div className="space-y-2">
+        {report.periods.map((period: PeriodResult) => (
+          <PeriodCardV2
+            key={period.period}
+            period={period}
+            declaredTotalTl={declaredTotalByPeriod.get(period.period) ?? null}
+          />
+        ))}
+      </div>
+
+      {/* Warnings (v1, kept) */}
       {report.warnings.length > 0 && (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-          <h3 className="text-sm font-semibold text-amber-700 mb-2">Uyarılar</h3>
-          <ul className="text-xs text-amber-600 space-y-1">
+        <div className="bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-200 rounded-lg p-2">
+          <h3 className="text-xs font-semibold text-amber-800 mb-1">Uyarılar</h3>
+          <ul className="text-xs text-amber-700 space-y-0.5">
             {report.warnings.map((w, i) => (
               <li key={i}>• {w}</li>
             ))}
@@ -371,184 +400,5 @@ function ReconResults({ report }: { report: ReconReport }) {
         </div>
       )}
     </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Period Card Component
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function PeriodCard({ period, isPartial }: { period: PeriodResult; isPartial: boolean }) {
-  return (
-    <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
-      {/* Period Header */}
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-gray-900">Dönem: {period.period}</h3>
-        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-          period.overall_severity === 'CRITICAL'
-            ? 'bg-red-100 text-red-700'
-            : period.overall_severity === 'WARNING'
-            ? 'bg-amber-100 text-amber-700'
-            : 'bg-green-100 text-green-700'
-        }`}>
-          {period.overall_status}
-        </span>
-      </div>
-
-      {/* kWh Summary */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
-        <div>
-          <span className="text-gray-500 text-xs">Toplam</span>
-          <p className="font-medium text-gray-900">{period.total_kwh.toLocaleString('tr-TR')} kWh</p>
-        </div>
-        <div>
-          <span className="text-gray-500 text-xs">T1 (Gündüz)</span>
-          <p className="font-medium text-gray-900">{period.t1_kwh.toLocaleString('tr-TR')} kWh</p>
-          <p className="text-xs text-gray-400">%{period.t1_pct.toFixed(1)}</p>
-        </div>
-        <div>
-          <span className="text-gray-500 text-xs">T2 (Puant)</span>
-          <p className="font-medium text-gray-900">{period.t2_kwh.toLocaleString('tr-TR')} kWh</p>
-          <p className="text-xs text-gray-400">%{period.t2_pct.toFixed(1)}</p>
-        </div>
-        <div>
-          <span className="text-gray-500 text-xs">T3 (Gece)</span>
-          <p className="font-medium text-gray-900">{period.t3_kwh.toLocaleString('tr-TR')} kWh</p>
-          <p className="text-xs text-gray-400">%{period.t3_pct.toFixed(1)}</p>
-        </div>
-        <div>
-          <span className="text-gray-500 text-xs">Eksik Saat</span>
-          <p className={`font-medium ${period.missing_hours > 0 ? 'text-amber-700' : 'text-gray-900'}`}>
-            {period.missing_hours}
-          </p>
-        </div>
-      </div>
-
-      {/* Reconciliation Items */}
-      {period.reconciliation.length > 0 && (
-        <div>
-          <h4 className="text-xs font-semibold text-gray-600 mb-2">Mutabakat Detayı</h4>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-gray-100">
-                  <th className="text-left py-1.5 text-gray-500 font-medium">Alan</th>
-                  <th className="text-right py-1.5 text-gray-500 font-medium">Excel (kWh)</th>
-                  <th className="text-right py-1.5 text-gray-500 font-medium">Fatura (kWh)</th>
-                  <th className="text-right py-1.5 text-gray-500 font-medium">Fark</th>
-                  <th className="text-right py-1.5 text-gray-500 font-medium">Fark %</th>
-                  <th className="text-center py-1.5 text-gray-500 font-medium">Durum</th>
-                </tr>
-              </thead>
-              <tbody>
-                {period.reconciliation.map((item, i) => (
-                  <ReconciliationRow key={i} item={item} />
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Cost Comparison (only when status="ok" and cost_comparison exists) */}
-      {!isPartial && period.cost_comparison && (
-        <div className="bg-gray-50 rounded-lg p-4">
-          <h4 className="text-xs font-semibold text-gray-600 mb-2">Maliyet Karşılaştırması</h4>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-            <div>
-              <span className="text-gray-500 text-xs">Fatura Toplam</span>
-              <p className="font-medium text-gray-900">
-                {period.cost_comparison.invoice_total_tl.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
-              </p>
-            </div>
-            <div>
-              <span className="text-gray-500 text-xs">Gelka Toplam</span>
-              <p className="font-medium text-gray-900">
-                {period.cost_comparison.gelka_total_tl.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
-              </p>
-            </div>
-            <div>
-              <span className="text-gray-500 text-xs">Fark</span>
-              <p className={`font-medium ${period.cost_comparison.difference_tl >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                {period.cost_comparison.difference_tl.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺
-              </p>
-            </div>
-            <div>
-              <span className="text-gray-500 text-xs">Fark %</span>
-              <p className={`font-medium ${period.cost_comparison.difference_pct >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                %{period.cost_comparison.difference_pct.toFixed(2)}
-              </p>
-            </div>
-          </div>
-          {period.cost_comparison.message && (
-            <p className="text-xs text-gray-600 mt-2">{period.cost_comparison.message}</p>
-          )}
-        </div>
-      )}
-
-      {/* Quote Blocked Banner (amber) */}
-      {period.quote_blocked && (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-          <div>
-            <p className="text-xs font-medium text-amber-700">Teklif Oluşturulamıyor</p>
-            {period.quote_block_reason && (
-              <p className="text-xs text-amber-600 mt-0.5">{period.quote_block_reason}</p>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Period Warnings */}
-      {period.warnings.length > 0 && (
-        <div className="text-xs text-amber-600 space-y-0.5">
-          {period.warnings.map((w, i) => (
-            <p key={i}>⚠ {w}</p>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// Reconciliation Row
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function ReconciliationRow({ item }: { item: ReconciliationItem }) {
-  const severityBadge = () => {
-    if (!item.severity) return null;
-    const colors = {
-      LOW: 'bg-green-100 text-green-700',
-      WARNING: 'bg-amber-100 text-amber-700',
-      CRITICAL: 'bg-red-100 text-red-700',
-    };
-    return (
-      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${colors[item.severity]}`}>
-        {item.severity}
-      </span>
-    );
-  };
-
-  const statusColor = {
-    UYUMLU: 'text-green-700',
-    UYUMSUZ: 'text-red-700',
-    KONTROL_EDILMEDI: 'text-gray-500',
-  };
-
-  return (
-    <tr className="border-b border-gray-50">
-      <td className="py-1.5 text-gray-900">{item.field}</td>
-      <td className="py-1.5 text-right text-gray-700">{item.excel_total_kwh.toLocaleString('tr-TR')}</td>
-      <td className="py-1.5 text-right text-gray-700">{item.invoice_total_kwh.toLocaleString('tr-TR')}</td>
-      <td className="py-1.5 text-right text-gray-700">{item.delta_kwh.toLocaleString('tr-TR')}</td>
-      <td className="py-1.5 text-right text-gray-700">%{item.delta_pct.toFixed(2)}</td>
-      <td className="py-1.5 text-center">
-        <div className="flex items-center justify-center gap-1">
-          <span className={`text-[10px] font-medium ${statusColor[item.status]}`}>{item.status}</span>
-          {severityBadge()}
-        </div>
-      </td>
-    </tr>
   );
 }

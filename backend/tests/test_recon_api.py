@@ -188,7 +188,7 @@ class TestMarketDataMissing:
                 # status="ok" means DB had PTF data (unlikely in test) or
                 # no invoice matching period was found
                 # Either way, api_version must be present
-                assert result["api_version"] == 1
+                assert result["api_version"] == 2
         else:
             # DB connection error in test env — acceptable
             assert response.status_code in (200, 500)
@@ -210,7 +210,7 @@ class TestHappyPath:
         # status is "partial" because no PTF data in test DB
         assert response.status_code == 200
         result = response.json()
-        assert result["api_version"] == 1
+        assert result["api_version"] == 2
         assert result["format_detected"] == "format_b"
         assert result["parse_stats"]["successful_rows"] == 24
         assert result["parse_stats"]["failed_rows"] == 0
@@ -265,7 +265,7 @@ class TestResponseContract:
         )
         assert response.status_code == 200
         assert "api_version" in response.json()
-        assert response.json()["api_version"] == 1
+        assert response.json()["api_version"] == 2
 
     def test_multiplier_metadata_in_format_a(self):
         """Format A: multiplier_metadata present but never applied."""

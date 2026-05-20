@@ -28,6 +28,7 @@ request_body optional:
 
 from __future__ import annotations
 
+import calendar
 import json
 import logging
 import time
@@ -41,7 +42,9 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from .classifier import classify_period_records
 from .comparator import compare_costs
+from .comparator_v2 import compute_markup
 from .cost_engine import calculate_ptf_cost, check_quote_eligibility, get_yekdem_cost
+from .cost_engine_v2 import compute_period_reference_cost
 from .parser import (
     EmptyFileError,
     FileTooLargeError,
@@ -55,9 +58,14 @@ from .reconciler import (
     get_overall_status,
     reconcile_consumption,
 )
-from .report_builder import build_report
+from .report_builder import (
+    _round_currency_tl_half_up,
+    _round_pct_half_up,
+    build_report,
+)
 from .schemas import (
     ComparisonConfig,
+    CostInputs,
     ErrorResponse,
     InvoiceInput,
     PeriodResult,
@@ -76,6 +84,13 @@ logger = logging.getLogger(__name__)
 ALLOWED_EXTENSIONS = {".xlsx", ".xls"}
 MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
 SLOW_REQUEST_THRESHOLD_S = 30.0
+
+# v2 quote_block_reason — deterministic format strings.
+# These MUST remain stable for observability/debug parsing.
+# Format: fixed prefix + variable detail.
+V2_BLOCK_REASON_PTF_MISSING = "PTF data missing for {n} hours"
+V2_BLOCK_REASON_YEKDEM_MISSING = "YEKDEM data missing for period"
+V2_BLOCK_REASON_EMPTY_RECORDS = "Reference cost computation failed (empty records)"
 
 recon_router = APIRouter(prefix="/api/recon", tags=["recon"])
 
@@ -226,14 +241,68 @@ def _run_pipeline(
         overall_status = get_overall_status(recon_items)
         overall_severity = get_overall_severity(recon_items)
 
+        # ── v2: Always-on reference energy cost ─────────────────────────────
+        # Fail-closed: any missing PTF hour or YEKDEM → reference_energy_cost_tl=None
+        ref_result = compute_period_reference_cost(records, period, db)
+
+        # ── v2: Markup computation (conditional) ─────────────────────────────
+        # Three-way AND: ref_cost present, invoice present, declared_total_tl present
+        markup = None
+        if (
+            ref_result.reference_energy_cost_tl is not None
+            and invoice is not None
+            and invoice.declared_total_tl is not None
+        ):
+            markup = compute_markup(
+                invoice_total_tl=invoice.declared_total_tl,
+                reference_cost_tl=ref_result.reference_energy_cost_tl,
+                gelka_margin_multiplier=request.comparison.gelka_margin_multiplier,
+            )
+
+        # ── v2 → Decimal_Boundary serialization (router only) ────────────────
+        v2_ref_cost_tl = (
+            _round_currency_tl_half_up(ref_result.reference_energy_cost_tl)
+            if ref_result.reference_energy_cost_tl is not None
+            else None
+        )
+        v2_markup_tl = (
+            _round_currency_tl_half_up(markup.supplier_markup_tl) if markup else None
+        )
+        v2_markup_pct = (
+            _round_pct_half_up(markup.supplier_markup_pct)
+            if markup is not None and markup.supplier_markup_pct is not None
+            else None
+        )
+        v2_gelka_estimate_tl = (
+            _round_currency_tl_half_up(markup.gelka_estimate_tl) if markup else None
+        )
+        v2_potential_savings_tl = (
+            _round_currency_tl_half_up(markup.potential_savings_tl) if markup else None
+        )
+
         # PTF cost
         ptf_result = calculate_ptf_cost(records, period, db)
 
         # YEKDEM cost
         yekdem_result = get_yekdem_cost(period, tz_summary.total_kwh, db)
 
-        # Quote eligibility (fail-closed)
+        # Quote eligibility (fail-closed) — v1 logic
         quote_blocked, quote_block_reason = check_quote_eligibility(ptf_result, yekdem_result)
+
+        # ── v2: Merge quote_blocked with v2 fail-closed semantics ────────────
+        # v2 is stricter than v1 (single missing PTF hour blocks; v1 tolerates).
+        # If v2 blocks but v1 didn't, v2 reason takes priority (more specific).
+        v2_blocked = ref_result.reference_energy_cost_tl is None
+        if v2_blocked and not quote_blocked:
+            quote_blocked = True
+            if not records:
+                quote_block_reason = V2_BLOCK_REASON_EMPTY_RECORDS
+            elif ref_result.ptf_hours_missing > 0:
+                quote_block_reason = V2_BLOCK_REASON_PTF_MISSING.format(
+                    n=ref_result.ptf_hours_missing
+                )
+            elif ref_result.yekdem_missing:
+                quote_block_reason = V2_BLOCK_REASON_YEKDEM_MISSING
 
         # Cost comparison (only if NOT blocked and invoice data available)
         cost_comparison = None
@@ -284,6 +353,17 @@ def _run_pipeline(
             quote_blocked=quote_blocked,
             quote_block_reason=quote_block_reason,
             warnings=period_warnings,
+            # v2 cost headline fields
+            reference_energy_cost_tl=v2_ref_cost_tl,
+            supplier_markup_tl=v2_markup_tl,
+            supplier_markup_pct=v2_markup_pct,
+            gelka_estimate_tl=v2_gelka_estimate_tl,
+            potential_savings_tl=v2_potential_savings_tl,
+            cost_inputs=_build_cost_inputs(
+                period,
+                records,
+                v2_complete=ref_result.reference_energy_cost_tl is not None,
+            ),
         ))
 
     # Determine overall status
@@ -349,3 +429,37 @@ def _error_response(status_code: int, error: str, message: str) -> JSONResponse:
         status_code=status_code,
         content=ErrorResponse(error=error, message=message).model_dump(),
     )
+
+
+def _build_cost_inputs(
+    period: str,
+    records: list,
+    v2_complete: bool,
+) -> CostInputs:
+    """Build CostInputs metadata for a period.
+
+    Always returns a populated CostInputs — even in fail-closed scenarios.
+
+    `v2_complete` reflects the v2 fail-closed semantic:
+      True  → reference_energy_cost_tl was successfully computed (all PTF hours
+              matched AND YEKDEM available).
+      False → at least one PTF hour missing OR YEKDEM missing OR empty records.
+
+    NOTE: This is stricter than v1's `ptf_data_sufficient` (which tolerates
+    partial PTF coverage). v2 says "complete=True" only when the reference
+    cost is non-null.
+    """
+    year, month = int(period[:4]), int(period[5:7])
+    days_in_month = calendar.monthrange(year, month)[1]
+    period_start = f"{year:04d}-{month:02d}-01"
+    period_end = f"{year:04d}-{month:02d}-{days_in_month:02d}"
+
+    return CostInputs(
+        ptf_source="hourly_market_prices",
+        yekdem_source="monthly_yekdem_prices",
+        period_start=period_start,
+        period_end=period_end,
+        total_hours=len(records),
+        complete=v2_complete,
+    )
+
