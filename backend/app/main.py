@@ -2023,6 +2023,16 @@ async def generate_pdf_simple(
     Üstü 429 döner. Render timeout: _PDF_RENDER_TIMEOUT saniye.
     Temp dosya yazmaz — bytes doğrudan response'a stream edilir.
     """
+    # ── P0 guard: Teklif PTF zorunlu — PTF<=0 → çöp teklif (manuel modda boş PTF). ──
+    # Çağrıldığı yerler: api.ts downloadPdf → App.tsx handleDownloadPdf (manuel+AI) + Electron.
+    # YEKDEM'e dokunulmaz (0/tahmini/kesin meşru); yalnızca PTF zorunluluğu kapatılır.
+    if weighted_ptf_tl_per_mwh is None or weighted_ptf_tl_per_mwh <= 0:
+        return JSONResponse(
+            status_code=422,
+            content={"error": {"code": "invalid_ptf",
+                     "message": "Teklif PTF değeri zorunludur ve 0'dan büyük olmalıdır."}},
+        )
+
     import time as _time
     from .ptf_metrics import get_ptf_metrics as _get_pdf_metrics
 

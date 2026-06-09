@@ -334,6 +334,9 @@ function App() {
   // Parametreler değiştiğinde otomatik yeniden hesaplama
   // Backend'den gelen calculation varsa onu kullan, yoksa frontend'de hesapla
   const liveCalculation = useMemo(() => {
+    // P0 guard: geçersiz PTF (boş/0) → teklif hesaplama (çöp teklif önlemi).
+    // YEKDEM'e dokunulmaz; yalnızca PTF zorunlu.
+    if (!ptfPrice || ptfPrice <= 0) return null;
     // Manuel mod aktifse, manuel değerlerle hesapla
     if (manualMode && manualValues.consumption_kwh > 0) {
       const kwh = manualValues.consumption_kwh;
@@ -809,7 +812,12 @@ function App() {
 
   const handleDownloadPdf = async () => {
     if (!liveCalculation) return;
-    
+    // P0 guard: PTF zorunlu — boş/0 ise çöp teklif PDF'i üretme.
+    if (!ptfPrice || ptfPrice <= 0) {
+      setError("Teklif PTF değeri zorunludur ve 0'dan büyük olmalıdır.");
+      return;
+    }
+
     // Seçili tarife grubunu belirle
     const selectedTariffLabel = distributionTariffKey 
       ? activeTariffs.find(t => t.key === distributionTariffKey)?.label || manualValues.tariff_group
@@ -2667,7 +2675,7 @@ function App() {
                     </h3>
                     <button
                       onClick={handleDownloadPdf}
-                      disabled={pdfLoading}
+                      disabled={pdfLoading || !ptfPrice || ptfPrice <= 0}
                       className="btn-primary flex items-center gap-1 px-3 py-1 text-xs"
                     >
                       {pdfLoading ? (
@@ -2797,7 +2805,7 @@ function App() {
                 <div className="flex gap-2">
                   <button
                     onClick={handleDownloadPdf}
-                    disabled={pdfLoading}
+                    disabled={pdfLoading || !ptfPrice || ptfPrice <= 0}
                     className="btn-primary flex-1 flex items-center justify-center gap-2 py-2 text-sm"
                   >
                     {pdfLoading ? (
