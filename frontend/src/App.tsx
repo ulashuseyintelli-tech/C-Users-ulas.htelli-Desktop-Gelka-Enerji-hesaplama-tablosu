@@ -1188,7 +1188,7 @@ function App() {
                         if (!period) return;
                         setPriceSaving(true);
                         try {
-                          await fetch(`${API_BASE}/api/epias/prices/${period}`, {
+                          const res = await fetch(`${API_BASE}/api/epias/prices/${period}`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
@@ -1196,10 +1196,27 @@ function App() {
                               yekdem_tl_per_mwh: yekdemPrice,
                             }),
                           });
+                          if (!res.ok) {
+                            // P0-a: backend reddini (422/500) gizleme — sahte "kaydedildi" yok.
+                            let msg = 'PTF/YEKDEM kaydedilemedi.';
+                            try {
+                              const body = await res.json();
+                              if (body?.detail) {
+                                msg = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail);
+                              } else if (body?.error?.message) {
+                                msg = body.error.message;
+                              }
+                            } catch { /* JSON degilse default mesaj */ }
+                            setError(msg);
+                            return;  // setPriceSaved(true) CALISMAZ
+                          }
+                          setError(null);  // basaridan once eski hata banner'ini temizle
                           setPriceModified(false);
                           setPriceSaved(true);
                           setTimeout(() => setPriceSaved(false), 3000);
                         } catch (err) {
+                          // Ag hatasi (fetch throw): bunu da gizleme.
+                          setError('PTF/YEKDEM kaydedilemedi: baglanti hatasi.');
                           console.error('Fiyat kaydetme hatası:', err);
                         } finally {
                           setPriceSaving(false);
