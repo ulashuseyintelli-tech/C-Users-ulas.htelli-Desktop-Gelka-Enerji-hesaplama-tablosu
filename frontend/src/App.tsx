@@ -334,9 +334,9 @@ function App() {
   // Parametreler değiştiğinde otomatik yeniden hesaplama
   // Backend'den gelen calculation varsa onu kullan, yoksa frontend'de hesapla
   const liveCalculation = useMemo(() => {
-    // P0 guard: geçersiz PTF (boş/0) → teklif hesaplama (çöp teklif önlemi).
-    // YEKDEM'e dokunulmaz; yalnızca PTF zorunlu.
-    if (!ptfPrice || ptfPrice <= 0) return null;
+    // NOT: PTF boş/0 iken liveCalculation null DÖNDÜRÜLMEZ — aksi halde manuel
+    // giriş alanı (dönem/PTF/YEKDEM) da gizlenir. Çöp PDF/çıktı güvenliği
+    // backend 422 + handleDownloadPdf guard + PDF buton disabled ile sağlanır.
     // Manuel mod aktifse, manuel değerlerle hesapla
     if (manualMode && manualValues.consumption_kwh > 0) {
       const kwh = manualValues.consumption_kwh;
