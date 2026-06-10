@@ -755,8 +755,8 @@ def _generate_pdf_reportlab(
     # YEKDEM Uygulaması
     elements.append(Paragraph("<b>YEKDEM Uygulaması</b>", letter_style))
     elements.append(Paragraph(
-        "YEKDEM bedeli, EPİAŞ tarafından kesinleştirilmediği durumlarda tahmini olarak faturalandırılabilir. "
-        "Gerçekleşen değer açıklandığında fark izleyen dönemlerde mahsup edilir.",
+        "YEKDEM bedeli tahmini değerdir. EPİAŞ tarafından açıklanacak kesin YEKDEM bedeline göre "
+        "sonraki dönem faturasında mahsup veya ek tahakkuk yapılabilir.",
         letter_style
     ))
     elements.append(Spacer(1, 0.1*cm))
@@ -918,7 +918,7 @@ def _generate_pdf_reportlab(
     # Ek Bilgiler
     ek_bilgi_style = ParagraphStyle('EkBilgi', parent=styles['Normal'], fontSize=7.5, fontName=font_name, leading=10, textColor=colors.HexColor('#6B7280'))
     elements.append(Paragraph(f"<b>Ek Bilgiler:</b> Bu teklif, mevcut fatura verileriniz esas alınarak hazırlanmıştır. Gerçek tasarruf tutarları, tüketim miktarı ve piyasa koşullarına göre değişiklik gösterebilir. Teklif {offer_validity_days} gün süreyle geçerlidir.", ek_bilgi_style))
-    
+
     # Build with header/footer
     doc.build(elements, onFirstPage=add_header_footer, onLaterPages=add_header_footer)
     return buffer.getvalue()
