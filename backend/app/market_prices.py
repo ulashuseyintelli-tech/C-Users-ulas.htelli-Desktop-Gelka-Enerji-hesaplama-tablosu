@@ -23,6 +23,74 @@ from sqlalchemy.orm import Session
 logger = logging.getLogger(__name__)
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# SoT-X Seviye 1: Profil-ağırlıklı PTF (hourly_market_prices'tan)
+# Bkz. docs/sot-x-offer-ptf-parity.md
+# ════════════════════════════════════════════════════════════════════════════
+
+# Profil katsayıları (zone: T1=Gündüz, T2=Puant, T3=Gece) — ilk fail-safe değerler.
+# Gerçek sayaç profili/preset kalibrasyonu (Seviye 2) ile değişebilir.
+PROFILE_WEIGHTS: dict[str, dict[str, float]] = {
+    "duz":        {"T1": 1.0, "T2": 1.0, "T3": 1.0},
+    "puant_agir": {"T1": 1.5, "T2": 3.0, "T3": 0.5},
+    "gece_agir":  {"T1": 1.0, "T2": 0.5, "T3": 3.0},
+}
+
+
+def default_profile_for_tariff(tariff_group: Optional[str]) -> str:
+    """Tarife sınıfı → default profil. Bilinmeyen → puant_agir (fail-safe: maliyeti yukarı çeker)."""
+    t = (tariff_group or "").lower()
+    if "mesken" in t:
+        return "duz"
+    # Sanayi, ticarethane ve bilinmeyen → puant-ağır (fail-safe)
+    return "puant_agir"
+
+
+@dataclass(frozen=True)
+class WeightedPtfResult:
+    """weighted_ptf_for_profile dönüşü. ptf None ise hourly veri yok (caller fallback'e karar verir)."""
+    ptf_tl_per_mwh: Optional[float]
+    hours: int
+    profile: str
+
+
+def _zone_weighted_avg_ptf(records: list[tuple[int, float]], profile: str) -> Optional[float]:
+    """SAF (DB yok): [(hour, ptf), ...] → zone-ağırlıklı ortalama PTF. Boş → None.
+
+    weighted_avg = Σ(w_zone × ptf) / Σ(w_zone)
+    """
+    if not records:
+        return None
+    from .pricing.time_zones import classify_hour
+    weights = PROFILE_WEIGHTS.get(profile, PROFILE_WEIGHTS["puant_agir"])
+    num = 0.0
+    den = 0.0
+    for hour, ptf in records:
+        w = weights.get(classify_hour(hour).name, 1.0)
+        num += w * ptf
+        den += w
+    return (num / den) if den else None
+
+
+def weighted_ptf_for_profile(db: Session, period: str, profile: str = "puant_agir") -> WeightedPtfResult:
+    """hourly_market_prices (period + is_active==1) → profil-ağırlıklı PTF.
+
+    Hourly veri yoksa ptf_tl_per_mwh=None (caller fallback/fail-closed'a karar verir).
+    """
+    from .pricing.schemas import HourlyMarketPrice
+    rows = (
+        db.query(HourlyMarketPrice.hour, HourlyMarketPrice.ptf_tl_per_mwh)
+        .filter(HourlyMarketPrice.period == period, HourlyMarketPrice.is_active == 1)
+        .all()
+    )
+    records = [(int(h), float(p)) for h, p in rows]
+    return WeightedPtfResult(
+        ptf_tl_per_mwh=_zone_weighted_avg_ptf(records, profile),
+        hours=len(records),
+        profile=profile,
+    )
+
+
 @dataclass
 class MarketPrices:
     """Piyasa referans fiyatları"""
