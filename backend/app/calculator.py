@@ -246,6 +246,9 @@ def calculate_offer(
     # Faturadan okunan dağıtım birim fiyatı
     extracted_dist_unit_price = extraction.distribution_unit_price_tl_per_kwh.value if extraction.distribution_unit_price_tl_per_kwh and extraction.distribution_unit_price_tl_per_kwh.value else 0
     
+    # Dönem (tarife lookup ve PTF/YEKDEM için ilk kullanımdan önce tanımlanmalı)
+    invoice_period = extraction.invoice_period  # "2025-01" format
+
     # EPDK tarifesinden hesapla (teklif için) — dönem bazlı tarife seçimi
     tariff_lookup: TariffLookupResult = get_distribution_unit_price_from_extraction(extraction, period=invoice_period)
     epdk_dist_unit_price = tariff_lookup.unit_price if tariff_lookup.success else None
@@ -307,10 +310,8 @@ def calculate_offer(
     raw_vat_tl = extraction.raw_breakdown.vat_tl.value if extraction.raw_breakdown and extraction.raw_breakdown.vat_tl and extraction.raw_breakdown.vat_tl.value else None
     
     # ═══════════════════════════════════════════════════════════════════════════════
-    # PTF/YEKDEM - DÖNEM BAZLI OTOMATİK ÇEK
+    # PTF/YEKDEM - DÖNEM BAZLI OTOMATİK ÇEK (invoice_period yukarıda tanımlandı)
     # ═══════════════════════════════════════════════════════════════════════════════
-    invoice_period = extraction.invoice_period  # "2025-01" format
-    
     ptf_tl_per_mwh, yekdem_tl_per_mwh, pricing_source, pricing_error = get_ptf_yekdem_for_period(
         db=db,
         period=invoice_period,
