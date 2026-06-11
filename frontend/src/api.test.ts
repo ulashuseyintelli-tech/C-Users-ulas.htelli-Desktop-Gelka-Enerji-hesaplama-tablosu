@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { buildPdfFormFields, downloadPdf, PdfMismatchError } from './api';
+import { buildPdfFormFields, downloadPdf, PdfMismatchError, pdfErrorFromElectronResult } from './api';
 
 const extraction: any = {
   consumption_kwh: { value: 1000 },
@@ -110,5 +110,38 @@ describe('downloadPdf — 422 extraction_mismatch yapısal hata', () => {
       expect(e).not.toBeInstanceOf(PdfMismatchError);
       expect(e.message).toContain('PTF');
     }
+  });
+});
+
+describe('pdfErrorFromElectronResult — Electron IPC contract → hata tipi', () => {
+  it('mismatch confirmable -> PdfMismatchError (req_confirm=true)', () => {
+    const e = pdfErrorFromElectronResult({
+      ok: false,
+      mismatch: { blocking_errors: [], confirmable_warnings: [{ field: 'invoice_total_raw', delta_pct: 20, kind: 'total' }], requires_operator_confirmation: true, message: 'fark var' },
+    });
+    expect(e).toBeInstanceOf(PdfMismatchError);
+    expect((e as PdfMismatchError).contract.requires_operator_confirmation).toBe(true);
+  });
+
+  it('mismatch blocking -> PdfMismatchError (req_confirm=false)', () => {
+    const e = pdfErrorFromElectronResult({
+      ok: false,
+      mismatch: { blocking_errors: [{ field: 'invoice_total_raw', delta_pct: 62, kind: 'total' }], confirmable_warnings: [], requires_operator_confirmation: false, message: 'büyük sapma' },
+    });
+    expect(e).toBeInstanceOf(PdfMismatchError);
+    expect((e as PdfMismatchError).contract.requires_operator_confirmation).toBe(false);
+    expect((e as PdfMismatchError).contract.blocking_errors.length).toBeGreaterThan(0);
+  });
+
+  it('mismatch yok -> generic Error', () => {
+    const e = pdfErrorFromElectronResult({ ok: false, error: 'genel hata' });
+    expect(e).not.toBeInstanceOf(PdfMismatchError);
+    expect(e.message).toBe('genel hata');
+  });
+
+  it('retry_after -> generic "meşgul" Error', () => {
+    const e = pdfErrorFromElectronResult({ ok: false, retry_after: 5 });
+    expect(e).not.toBeInstanceOf(PdfMismatchError);
+    expect(e.message).toContain('meşgul');
   });
 });

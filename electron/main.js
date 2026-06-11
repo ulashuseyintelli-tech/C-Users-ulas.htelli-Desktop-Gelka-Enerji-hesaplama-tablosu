@@ -312,6 +312,9 @@ ipcMain.handle('download:pdf', async (event, { url, formData, fileName }) => {
               errorResult.code = errObj.code || 'unknown';
               errorResult.error = errObj.message || errObj.detail || errorResult.error;
               errorResult.request_id = errObj.request_id || null;
+              if (errObj.code === 'extraction_mismatch') {
+                errorResult.mismatch = errObj;  // R2: mismatch contract'ini renderer'a tasi
+              }
               if (statusCode === 429) {
                 const retryAfter = (response.headers['retry-after'] || '').toString();
                 errorResult.retry_after = parseInt(retryAfter, 10) || 5;

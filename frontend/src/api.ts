@@ -221,6 +221,18 @@ export class PdfMismatchError extends Error {
   }
 }
 
+// R2: Electron downloadPdf IPC sonucundan doğru hata tipini üretir (saf, test edilebilir).
+// mismatch contract varsa PdfMismatchError; değilse generic Error (retry_after dahil).
+export function pdfErrorFromElectronResult(result: any): Error {
+  if (result?.mismatch) {
+    return new PdfMismatchError(result.mismatch as PdfMismatchContract);
+  }
+  if (result?.retry_after) {
+    return new Error(`Sunucu meşgul. Lütfen ${result.retry_after} saniye bekleyin.`);
+  }
+  return new Error(result?.error || 'PDF indirilemedi.');
+}
+
 export function buildPdfFormFields(
   extraction: FullProcessResponse['extraction'] & Record<string, any>,
   calculation: CalculateResponse,
@@ -308,11 +320,8 @@ export async function downloadPdf(
     const result = await window.electronAPI!.downloadPdf(endpointUrl, fields, fileName);
     if (result.canceled) return;
     if (!result.ok) {
-      // 429: retry_after bilgisini kullanıcıya göster
-      if (result.retry_after) {
-        throw new Error(`Sunucu meşgul. Lütfen ${result.retry_after} saniye bekleyin.`);
-      }
-      throw new Error(result.error || 'PDF indirilemedi.');
+      // R2: mismatch → PdfMismatchError, değilse generic (retry_after dahil)
+      throw pdfErrorFromElectronResult(result);
     }
     return;
   }
