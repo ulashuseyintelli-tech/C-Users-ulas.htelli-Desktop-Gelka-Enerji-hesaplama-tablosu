@@ -30,6 +30,10 @@ HARD_STOP_DELTA_THRESHOLD = THRESHOLDS.Validation.HARD_STOP_DELTA
 # Cross-check toleransı (consumption × unit_price ≈ energy_total)
 ENERGY_CROSSCHECK_TOLERANCE = THRESHOLDS.Validation.ENERGY_CROSSCHECK_TOLERANCE
 
+# R2 gross-misread guard bantları: <%10 sessiz, %10-40 warning, >%40 hard error (is_ready=false)
+WARNING_DELTA = THRESHOLDS.Validation.WARNING_DELTA
+CRITICAL_DELTA = THRESHOLDS.Validation.CRITICAL_DELTA
+
 
 def validate_extraction(extraction: InvoiceExtraction) -> ValidationResult:
     """
@@ -165,7 +169,11 @@ def validate_extraction(extraction: InvoiceExtraction) -> ValidationResult:
     # ═══════════════════════════════════════════════════════════════════════
     energy_crosscheck_error = _check_energy_crosscheck(extraction)
     if energy_crosscheck_error:
-        warnings.append(energy_crosscheck_error)  # Warning olarak ekle, error değil
+        # R2 gross-misread guard: >%40 hard error (is_ready=false), %10-40 warning
+        if energy_crosscheck_error["delta_ratio"] > CRITICAL_DELTA:
+            errors.append(energy_crosscheck_error)
+        else:
+            warnings.append(energy_crosscheck_error)
     
     # ═══════════════════════════════════════════════════════════════════════
     # Line items cross-check (her satırda qty × unit_price ≈ amount)
@@ -187,29 +195,24 @@ def validate_extraction(extraction: InvoiceExtraction) -> ValidationResult:
     # Hesaplama devam eder, kullanıcı uyarılır
     # ═══════════════════════════════════════════════════════════════════════
     if sanity_check and sanity_check.delta_ratio is not None:
-        vendor = extraction.vendor or "unknown"
-        tolerance = VENDOR_TOLERANCE.get(vendor, 5.0)
-        
-        # Büyük sapma = kritik uyarı (ama hesaplama devam eder)
-        if abs(sanity_check.delta_ratio) > HARD_STOP_DELTA_THRESHOLD:
-            warnings.append({
+        _delta = abs(sanity_check.delta_ratio)
+        # R2 gross-misread guard: >%40 hard error (is_ready=false), %10-40 warning, <%10 sessiz
+        if _delta > CRITICAL_DELTA:
+            errors.append({
                 "field": "invoice_total_with_vat_tl",
-                "issue": f"UYARI: Hesaplanan toplam ({sanity_check.total_est_tl:,.2f} TL) ile faturadaki toplam ({sanity_check.invoice_total_with_vat_tl:,.2f} TL) arasında %{abs(sanity_check.delta_ratio):.1f} fark var.",
+                "issue": f"Hesaplanan toplam ({sanity_check.total_est_tl:,.2f} TL) ile faturadaki toplam ({sanity_check.invoice_total_with_vat_tl:,.2f} TL) arasında %{_delta:.1f} sapma var (>%{CRITICAL_DELTA:.0f}). Büyük olasılıkla hatalı okuma/ondalık kayması — teklif üretilemez, tüketim ve birim fiyatı kontrol edin.",
                 "calculated": sanity_check.total_est_tl,
                 "extracted": sanity_check.invoice_total_with_vat_tl,
                 "delta_ratio": sanity_check.delta_ratio,
-                "hint": "Tüketim veya birim fiyat yanlış tablodan okunmuş olabilir. Sonuçları kontrol edin."
             })
-        elif abs(sanity_check.delta_ratio) > tolerance:
+        elif _delta >= WARNING_DELTA:
             warnings.append({
                 "field": "invoice_total_with_vat_tl",
-                "issue": f"Hesaplanan toplam ({sanity_check.total_est_tl:,.2f} TL) ile faturadaki toplam ({sanity_check.invoice_total_with_vat_tl:,.2f} TL) arasında %{abs(sanity_check.delta_ratio):.1f} fark var.",
+                "issue": f"Hesaplanan toplam ({sanity_check.total_est_tl:,.2f} TL) ile faturadaki toplam ({sanity_check.invoice_total_with_vat_tl:,.2f} TL) arasında %{_delta:.1f} fark var. Devam etmeden tüketim ve birim fiyatı doğrulayın.",
                 "calculated": sanity_check.total_est_tl,
                 "extracted": sanity_check.invoice_total_with_vat_tl,
                 "delta_ratio": sanity_check.delta_ratio,
-                "tolerance_percent": tolerance,
-                "vendor": vendor,
-                "hint": "Bu faturada dağıtım/demand/başka kalem olabilir. Eksik alanları kontrol edin."
+                "hint": "Bu faturada dağıtım/demand/başka kalem olabilir veya değer yanlış okunmuş olabilir."
             })
     
     # ═══════════════════════════════════════════════════════════════════════
@@ -412,7 +415,7 @@ def _check_energy_crosscheck(extraction: InvoiceExtraction) -> dict | None:
     calculated_energy = consumption * unit_price
     delta_ratio = abs((calculated_energy - energy_total) / energy_total) * 100
     
-    if delta_ratio > ENERGY_CROSSCHECK_TOLERANCE:
+    if delta_ratio >= WARNING_DELTA:  # R2: <%10 sessiz, >=%10 sinyal (caller error/warning bandlar)
         return {
             "field": "consumption_kwh",
             "issue": f"CROSS-CHECK HATASI: Tüketim ({consumption:,.0f} kWh) × Birim Fiyat ({unit_price:.4f} TL/kWh) = {calculated_energy:,.2f} TL, ama Enerji Bedeli = {energy_total:,.2f} TL. Fark: %{delta_ratio:.1f}",

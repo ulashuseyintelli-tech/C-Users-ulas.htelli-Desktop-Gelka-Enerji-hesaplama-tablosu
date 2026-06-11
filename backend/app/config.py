@@ -92,6 +92,8 @@ class ValidationThresholds:
     LINE_CONSISTENCY_TOLERANCE: float = 2.0   # %2
     HARD_STOP_DELTA: float = 20.0    # %20
     ENERGY_CROSSCHECK_TOLERANCE: float = 5.0  # %5
+    WARNING_DELTA: float = 10.0      # %10 — altı sessiz, üstü warning (R2 gross-misread guard)
+    CRITICAL_DELTA: float = 40.0     # %40 — üstü hard error, is_ready=false (R2 gross-misread guard)
 
 
 @dataclass(frozen=True)
