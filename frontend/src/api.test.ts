@@ -1,0 +1,114 @@
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { buildPdfFormFields, downloadPdf, PdfMismatchError } from './api';
+
+const extraction: any = {
+  consumption_kwh: { value: 1000 },
+  current_active_unit_price_tl_per_kwh: { value: 2 },
+  distribution_unit_price_tl_per_kwh: { value: 0 },
+  invoice_total_with_vat_tl: { value: 8000 },
+  vendor: 'enerjisa',
+  invoice_period: '2026-05',
+};
+
+const calculation: any = {
+  current_energy_tl: 2000,
+  current_distribution_tl: 0,
+  current_btv_tl: 20,
+  current_vat_tl: 400,
+  current_vat_matrah_tl: 2020,
+  current_total_with_vat_tl: 99999, // türetilmiş — invoice_total_raw'a ASLA gitmemeli
+  offer_energy_tl: 1000,
+  offer_distribution_tl: 0,
+  offer_btv_tl: 10,
+  offer_vat_tl: 200,
+  offer_vat_matrah_tl: 1010,
+  offer_total_with_vat_tl: 1210,
+  difference_incl_vat_tl: 5,
+  savings_ratio: 0.2,
+};
+
+const params = {
+  weighted_ptf_tl_per_mwh: 590.9,
+  yekdem_tl_per_mwh: 563.78,
+  agreement_multiplier: 1.01,
+};
+
+describe('buildPdfFormFields — R2 ham toplam + onay alanları', () => {
+  it('invoice_total_raw params.invoice_total_raw değerinden gelir (calculation.current_total DEĞİL)', () => {
+    const f = buildPdfFormFields(extraction, calculation, { ...params, invoice_total_raw: 8000 });
+    expect(f.invoice_total_raw).toBe('8000');
+    expect(f.invoice_total_raw).not.toBe('99999'); // güvenlik: türetilmiş değer sızmaz
+  });
+
+  it('operator_confirmed_warnings boolean -> "true"/"false" string', () => {
+    expect(buildPdfFormFields(extraction, calculation, { ...params, operator_confirmed_warnings: true }).operator_confirmed_warnings).toBe('true');
+    expect(buildPdfFormFields(extraction, calculation, { ...params, operator_confirmed_warnings: false }).operator_confirmed_warnings).toBe('false');
+  });
+
+  it('invoice_total_raw verilmezse "0" (guard kıyası atlar)', () => {
+    expect(buildPdfFormFields(extraction, calculation, params).invoice_total_raw).toBe('0');
+  });
+});
+
+function mockJsonResponse(status: number, body: any) {
+  return {
+    status,
+    ok: status >= 200 && status < 300,
+    headers: { get: (h: string) => (h.toLowerCase() === 'content-type' ? 'application/json' : null) },
+    json: async () => body,
+  } as any;
+}
+
+describe('downloadPdf — 422 extraction_mismatch yapısal hata', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('confirmable mismatch -> PdfMismatchError (requires_operator_confirmation=true)', async () => {
+    const contract = {
+      code: 'extraction_mismatch',
+      blocking_errors: [],
+      confirmable_warnings: [{ field: 'invoice_total_raw', delta_pct: 20, kind: 'total' }],
+      requires_operator_confirmation: true,
+      message: 'fark var',
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockJsonResponse(422, { error: contract })));
+    await expect(downloadPdf(extraction, calculation, params, 'x.pdf')).rejects.toMatchObject({
+      name: 'PdfMismatchError',
+    });
+    try {
+      await downloadPdf(extraction, calculation, params, 'x.pdf');
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(PdfMismatchError);
+      expect(e.contract.requires_operator_confirmation).toBe(true);
+    }
+  });
+
+  it('blocking mismatch -> PdfMismatchError (requires_operator_confirmation=false)', async () => {
+    const contract = {
+      code: 'extraction_mismatch',
+      blocking_errors: [{ field: 'invoice_total_raw', delta_pct: 62, kind: 'total' }],
+      confirmable_warnings: [],
+      requires_operator_confirmation: false,
+      message: 'büyük sapma',
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockJsonResponse(422, { error: contract })));
+    try {
+      await downloadPdf(extraction, calculation, params, 'x.pdf');
+      throw new Error('beklenen hata atılmadı');
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(PdfMismatchError);
+      expect(e.contract.requires_operator_confirmation).toBe(false);
+      expect(e.contract.blocking_errors.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('mismatch olmayan JSON hata -> generic Error (PdfMismatchError DEĞİL)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockJsonResponse(422, { error: { code: 'invalid_ptf', message: 'PTF zorunlu' } })));
+    try {
+      await downloadPdf(extraction, calculation, params, 'x.pdf');
+      throw new Error('beklenen hata atılmadı');
+    } catch (e: any) {
+      expect(e).not.toBeInstanceOf(PdfMismatchError);
+      expect(e.message).toContain('PTF');
+    }
+  });
+});

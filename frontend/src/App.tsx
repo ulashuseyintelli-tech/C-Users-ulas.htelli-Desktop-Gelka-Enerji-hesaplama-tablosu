@@ -1,6 +1,6 @@
 ﻿import { useState, useCallback, useMemo, useEffect } from 'react';
 import { Upload, FileText, Zap, TrendingDown, AlertCircle, CheckCircle, Loader2, RefreshCw, Download, Settings } from 'lucide-react';
-import { fullProcess, downloadPdf, FullProcessResponse, pricingAnalyze, pricingGetTemplates, pricingDownloadPdf, pricingDownloadExcel, PricingAnalyzeResponse, normalizeInvoicePeriod, API_BASE, TemplateItem, getVersion, VersionInfo } from './api';
+import { fullProcess, downloadPdf, FullProcessResponse, pricingAnalyze, pricingGetTemplates, pricingDownloadPdf, pricingDownloadExcel, PricingAnalyzeResponse, normalizeInvoicePeriod, API_BASE, TemplateItem, getVersion, VersionInfo, PdfMismatchError, PdfMismatchContract } from './api';
 import AdminPanel from './AdminPanel';
 import { generateBayiRaporPdf } from './bayiRapor';
 
@@ -203,6 +203,9 @@ function App() {
   // Build/version bilgisi (footer'da gosterilir) — fail-safe, app'i kirmaz.
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
   useEffect(() => { getVersion().then(setVersionInfo); }, []);
+  // R2: PDF mismatch onay akışı (>40 kesin blok, 10-40 onay gerekir)
+  const [mismatchInfo, setMismatchInfo] = useState<PdfMismatchContract | null>(null);
+  const [operatorConfirmed, setOperatorConfirmed] = useState(false);
   const [result, setResult] = useState<FullProcessResponse | null>(null);
   const [dragActive, setDragActive] = useState(false);
   
@@ -283,6 +286,7 @@ function App() {
     current_vat_matrah_tl: 0,
     current_vat_tl: 0,
     current_total_with_vat_tl: 0,
+    invoice_total_raw: 0,  // R2: operatörün faturadan girdiği GERÇEK toplam (guard ground-truth)
     vendor: '',
     invoice_period: '',
     tariff_group: '',
@@ -807,6 +811,7 @@ function App() {
       current_vat_matrah_tl: 0,
       current_vat_tl: 0,
       current_total_with_vat_tl: 0,
+      invoice_total_raw: 0,
       vendor: '',
       invoice_period: '',
       tariff_group: '',
@@ -894,6 +899,11 @@ function App() {
           weighted_ptf_tl_per_mwh: ptfPrice,
           yekdem_tl_per_mwh: liveCalculation.include_yekdem ? yekdemPrice : 0,
           agreement_multiplier: multiplier,
+          // R2: ham toplam — manuel YENİ alan, AI extraction; calculation.current_total KULLANILMAZ
+          invoice_total_raw: manualMode
+            ? (manualValues.invoice_total_raw || 0)
+            : ((result?.extraction as any)?.invoice_total_with_vat_tl?.value || 0),
+          operator_confirmed_warnings: operatorConfirmed,
         },
         fileName,
         customerInfo.company_name || undefined,
@@ -902,8 +912,21 @@ function App() {
         customerInfo.offer_validity_days || 15,
         tariffLabel || 'Sanayi'
       );
+      setMismatchInfo(null);  // başarı → uyarı durumunu temizle
     } catch (err: any) {
       console.error('PDF Download Error:', err);
+      // R2: extraction mismatch → blocking vs confirmable ayrımı
+      if (err instanceof PdfMismatchError) {
+        if (err.contract.requires_operator_confirmation) {
+          // %10-40 → checkbox göster, onaysız retry yok
+          setMismatchInfo(err.contract);
+        } else {
+          // >%40 → kesin blok, checkbox yok
+          setMismatchInfo(null);
+          setError(err.contract.message);
+        }
+        return;
+      }
       const errorMsg = err.message || 'PDF oluşturulurken hata oluştu.';
       setError(typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg));
     } finally {
@@ -2331,6 +2354,7 @@ function App() {
                             current_vat_matrah_tl: result.calculation?.current_vat_matrah_tl || 0,
                             current_vat_tl: result.calculation?.current_vat_tl || 0,
                             current_total_with_vat_tl: result.calculation?.current_total_with_vat_tl || 0,
+                            invoice_total_raw: (result.extraction as any)?.invoice_total_with_vat_tl?.value || 0,
                             vendor: result.extraction.vendor || '',
                             invoice_period: result.extraction.invoice_period || '',
                             tariff_group: (result.extraction as any)?.meta?.tariff_group_guess || 'Sanayi',
@@ -2523,6 +2547,22 @@ function App() {
                               readOnly
                             />
                           </div>
+                          <div className="col-span-2">
+                            <label className="text-xs text-gray-500 block mb-1">Faturadaki TOPLAM (KDV Dahil)</label>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="Faturadaki gerçek toplam"
+                              className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:ring-1 focus:ring-primary-500"
+                              value={manualValues.invoice_total_raw || ''}
+                              onChange={(e) => {
+                                const v = e.target.value === '' ? 0 : (parseFloat(e.target.value) || 0);
+                                setManualValues({ ...manualValues, invoice_total_raw: v });
+                                setMismatchInfo(null);        // ham toplam değişti → onay reset
+                                setOperatorConfirmed(false);
+                              }}
+                            />
+                          </div>
                           <div className="flex items-end">
                             <button
                               onClick={() => {
@@ -2695,7 +2735,7 @@ function App() {
                     </h3>
                     <button
                       onClick={handleDownloadPdf}
-                      disabled={pdfLoading || !ptfPrice || ptfPrice <= 0}
+                      disabled={pdfLoading || !ptfPrice || ptfPrice <= 0 || (!!mismatchInfo?.requires_operator_confirmation && !operatorConfirmed)}
                       className="btn-primary flex items-center gap-1 px-3 py-1 text-xs"
                     >
                       {pdfLoading ? (
@@ -2821,11 +2861,25 @@ function App() {
                   </table>
                 </div>
 
+                {mismatchInfo && mismatchInfo.requires_operator_confirmation && (
+                  <div className="mb-2 p-2 rounded border border-amber-300 bg-amber-50 text-xs">
+                    <p className="text-amber-800 font-medium mb-1">⚠️ {mismatchInfo.message}</p>
+                    <label className="flex items-center gap-2 cursor-pointer text-amber-900">
+                      <input
+                        type="checkbox"
+                        checked={operatorConfirmed}
+                        onChange={(e) => setOperatorConfirmed(e.target.checked)}
+                      />
+                      Rakamları kontrol ettim, devam et
+                    </label>
+                  </div>
+                )}
+
                 {/* Aksiyon Butonları */}
                 <div className="flex gap-2">
                   <button
                     onClick={handleDownloadPdf}
-                    disabled={pdfLoading || !ptfPrice || ptfPrice <= 0}
+                    disabled={pdfLoading || !ptfPrice || ptfPrice <= 0 || (!!mismatchInfo?.requires_operator_confirmation && !operatorConfirmed)}
                     className="btn-primary flex-1 flex items-center justify-center gap-2 py-2 text-sm"
                   >
                     {pdfLoading ? (
@@ -2877,6 +2931,7 @@ function App() {
                         current_vat_matrah_tl: 0,
                         current_vat_tl: 0,
                         current_total_with_vat_tl: 0,
+                        invoice_total_raw: 0,
                         vendor: '',
                         invoice_period: '',
                         tariff_group: 'Sanayi OG',

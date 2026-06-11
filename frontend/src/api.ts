@@ -204,6 +204,23 @@ const isElectron = !!window.electronAPI?.isElectron;
  * PDF form verilerini hazırla (ortak logic).
  * Hem web hem Electron aynı veriyi kullanır.
  */
+// R2 Katman 2/3: /generate-pdf-simple mismatch guard 422 contract'ı.
+export interface PdfMismatchContract {
+  blocking_errors: Array<{ field: string; delta_pct: number; kind: string }>;
+  confirmable_warnings: Array<{ field: string; delta_pct: number; kind: string }>;
+  requires_operator_confirmation: boolean;
+  message: string;
+}
+
+export class PdfMismatchError extends Error {
+  contract: PdfMismatchContract;
+  constructor(contract: PdfMismatchContract) {
+    super(contract.message);
+    this.name = 'PdfMismatchError';
+    this.contract = contract;
+  }
+}
+
 export function buildPdfFormFields(
   extraction: FullProcessResponse['extraction'] & Record<string, any>,
   calculation: CalculateResponse,
@@ -211,6 +228,8 @@ export function buildPdfFormFields(
     weighted_ptf_tl_per_mwh: number;
     yekdem_tl_per_mwh: number;
     agreement_multiplier: number;
+    invoice_total_raw?: number;            // R2: ham/operatör/extraction toplam (guard ground-truth) — calculation.current_total KULLANMA
+    operator_confirmed_warnings?: boolean; // R2: %10-40 mismatch onayı
   },
   customerName?: string,
   contactPerson?: string,
@@ -242,6 +261,8 @@ export function buildPdfFormFields(
     offer_total: calculation.offer_total_with_vat_tl.toString(),
     difference_incl_vat_tl: calculation.difference_incl_vat_tl.toString(),
     savings_ratio: calculation.savings_ratio.toString(),
+    invoice_total_raw: (params.invoice_total_raw ?? 0).toString(),
+    operator_confirmed_warnings: params.operator_confirmed_warnings ? 'true' : 'false',
   };
   if (calculation.meta_vat_rate !== undefined) fields.vat_rate = calculation.meta_vat_rate.toString();
   if (tariffGroup) fields.tariff_group = tariffGroup;
@@ -265,6 +286,8 @@ export async function downloadPdf(
     weighted_ptf_tl_per_mwh: number;
     yekdem_tl_per_mwh: number;
     agreement_multiplier: number;
+    invoice_total_raw?: number;            // R2: ham/operatör/extraction toplam (guard ground-truth) — calculation.current_total KULLANMA
+    operator_confirmed_warnings?: boolean; // R2: %10-40 mismatch onayı
   },
   fileName: string,
   customerName?: string,
@@ -323,6 +346,10 @@ export async function downloadPdf(
     // JSON error response (4xx/5xx)
     if (contentType.includes('application/json')) {
       const errorData = await response.json();
+      // R2: extraction mismatch → yapısal hata (blocking vs confirmable ayrımı handleDownloadPdf'te yapılır)
+      if (errorData?.error?.code === 'extraction_mismatch') {
+        throw new PdfMismatchError(errorData.error as PdfMismatchContract);
+      }
       const msg = errorData?.error?.message || errorData?.detail || 'PDF oluşturulamadı.';
       throw new Error(msg);
     }
