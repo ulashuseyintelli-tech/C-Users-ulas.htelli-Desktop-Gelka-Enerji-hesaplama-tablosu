@@ -2077,6 +2077,8 @@ async def generate_pdf_simple(
     contact_person: Optional[str] = Form(None),  # Yetkili kişi
     offer_date: Optional[str] = Form(None),  # Teklif tarihi (YYYY-MM-DD)
     offer_validity_days: int = Form(15),  # Teklif geçerlilik süresi (gün)
+    operator_confirmed_warnings: bool = Form(False),  # R2: %10-40 mismatch onayı
+    invoice_total_raw: float = Form(0),  # R2: operatörün girdiği/extract edilen HAM toplam (re-derive için)
 ):
     """Basit parametrelerle PDF oluştur.
 
@@ -2092,6 +2094,61 @@ async def generate_pdf_simple(
             status_code=422,
             content={"error": {"code": "invalid_ptf",
                      "message": "Teklif PTF değeri zorunludur ve 0'dan büyük olmalıdır."}},
+        )
+
+    # ── R2 Katman 2: gross-misread guard (extraction mismatch) ──
+    # Bağımsız re-derive: ASIL kapı = hesaplanan toplam (matrah+kdv) vs HAM toplam (invoice_total_raw).
+    # cross-check (consumption×unit_price vs current_energy_tl) kural gereği tutulur ama frontend'de
+    # current_energy_tl türetildiği için pratikte ≈0 çıkar (testle belgelendi).
+    # Bantlar: >%40 hard block (onay olsa bile), %10-40 onay gerekir, <%10 / veri yok → geç (crash yok).
+    from .config import THRESHOLDS as _TH
+    _crit, _warn = _TH.Validation.CRITICAL_DELTA, _TH.Validation.WARNING_DELTA
+
+    def _pct_delta(a, b):
+        if b is None or b <= 0:
+            return None
+        return abs(a - b) / b * 100.0
+
+    _blocking, _confirmable = [], []
+    # Eksik girdi → kıyas atlanır (validator _check_energy_crosscheck semantiği ile uyumlu).
+    _d_cross = None
+    if consumption_kwh > 0 and current_unit_price > 0 and current_energy_tl > 0:
+        _d_cross = _pct_delta(consumption_kwh * current_unit_price, current_energy_tl)
+    _computed_total = current_vat_matrah_tl + current_vat_tl
+    _d_total = None
+    if _computed_total > 0 and invoice_total_raw > 0:
+        _d_total = _pct_delta(_computed_total, invoice_total_raw)
+    for _kind, _field, _d in (("cross", "energy_total", _d_cross), ("total", "invoice_total_raw", _d_total)):
+        if _d is None:
+            continue
+        if _d > _crit:
+            _blocking.append({"field": _field, "delta_pct": round(_d, 1), "kind": _kind})
+        elif _d >= _warn:
+            _confirmable.append({"field": _field, "delta_pct": round(_d, 1), "kind": _kind})
+
+    if _blocking:
+        return JSONResponse(
+            status_code=422,
+            content={"error": {
+                "code": "extraction_mismatch",
+                "blocking_errors": _blocking,
+                "confirmable_warnings": _confirmable,
+                "requires_operator_confirmation": False,
+                "message": "Tüketim/birim fiyat ile fatura toplamı arasında büyük sapma (>%40). "
+                           "Hatalı okuma/ondalık kayması olabilir; değerleri kontrol edin.",
+            }},
+        )
+    if _confirmable and not operator_confirmed_warnings:
+        return JSONResponse(
+            status_code=422,
+            content={"error": {
+                "code": "extraction_mismatch",
+                "blocking_errors": [],
+                "confirmable_warnings": _confirmable,
+                "requires_operator_confirmation": True,
+                "message": "Hesaplanan toplam ile fatura toplamı arasında fark var. "
+                           "Devam etmek için rakamları kontrol edip onaylayın.",
+            }},
         )
 
     import time as _time
