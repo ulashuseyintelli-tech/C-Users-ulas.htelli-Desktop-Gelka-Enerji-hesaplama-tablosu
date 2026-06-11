@@ -46,6 +46,10 @@
       {
         "from": "../backend/.env.production",
         "to": "backend/.env"
+      },
+      {
+        "from": "../backend/build-info.json",
+        "to": "backend/build-info.json"
       }
     ],
     "forceCodeSigning": false,

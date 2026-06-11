@@ -2,6 +2,27 @@ import axios from 'axios';
 
 export const API_BASE = 'http://127.0.0.1:8000';
 
+// Build/version metadata — release kimligi (gozlemlenebilirlik).
+export interface VersionInfo {
+  commit: string;
+  commit_short: string;
+  branch: string;
+  build_date: string;
+  app_version: string;
+  source: string;
+}
+
+// Fail-safe: hata olursa null doner, uygulamayi kirmaz.
+export async function getVersion(): Promise<VersionInfo | null> {
+  try {
+    const res = await fetch(`${API_BASE}/version`);
+    if (!res.ok) return null;
+    return (await res.json()) as VersionInfo;
+  } catch {
+    return null;
+  }
+}
+
 export const api = axios.create({
   baseURL: API_BASE,
   headers: {

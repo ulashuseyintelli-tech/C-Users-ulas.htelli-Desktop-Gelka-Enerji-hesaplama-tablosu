@@ -101,3 +101,6 @@ electron/dist/
 backend/dist/
 backend/build/
 backend/*.spec
+
+# Build metadata (build-desktop.bat tarafindan uretilir)
+backend/build-info.json

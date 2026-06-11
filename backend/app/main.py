@@ -618,6 +618,67 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/version")
+async def version():
+    """Build/version metadata — release kimligi (commit/branch/date).
+
+    Yalnizca gozlemlenebilirlik. Hesap/PDF/teklif/DB mantigina dokunmaz.
+    Path sirasi: cwd/build-info.json -> backend/build-info.json -> git -> unknown.
+    """
+    import json
+    from pathlib import Path
+
+    app_version = "1.0.0"
+
+    # 1) build-info.json — runtime cwd, sonra backend dizini (packaged: resources/backend)
+    candidates = [
+        Path.cwd() / "build-info.json",
+        Path(__file__).resolve().parent.parent / "build-info.json",
+    ]
+    for p in candidates:
+        try:
+            if p.is_file():
+                data = json.loads(p.read_text(encoding="utf-8"))
+                return {
+                    "commit": data.get("commit", "unknown"),
+                    "commit_short": data.get("commit_short", "unknown"),
+                    "branch": data.get("branch", "unknown"),
+                    "build_date": data.get("build_date", "unknown"),
+                    "app_version": data.get("app_version", app_version),
+                    "source": "build-info",
+                }
+        except Exception:
+            pass
+
+    # 2) dev fallback: git
+    try:
+        import subprocess
+        full = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=5)
+        if full.returncode == 0:
+            short = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=5)
+            branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True, timeout=5)
+            return {
+                "commit": full.stdout.strip(),
+                "commit_short": short.stdout.strip() if short.returncode == 0 else "unknown",
+                "branch": branch.stdout.strip() if branch.returncode == 0 else "unknown",
+                "build_date": "unknown",
+                "app_version": app_version,
+                "source": "git",
+            }
+    except Exception:
+        pass
+
+    # 3) unknown
+    return {
+        "commit": "unknown",
+        "commit_short": "unknown",
+        "branch": "unknown",
+        "build_date": "unknown",
+        "app_version": app_version,
+        "source": "unknown",
+    }
+
+
 @app.get("/health/ready")
 async def health_ready(db: Session = Depends(get_db)):
     """

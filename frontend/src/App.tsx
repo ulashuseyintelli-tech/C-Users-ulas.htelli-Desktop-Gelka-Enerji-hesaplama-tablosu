@@ -1,6 +1,6 @@
 ﻿import { useState, useCallback, useMemo, useEffect } from 'react';
 import { Upload, FileText, Zap, TrendingDown, AlertCircle, CheckCircle, Loader2, RefreshCw, Download, Settings } from 'lucide-react';
-import { fullProcess, downloadPdf, FullProcessResponse, pricingAnalyze, pricingGetTemplates, pricingDownloadPdf, pricingDownloadExcel, PricingAnalyzeResponse, normalizeInvoicePeriod, API_BASE, TemplateItem } from './api';
+import { fullProcess, downloadPdf, FullProcessResponse, pricingAnalyze, pricingGetTemplates, pricingDownloadPdf, pricingDownloadExcel, PricingAnalyzeResponse, normalizeInvoicePeriod, API_BASE, TemplateItem, getVersion, VersionInfo } from './api';
 import AdminPanel from './AdminPanel';
 import { generateBayiRaporPdf } from './bayiRapor';
 
@@ -200,6 +200,9 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Build/version bilgisi (footer'da gosterilir) — fail-safe, app'i kirmaz.
+  const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
+  useEffect(() => { getVersion().then(setVersionInfo); }, []);
   const [result, setResult] = useState<FullProcessResponse | null>(null);
   const [dragActive, setDragActive] = useState(false);
   
@@ -2907,6 +2910,13 @@ function App() {
           <p className="text-sm text-gray-500 text-center">
             © 2026 Gelka Enerji. Tüm hakları saklıdır.
           </p>
+          {versionInfo && (
+            <p className="text-[11px] text-gray-400 text-center mt-1">
+              v{versionInfo.app_version} · {versionInfo.commit_short} · {versionInfo.branch}
+              {versionInfo.build_date && versionInfo.build_date !== 'unknown' ? ` · ${versionInfo.build_date.slice(0, 10)}` : ''}
+              {versionInfo.source !== 'build-info' ? ` (${versionInfo.source})` : ''}
+            </p>
+          )}
         </div>
       </footer>
     </div>

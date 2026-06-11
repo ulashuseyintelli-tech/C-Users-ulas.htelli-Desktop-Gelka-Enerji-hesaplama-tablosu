@@ -4,6 +4,17 @@ echo   Gelka Enerji - Masaustu Uygulama Build
 echo ============================================
 echo.
 
+:: 0. Build metadata (commit/branch/date) - /version endpoint icin
+echo [0/4] Build metadata olusturuluyor...
+cd backend
+for /f "delims=" %%i in ('git rev-parse HEAD') do set GIT_COMMIT=%%i
+for /f "delims=" %%i in ('git rev-parse --short HEAD') do set GIT_SHORT=%%i
+for /f "delims=" %%i in ('git rev-parse --abbrev-ref HEAD') do set GIT_BRANCH=%%i
+for /f "delims=" %%i in ('powershell -NoProfile -Command "Get-Date -Format o"') do set BUILD_DATE=%%i
+>build-info.json echo {"commit":"%GIT_COMMIT%","commit_short":"%GIT_SHORT%","branch":"%GIT_BRANCH%","build_date":"%BUILD_DATE%","app_version":"1.0.0"}
+echo   build-info.json: %GIT_SHORT% (%GIT_BRANCH%) %BUILD_DATE%
+cd ..
+
 :: 1. Frontend build
 echo [1/4] Frontend build ediliyor...
 cd frontend
