@@ -104,3 +104,13 @@ backend/*.spec
 
 # Build metadata (build-desktop.bat tarafindan uretilir)
 backend/build-info.json
+
+# Üretilen PDF/HTML test & smoke çıktıları (asset/örnek PDF'ler hariç —
+# antetli_bos.pdf, Fatura örnekler/*, reference_*, TEKLİF MEKTUBU* tracked kalır)
+backend/debug_rendered.html
+backend/smoke_*.pdf
+backend/test_*.pdf
+/test_output.pdf
+/test_pdf.pdf
+/test_teklif_output.pdf
+/teklif_fatura.pdf
