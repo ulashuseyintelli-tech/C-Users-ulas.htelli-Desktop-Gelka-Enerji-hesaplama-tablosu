@@ -750,8 +750,15 @@ def _generate_pdf_reportlab(
         f"oluşturulur. Bu maliyet, anlaşma fiyat katsayısı (<b>{params.agreement_multiplier:.2f}</b>) ile çarpılarak nihai enerji bedeline ulaşılır.",
         letter_style
     ))
+    # SoT-X: saatlik PTF yoksa aylık ortalamaya düşüldü → fallback dipnotu
+    if getattr(calculation, "meta_pricing_source", "") == "reference_scalar" or getattr(calculation, "meta_ptf_source_warning", None):
+        elements.append(Paragraph(
+            "<i>Not: İlgili dönem için EPİAŞ saatlik PTF verisi bulunmadığından Ağırlıklı PTF, "
+            "aylık ortalama PTF üzerinden hesaplanmıştır.</i>",
+            letter_style
+        ))
     elements.append(Spacer(1, 0.1*cm))
-    
+
     # YEKDEM Uygulaması
     elements.append(Paragraph("<b>YEKDEM Uygulaması</b>", letter_style))
     elements.append(Paragraph(

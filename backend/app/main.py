@@ -1378,6 +1378,10 @@ async def full_process(
                 # Mismatch warning
                 if calculation.meta_distribution_mismatch_warning:
                     debug_meta.warnings.append(calculation.meta_distribution_mismatch_warning)
+
+                # SoT-X: saatlik PTF yok → aylık skaler fallback uyarısını operatöre göster
+                if calculation.meta_ptf_source_warning:
+                    debug_meta.warnings.append(calculation.meta_ptf_source_warning)
                     
             except CalculationError as e:
                 calculation_error = str(e)
@@ -4632,40 +4636,85 @@ async def sync_period_from_epias(
 async def get_prices_with_epias_fallback(
     period: str,
     auto_fetch: bool = True,
+    profile: Optional[str] = None,
+    tariff_group: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """
     Dönem için piyasa fiyatlarını al - DB yoksa EPİAŞ'tan çek.
-    
-    Öncelik sırası:
+
+    Öncelik sırası (skaler PTF):
     1. DB'deki kayıt
     2. EPİAŞ API (auto_fetch=True ise)
     3. Default değerler
-    
+
+    Ayrıca SoT-X Seviye 1: hourly_market_prices'tan profil-ağırlıklı PTF
+    (weighted_ptf_*). Profil seçimi: explicit profile → tariff_group default →
+    puant_agir (fail-safe). calculator.get_ptf_yekdem_for_period ile parite.
+    Saatlik veri yoksa skaler PTF'e düşer ve ptf_source_warning döner.
+
     Args:
         period: Dönem (YYYY-MM format)
         auto_fetch: EPİAŞ'tan otomatik çek (default: True)
-    
+        profile: Ağırlık profili (puant_agir|duz|gece_agir). Boşsa tariff_group'tan türetilir.
+        tariff_group: Tarife sınıfı (profile boşsa default profil bundan belirlenir).
+
     Returns:
         {
             "period": "2025-01",
-            "ptf_tl_per_mwh": 2974.1,
+            "ptf_tl_per_mwh": 2974.1,            # skaler/aylık (mevcut, additive korunur)
             "yekdem_tl_per_mwh": 364.0,
             "source": "epias",
-            "source_description": "EPİAŞ API: EPİAŞ'tan alındı ve cache'lendi"
+            "source_description": "EPİAŞ API: EPİAŞ'tan alındı ve cache'lendi",
+            "is_locked": false,
+            "weighted_ptf_tl_per_mwh": 3120.5,   # profil-ağırlıklı (saatlik yoksa None)
+            "weighted_ptf_profile": "puant_agir",
+            "weighted_ptf_source": "hourly_weighted:puant_agir",  # | reference_scalar | not_found
+            "ptf_source_warning": null           # fallback durumunda amber uyarı metni
         }
     """
-    from .market_prices import get_market_prices_with_epias_fallback
-    
+    from .market_prices import (
+        get_market_prices_with_epias_fallback,
+        weighted_ptf_for_profile,
+        default_profile_for_tariff,
+    )
+
     prices, source_desc = get_market_prices_with_epias_fallback(db, period, auto_fetch)
-    
+
+    # SoT-X Seviye 1: profil-ağırlıklı PTF (hourly) — calculator ile parite.
+    # Profil sırası: explicit profile → tariff_group default → puant_agir fail-safe.
+    eff_profile = profile or default_profile_for_tariff(tariff_group)
+    wr = weighted_ptf_for_profile(db, period, eff_profile)
+    if wr.ptf_tl_per_mwh is not None and wr.ptf_tl_per_mwh > 0:
+        weighted_ptf = wr.ptf_tl_per_mwh
+        weighted_source = f"hourly_weighted:{eff_profile}"
+        ptf_source_warning = None
+    elif prices.ptf_tl_per_mwh and prices.ptf_tl_per_mwh > 0:
+        # FALLBACK — aylık skaler PTF + uyarı (calculator.py ile birebir metin).
+        weighted_ptf = prices.ptf_tl_per_mwh
+        weighted_source = "reference_scalar"
+        ptf_source_warning = (
+            "Saatlik PTF verisi yok; aylık ortalama kullanıldı. "
+            "Puant/gece ağırlıklı profillerde teklif sapabilir."
+        )
+    else:
+        weighted_ptf = None
+        weighted_source = "not_found"
+        ptf_source_warning = (
+            f"Dönem {period} için geçerli PTF bulunamadı (saatlik yok, referans <= 0)."
+        )
+
     return {
         "period": prices.period,
         "ptf_tl_per_mwh": prices.ptf_tl_per_mwh,
         "yekdem_tl_per_mwh": prices.yekdem_tl_per_mwh,
         "source": prices.source,
         "source_description": source_desc,
-        "is_locked": prices.is_locked
+        "is_locked": prices.is_locked,
+        "weighted_ptf_tl_per_mwh": weighted_ptf,
+        "weighted_ptf_profile": eff_profile,
+        "weighted_ptf_source": weighted_source,
+        "ptf_source_warning": ptf_source_warning,
     }
 
 

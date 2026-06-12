@@ -693,6 +693,11 @@ export interface EpiasPricesResponse {
   source: string;
   source_description: string;
   is_locked?: boolean;
+  // SoT-X Seviye 1: profil-ağırlıklı PTF (additive — eski alanlar korunur)
+  weighted_ptf_tl_per_mwh?: number | null;
+  weighted_ptf_profile?: string;
+  weighted_ptf_source?: string; // "hourly_weighted:<profil>" | "reference_scalar" | "not_found"
+  ptf_source_warning?: string | null;
 }
 
 /**
@@ -705,9 +710,19 @@ export interface EpiasPricesResponse {
  * 
  * @param period Dönem (YYYY-MM format, örn: "2025-01")
  * @param autoFetch EPİAŞ'tan otomatik çek (default: true)
+ * @param profile Ağırlık profili (puant_agir|duz|gece_agir). Boşsa tariffGroup'tan türetilir.
+ * @param tariffGroup Tarife sınıfı (profile boşsa default profil bundan belirlenir).
  */
-export async function getEpiasPrices(period: string, autoFetch: boolean = true): Promise<EpiasPricesResponse> {
-  const response = await api.get(`/api/epias/prices/${period}?auto_fetch=${autoFetch}`);
+export async function getEpiasPrices(
+  period: string,
+  autoFetch: boolean = true,
+  profile?: string,
+  tariffGroup?: string
+): Promise<EpiasPricesResponse> {
+  const qs = new URLSearchParams({ auto_fetch: String(autoFetch) });
+  if (profile) qs.append('profile', profile);
+  if (tariffGroup) qs.append('tariff_group', tariffGroup);
+  const response = await api.get(`/api/epias/prices/${period}?${qs.toString()}`);
   return response.data;
 }
 

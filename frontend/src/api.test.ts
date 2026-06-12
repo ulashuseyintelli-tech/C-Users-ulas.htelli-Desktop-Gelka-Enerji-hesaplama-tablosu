@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { buildPdfFormFields, downloadPdf, PdfMismatchError, pdfErrorFromElectronResult } from './api';
+import { buildPdfFormFields, downloadPdf, PdfMismatchError, pdfErrorFromElectronResult, getEpiasPrices, api } from './api';
 
 const extraction: any = {
   consumption_kwh: { value: 1000 },
@@ -47,6 +47,37 @@ describe('buildPdfFormFields — R2 ham toplam + onay alanları', () => {
 
   it('invoice_total_raw verilmezse "0" (guard kıyası atlar)', () => {
     expect(buildPdfFormFields(extraction, calculation, params).invoice_total_raw).toBe('0');
+  });
+});
+
+describe('getEpiasPrices — SoT-X weighted PTF query', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  const body = {
+    period: '2025-01', ptf_tl_per_mwh: 2500, yekdem_tl_per_mwh: 300,
+    source: 'db', source_description: 'x',
+    weighted_ptf_tl_per_mwh: 1550, weighted_ptf_profile: 'puant_agir',
+    weighted_ptf_source: 'hourly_weighted:puant_agir', ptf_source_warning: null,
+  };
+
+  it('profile + tariff_group query string olarak gönderilir', async () => {
+    const spy = vi.spyOn(api, 'get').mockResolvedValue({ data: body } as any);
+    const res = await getEpiasPrices('2025-01', true, 'puant_agir', 'Sanayi OG');
+    const url = spy.mock.calls[0][0] as string;
+    expect(url).toContain('/api/epias/prices/2025-01?');
+    expect(url).toContain('auto_fetch=true');
+    expect(url).toContain('profile=puant_agir');
+    expect(url).toContain('tariff_group=Sanayi+OG');
+    expect(res.weighted_ptf_tl_per_mwh).toBe(1550);
+  });
+
+  it('profile/tariff_group verilmezse query parametre eklenmez (geriye-uyum)', async () => {
+    const spy = vi.spyOn(api, 'get').mockResolvedValue({ data: body } as any);
+    await getEpiasPrices('2025-01');
+    const url = spy.mock.calls[0][0] as string;
+    expect(url).toContain('auto_fetch=true');
+    expect(url).not.toContain('profile=');
+    expect(url).not.toContain('tariff_group=');
   });
 });
 

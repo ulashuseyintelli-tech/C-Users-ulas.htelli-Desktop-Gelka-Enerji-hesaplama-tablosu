@@ -213,6 +213,10 @@ function App() {
   const [ptfPrice, setPtfPrice] = useState(2974.1);
   const [yekdemPrice, setYekdemPrice] = useState(364.0);
   const [multiplier, setMultiplier] = useState(1.01);
+  // SoT-X Seviye 1: profil-ağırlıklı PTF (manuel akış)
+  const [ptfProfile, setPtfProfile] = useState('puant_agir'); // puant_agir|duz|gece_agir
+  const [ptfSource, setPtfSource] = useState<string | null>(null); // hourly_weighted:* | reference_scalar | not_found
+  const [ptfSourceWarning, setPtfSourceWarning] = useState<string | null>(null);
   
   // Bayi komisyonu (toplam marjın yüzdesi olarak, örn: 25 = %25)
   // Çarpan 1.06 ve bayi %25 ise: marj=6p, bayi=6×0.25=1.5p, gelka=4.5p
@@ -678,19 +682,29 @@ function App() {
       
       try {
         // DB'den PTF/YEKDEM fiyatlarını çek (auto_fetch=true ile EPİAŞ fallback aktif)
-        const res = await fetch(`${API_BASE}/api/epias/prices/${period}`);
+        // SoT-X: profil-ağırlıklı PTF için profile + tariff_group gönder.
+        const qs = new URLSearchParams({ auto_fetch: 'true', profile: ptfProfile });
+        if (manualValues.tariff_group) qs.append('tariff_group', manualValues.tariff_group);
+        const res = await fetch(`${API_BASE}/api/epias/prices/${period}?${qs.toString()}`);
         if (!res.ok) {
           const errBody = await res.json().catch(() => ({}));
           throw new Error(errBody.detail || `HTTP ${res.status}`);
         }
         const response = await res.json();
-        
-        if (response.ptf_tl_per_mwh !== undefined && response.ptf_tl_per_mwh !== null) {
-          setPtfPrice(response.ptf_tl_per_mwh);
+
+        // weighted_ptf varsa onu kullan; yoksa skaler ptf_tl_per_mwh'e düş (geriye-uyum).
+        const effectivePtf =
+          response.weighted_ptf_tl_per_mwh !== undefined && response.weighted_ptf_tl_per_mwh !== null
+            ? response.weighted_ptf_tl_per_mwh
+            : response.ptf_tl_per_mwh;
+        if (effectivePtf !== undefined && effectivePtf !== null) {
+          setPtfPrice(effectivePtf);
         }
         if (response.yekdem_tl_per_mwh !== undefined && response.yekdem_tl_per_mwh !== null) {
           setYekdemPrice(response.yekdem_tl_per_mwh);
         }
+        setPtfSource(response.weighted_ptf_source ?? null);
+        setPtfSourceWarning(response.ptf_source_warning ?? null);
         setPriceModified(false);
         setPriceSaved(false);
       } catch (err: any) {
@@ -700,9 +714,9 @@ function App() {
         setPriceLoading(false);
       }
     };
-    
+
     fetchPrices();
-  }, [manualMode, manualValues.invoice_period]);
+  }, [manualMode, manualValues.invoice_period, ptfProfile, manualValues.tariff_group]);
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -1146,6 +1160,34 @@ function App() {
                         </div>
                       );
                     })()}
+                    {manualMode && (
+                      <div className="mt-1.5 space-y-1">
+                        <div className="flex items-center gap-1.5">
+                          <select
+                            className="text-[11px] border border-gray-200 rounded px-1.5 py-0.5 bg-white outline-none focus:ring-1 focus:ring-primary-500"
+                            value={ptfProfile}
+                            onChange={(e) => setPtfProfile(e.target.value)}
+                            title="Saatlik PTF ağırlık profili"
+                          >
+                            <option value="duz">Düz profil</option>
+                            <option value="puant_agir">Puant ağırlıklı</option>
+                            <option value="gece_agir">Gece ağırlıklı</option>
+                          </select>
+                          {ptfSource && (
+                            ptfSource.startsWith('hourly_weighted')
+                              ? <span className="text-[11px] text-green-600">saatlik ağırlıklı</span>
+                              : ptfSource === 'reference_scalar'
+                                ? <span className="text-[11px] text-amber-600">aylık ortalama</span>
+                                : <span className="text-[11px] text-red-600">PTF yok</span>
+                          )}
+                        </div>
+                        {ptfSourceWarning && (
+                          <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-1">
+                            {ptfSourceWarning}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div>
                     {(() => {
