@@ -818,6 +818,7 @@ export function normalizeInvoicePeriod(period: string): string | null {
 export interface PricingAnalyzeRequest {
   period: string;
   multiplier: number;
+  customer_id?: string;  // gerçek profil için (use_template=false ile)
   dealer_commission_pct?: number;
   imbalance_params?: {
     forecast_error_rate: number;
@@ -856,6 +857,8 @@ export interface PricingLossMap {
   total_loss_hours: number;
   total_loss_tl: number;
   by_time_zone: Record<string, number>;
+  // Satış fiyatının PTF altında kaldığı en kötü saatler (analyze response'unda var)
+  worst_hours?: Array<{ date: string; hour: number; ptf: number; sales_price: number; loss_tl: number }>;
 }
 
 export interface PricingAnalyzeResponse {
@@ -1042,4 +1045,94 @@ export async function pricingDownloadExcel(req: PricingAnalyzeRequest): Promise<
   });
   if (!response.ok) throw new Error(`Excel rapor hatası: ${response.status}`);
   return response.blob();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Tüketim Analizi — Excel yükleme (firma saatlik tüketim + EPİAŞ piyasa verisi)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Firma adından stabil customer_id (slug) üret.
+ * TR karakterleri sadeleştirir → aynı firma her zaman aynı id → backend versioning.
+ * Örn: "Cansu Enerji A.Ş." → "cansu-enerji-a-s"
+ */
+export function customerSlug(name: string): string {
+  const tr: Record<string, string> = { ç: 'c', ğ: 'g', ı: 'i', ö: 'o', ş: 's', ü: 'u' };
+  return (name || '')
+    .replace(/İ/g, 'i')  // 'İ'.toLowerCase() → 'i'+combining-dot bozar; önce çevir
+    .toLowerCase()
+    .replace(/[çğıöşü]/g, (c) => tr[c] || c)
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')  // kalan diakritik combining işaretleri at
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+export interface ConsumptionProfileSummary {
+  period: string;
+  total_rows: number;
+  total_kwh: number;
+  negative_hours: number;
+  quality_score: number;
+  profile_id: number;
+  version: number;
+}
+
+export interface UploadConsumptionResponse {
+  status: string;
+  customer_id: string;
+  profiles: ConsumptionProfileSummary[];
+}
+
+export interface UploadMarketDataResponse {
+  status: string;
+  period: string;
+  total_rows: number;
+  quality_score: number;
+  version: number;
+  warnings?: string[];
+}
+
+/**
+ * Firma saatlik tüketim Excel'ini yükle (çok dönemli dosya ay ay bölünür).
+ */
+export async function uploadConsumption(
+  file: File,
+  customerId: string,
+  customerName?: string,
+): Promise<UploadConsumptionResponse> {
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('customer_id', customerId);
+  if (customerName) fd.append('customer_name', customerName);
+  const response = await fetch(`${API_BASE}/api/pricing/upload-consumption`, {
+    method: 'POST',
+    body: fd,
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    const detail = err?.detail;
+    const msg = detail?.message || detail || `Tüketim yükleme hatası: ${response.status}`;
+    throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+  }
+  return response.json();
+}
+
+/**
+ * EPİAŞ uzlaştırma (piyasa verisi) Excel'ini yükle.
+ * Not: prod'da X-Admin-Key gerekir; dev modda bypass.
+ */
+export async function uploadMarketData(file: File): Promise<UploadMarketDataResponse> {
+  const fd = new FormData();
+  fd.append('file', file);
+  const response = await fetch(`${API_BASE}/api/pricing/upload-market-data`, {
+    method: 'POST',
+    body: fd,
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    const detail = err?.detail;
+    const msg = detail?.message || detail || `Piyasa verisi yükleme hatası: ${response.status}`;
+    throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+  }
+  return response.json();
 }
