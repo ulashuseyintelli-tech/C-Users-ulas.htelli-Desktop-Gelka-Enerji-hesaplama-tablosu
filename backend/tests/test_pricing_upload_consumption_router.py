@@ -1,13 +1,14 @@
 """
 Router-level entegrasyon testi — POST /api/pricing/upload-consumption.
 
-Regresyon koruması: router, parse_consumption_excel'e customer_id'yi geçmeli.
-Bug (önce): router `parse_consumption_excel(content, filename)` (2 arg) çağırıyordu →
-TypeError: missing 'customer_id' → 500/bağlantı düşmesi. Birim testleri parser'ı
-doğrudan 3 argümanla çağırdığı için yakalayamıyordu (test boşluğu).
+Kapsam:
+- Regresyon: router, parse_consumption_excel'e customer_id'yi geçmeli (eski bug:
+  TypeError missing 'customer_id'). Birim testleri parser'ı doğrudan çağırdığı
+  için bu wiring'i yakalayamıyordu.
+- A2: çok dönemli tek dosya → ay ay bölünüp dönem başına ConsumptionProfile;
+  response otoritesi `profiles` listesi.
 
-Bu test HTTP router'ını TestClient ile çağırır: 200 + profilin DB'ye kaydını doğrular.
-Parser'ın DESTEKLEDİĞİ format (Tarih datetime + Tüketim kWh) kullanılır.
+TestClient + in-memory SQLite (thread paylaşımı için StaticPool).
 """
 import calendar
 import io
@@ -18,16 +19,25 @@ from fastapi.testclient import TestClient
 from openpyxl import Workbook
 
 
-def _make_consumption_xlsx(year=2026, month=3, days=2) -> bytes:
-    """Tarih (datetime, saat gömülü) + Tüketim (kWh) formatı — parser destekliyor."""
+def _make_consumption_xlsx(months, year=2026, days_per_month=2, header="Tüketim (kWh)",
+                           date_as_string=False) -> bytes:
+    """Tarih + tüketim Excel üret.
+
+    months: ay listesi (örn [1,2] → çok dönemli).
+    header: tüketim sütunu başlığı (Cansu için "Aktif Çekiş").
+    date_as_string: True → 'dd/mm/YYYY HH:MM:SS' metin (Cansu portal formatı).
+    """
     wb = Workbook()
     ws = wb.active
-    ws.title = "Tüketim"
-    ws.append(["Tarih", "Tüketim (kWh)"])
-    dmax = min(days, calendar.monthrange(year, month)[1])
-    for day in range(1, dmax + 1):
-        for hour in range(24):
-            ws.append([datetime(year, month, day, hour, 0), 100.0 + hour])
+    ws.title = "Rapor"
+    ws.append(["Tarih", header])
+    for month in months:
+        dmax = min(days_per_month, calendar.monthrange(year, month)[1])
+        for day in range(1, dmax + 1):
+            for hour in range(24):
+                dt = datetime(year, month, day, hour, 0)
+                tarih = dt.strftime("%d/%m/%Y %H:%M:%S") if date_as_string else dt
+                ws.append([tarih, 100.0 + hour])
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -60,40 +70,63 @@ def client(db):
     fastapi_app.dependency_overrides.clear()
 
 
+def _upload(client, xlsx, customer_id="cust", name="Test"):
+    return client.post(
+        "/api/pricing/upload-consumption",
+        files={"file": ("tuketim.xlsx", xlsx,
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        data={"customer_id": customer_id, "customer_name": name},
+    )
+
+
 class TestUploadConsumptionRouter:
-    def test_upload_returns_200_and_persists_profile(self, client, db):
-        xlsx = _make_consumption_xlsx(2026, 3, days=2)
-        resp = client.post(
-            "/api/pricing/upload-consumption",
-            files={"file": ("tuketim.xlsx", xlsx,
-                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
-            data={"customer_id": "cust-router", "customer_name": "Router Test"},
-        )
-        # Bug öncesi burada 500/TypeError olurdu — fix sonrası 200 olmalı
+    def test_single_month_returns_success_and_persists(self, client, db):
+        # Bug öncesi burada TypeError/500 olurdu — fix sonrası 200/success olmalı
+        resp = _upload(client, _make_consumption_xlsx([3], days_per_month=2),
+                       customer_id="cust-single")
         assert resp.status_code == 200, resp.text
         body = resp.json()
-        assert body["status"] == "ok"
-        assert body["customer_id"] == "cust-router"
-        assert body["period"] == "2026-03"
-        assert body["total_rows"] == 48  # 2 gün × 24 saat
-        assert body["profile_id"] is not None
+        assert body["status"] == "success"
+        assert body["customer_id"] == "cust-single"
+        assert len(body["profiles"]) == 1
+        p = body["profiles"][0]
+        assert p["period"] == "2026-03"
+        assert p["total_rows"] == 48  # 2 gün × 24 saat
+        assert p["profile_id"] is not None
 
-        # Profil gerçekten DB'ye yazıldı mı?
         from app.pricing.schemas import ConsumptionProfile
-        rows = (
-            db.query(ConsumptionProfile)
-            .filter(ConsumptionProfile.customer_id == "cust-router")
-            .all()
-        )
+        rows = db.query(ConsumptionProfile).filter(
+            ConsumptionProfile.customer_id == "cust-single").all()
         assert len(rows) == 1
         assert rows[0].period == "2026-03"
 
+    def test_multi_period_splits_into_profiles_per_month(self, client, db):
+        """A2: Oca–Nis tek dosya → 4 profil (her ay ayrı period)."""
+        xlsx = _make_consumption_xlsx([1, 2, 3, 4], days_per_month=2)
+        resp = _upload(client, xlsx, customer_id="cust-multi")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["status"] == "success"
+        periods = [p["period"] for p in body["profiles"]]
+        assert periods == ["2026-01", "2026-02", "2026-03", "2026-04"]
+        assert all(p["total_rows"] == 48 for p in body["profiles"])
+
+        from app.pricing.schemas import ConsumptionProfile
+        rows = db.query(ConsumptionProfile).filter(
+            ConsumptionProfile.customer_id == "cust-multi").all()
+        assert {r.period for r in rows} == {"2026-01", "2026-02", "2026-03", "2026-04"}
+
+    def test_cansu_format_aktif_cekis_string_date(self, client, db):
+        """Cansu portal formatı: header 'Aktif Çekiş' + saat-gömülü metin tarih."""
+        xlsx = _make_consumption_xlsx([1, 2], days_per_month=2,
+                                      header="Aktif Çekiş", date_as_string=True)
+        resp = _upload(client, xlsx, customer_id="cansu-fmt")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert [p["period"] for p in body["profiles"]] == ["2026-01", "2026-02"]
+
     def test_invalid_excel_returns_422_not_500(self, client):
         """Bozuk dosya temiz 422 döner (crash değil) — customer_id yine geçiyor."""
-        resp = client.post(
-            "/api/pricing/upload-consumption",
-            files={"file": ("bad.xlsx", b"not a real excel", "application/octet-stream")},
-            data={"customer_id": "cust-bad"},
-        )
+        resp = _upload(client, b"not a real excel", customer_id="cust-bad")
         assert resp.status_code == 422
         assert resp.json()["detail"]["error"] == "invalid_consumption_format"

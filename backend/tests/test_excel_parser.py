@@ -398,3 +398,90 @@ class TestParseConsumptionExcel:
         out_neg = parse_consumption_excel(data_neg, "t.xlsx", "C2")
 
         assert out_clean.result.quality_score > out_neg.result.quality_score
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Tests: Cansu portal formatı — "Aktif Çekiş" + saat-gömülü metin tarih
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _make_cansu_excel(
+    months: list[int],
+    year: int = 2026,
+    days_per_month: int = 2,
+    date_as_string: bool = True,
+    with_trap_columns: bool = False,
+) -> bytes:
+    """EPİAŞ portal "Seçimli Tüketim Raporu" benzeri Excel.
+
+    Tüketim sütunu "Aktif Çekiş". date_as_string → 'dd/mm/YYYY HH:MM:SS' metin.
+    with_trap_columns → tüketimden ÖNCE "Aktif Veriş" + "Reaktif İndüktif Çekiş"
+    tuzak sütunları (yanlış eşleşme regresyon kontrolü).
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Rapor Sonuçları - 1"
+    if with_trap_columns:
+        ws.append(["Tarih", "Aktif Veriş", "Reaktif İndüktif Çekiş", "Aktif Çekiş"])
+    else:
+        ws.append(["Tarih", "Aktif Çekiş"])
+    for month in months:
+        dmax = min(days_per_month, calendar.monthrange(year, month)[1])
+        for day in range(1, dmax + 1):
+            for hour in range(24):
+                dt = datetime(year, month, day, hour, 0)
+                tarih = dt.strftime("%d/%m/%Y %H:%M:%S") if date_as_string else dt
+                cekis = float(hour)  # tüketim = saat → saat çıkarımı doğrulanır
+                if with_trap_columns:
+                    ws.append([tarih, 10.0, 20.0, cekis])  # veriş=10, reaktif=20
+                else:
+                    ws.append([tarih, cekis])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+class TestCansuPortalFormat:
+    """parse_consumption_excel() — Aktif Çekiş + metin tarih + çok dönem."""
+
+    def test_aktif_cekis_header_recognized_string_date(self):
+        data = _make_cansu_excel([3], days_per_month=2, date_as_string=True)
+        out = parse_consumption_excel(data, "cansu.xlsx", "CANSU")
+        assert out.result.success is True
+        assert out.result.total_rows == 48  # 2 gün × 24 saat
+
+    def test_string_datetime_hour_extracted(self):
+        """Saat-gömülü metin tarih → saat doğru çıkarılır (0–23)."""
+        data = _make_cansu_excel([3], days_per_month=1, date_as_string=True)
+        out = parse_consumption_excel(data, "cansu.xlsx", "CANSU")
+        hours = sorted(r.hour for r in out.records)
+        assert hours == list(range(24))
+        # tüketim = saat olarak set edilmişti → eşleşmeli
+        by_hour = {r.hour: r.consumption_kwh for r in out.records}
+        assert by_hour[5] == 5.0 and by_hour[23] == 23.0
+
+    def test_real_datetime_object_also_works(self):
+        """Hücre gerçek datetime ise (metin değil) yine çalışır."""
+        data = _make_cansu_excel([3], days_per_month=1, date_as_string=False)
+        out = parse_consumption_excel(data, "cansu.xlsx", "CANSU")
+        assert out.result.success is True
+        assert out.result.total_rows == 24
+
+    def test_trap_columns_not_misrecognized_as_consumption(self):
+        """'Aktif Veriş' / 'Reaktif İndüktif Çekiş' tüketim SANILMAZ — yalnız 'Aktif Çekiş'."""
+        data = _make_cansu_excel([3], days_per_month=1, with_trap_columns=True)
+        out = parse_consumption_excel(data, "cansu.xlsx", "CANSU")
+        assert out.result.success is True
+        # Tüketim = Aktif Çekiş (=saat). Yanlış sütun alınsaydı hep 10 veya 20 olurdu.
+        by_hour = {r.hour: r.consumption_kwh for r in out.records}
+        assert by_hour[7] == 7.0   # Aktif Çekiş değeri
+        assert all(v not in (10.0, 20.0) or h in (10, 20)
+                   for h, v in by_hour.items())  # veriş/reaktif sabitleri sızmadı
+
+    def test_multi_month_records_span_all_periods(self):
+        """Parser flat records döndürür; kayıtlar tüm ayları kapsar (bölme router'da)."""
+        data = _make_cansu_excel([1, 2, 4], days_per_month=2)
+        out = parse_consumption_excel(data, "cansu.xlsx", "CANSU")
+        assert out.result.success is True
+        periods = {r.date[:7] for r in out.records}
+        assert periods == {"2026-01", "2026-02", "2026-04"}

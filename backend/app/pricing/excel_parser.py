@@ -71,6 +71,12 @@ _CONSUMPTION_HEADER_KEYWORDS = {
     "tuketim": "tuketim",
     "consumption": "tuketim",
     "kwh": "tuketim",
+    # EPİAŞ portal "Seçimli Tüketim Raporu" formatı: tüketim sütunu "Aktif Çekiş".
+    # KASITLI olarak yalnız TAM ifade — bare "çekiş"/"aktif" YANLIŞ eşleşir:
+    # "Reaktif İndüktif Çekiş" ("çekiş" içerir) ve "Aktif Veriş"/"Reaktif…"
+    # ("aktif" içerir) substring eşleşmesinde tüketim sanılırdı.
+    "aktif çekiş": "tuketim",
+    "aktif cekis": "tuketim",
 }
 
 
@@ -625,7 +631,11 @@ def parse_consumption_excel(
         if isinstance(tarih_val, datetime):
             dt_obj = tarih_val
         elif isinstance(tarih_val, str):
-            for fmt in ("%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y"):
+            # Saat-gömülü metin tarihler (EPİAŞ portal: "01/01/2026 00:00:00")
+            # önce denenir; saatsiz formatlar strptime'da tam-eşleşme olduğu için
+            # saatli string'i reddedip sıradakine geçer (çakışma yok).
+            for fmt in ("%d/%m/%Y %H:%M:%S", "%Y-%m-%d %H:%M:%S",
+                        "%d.%m.%Y", "%Y-%m-%d", "%d/%m/%Y"):
                 try:
                     dt_obj = datetime.strptime(tarih_val.strip(), fmt)
                     break

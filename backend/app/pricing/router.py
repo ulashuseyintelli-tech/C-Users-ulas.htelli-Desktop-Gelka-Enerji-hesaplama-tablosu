@@ -97,6 +97,8 @@ from .excel_parser import (
     parse_consumption_excel,
     ParsedMarketRecord,
     ParsedConsumptionRecord,
+    expected_hours_for_period,
+    _calculate_consumption_quality_score,
 )
 from .pricing_engine import calculate_weighted_prices, calculate_hourly_costs
 from .time_zones import calculate_time_zone_breakdown
@@ -409,29 +411,52 @@ async def upload_consumption(
             },
         )
 
-    # DB'ye kaydet
-    profile = save_consumption_profile(
-        db=db,
-        customer_id=customer_id,
-        customer_name=customer_name,
-        period=result.period,
-        records=parse_output.records,
-        source="excel",
-    )
+    # A2: Çok dönemli dosya (örn. Oca–Nis tek Excel) → ay ay böl, her dönem için
+    # ayrı ConsumptionProfile. Parser flat records döndürür; gruplama burada.
+    groups: dict[str, list[ParsedConsumptionRecord]] = {}
+    for rec in parse_output.records:
+        groups.setdefault(rec.date[:7], []).append(rec)  # YYYY-MM
+
+    profiles = []
+    for period in sorted(groups):
+        recs = groups[period]
+        negative_hours = sum(1 for r in recs if r.consumption_kwh < 0)
+        total_kwh = round(sum(r.consumption_kwh for r in recs), 4)
+        try:
+            expected = expected_hours_for_period(period)
+        except ValueError:
+            expected = len(recs)
+        quality = _calculate_consumption_quality_score(
+            total_valid=len(recs),
+            expected_hours=expected,
+            negative_count=negative_hours,
+        )
+        profile = save_consumption_profile(
+            db=db,
+            customer_id=customer_id,
+            customer_name=customer_name,
+            period=period,
+            records=recs,
+            source="excel",
+        )
+        profiles.append({
+            "period": period,
+            "total_rows": len(recs),
+            "total_kwh": total_kwh,
+            "negative_hours": negative_hours,
+            "quality_score": quality,
+            "profile_id": profile.id,
+            "version": profile.version,
+        })
 
     # Cache invalidation: tüketim verisi güncellendi → müşteri cache sil
     invalidate_cache_for_customer(db, customer_id)
 
+    # Otorite: profiles. Tek-ay dosyada da liste döner (tek elemanlı).
     return {
-        "status": "ok",
+        "status": "success",
         "customer_id": customer_id,
-        "period": result.period,
-        "total_rows": result.total_rows,
-        "total_kwh": result.total_kwh,
-        "negative_hours": result.negative_hours,
-        "quality_score": result.quality_score,
-        "profile_id": profile.id,
-        "version": profile.version,
+        "profiles": profiles,
     }
 
 
