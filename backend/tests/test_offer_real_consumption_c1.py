@@ -82,7 +82,7 @@ class TestEndpointFlag:
 
     def test_flag_OFF_uses_profile_proxy_not_consumption(self, client, db, monkeypatch):
         """Flag kapalı → customer_id verilse bile PROXY (production birebir aynı)."""
-        monkeypatch.setattr("app.main._OFFER_USE_REAL_CONSUMPTION", False)
+        monkeypatch.setattr("app.market_prices.OFFER_USE_REAL_CONSUMPTION", False)
         _seed_market(db); _seed_profile(db); db.commit()
         body = client.get(self._url()).json()
         # puant_agir proxy = (1.5*1000+3*3000+0.5*500)/5 = 2150
@@ -91,7 +91,7 @@ class TestEndpointFlag:
 
     def test_flag_ON_uses_real_consumption(self, client, db, monkeypatch):
         """Flag açık + firma + profil → GERÇEK tüketim-ağırlıklı (3000)."""
-        monkeypatch.setattr("app.main._OFFER_USE_REAL_CONSUMPTION", True)
+        monkeypatch.setattr("app.market_prices.OFFER_USE_REAL_CONSUMPTION", True)
         _seed_market(db); _seed_profile(db); db.commit()
         body = client.get(self._url()).json()
         assert body["weighted_ptf_source"] == "hourly_consumption:cansu"
@@ -99,7 +99,7 @@ class TestEndpointFlag:
 
     def test_flag_ON_no_profile_falls_back_to_proxy(self, client, db, monkeypatch):
         """Flag açık ama profil yok → proxy'ye düşer (fail-safe)."""
-        monkeypatch.setattr("app.main._OFFER_USE_REAL_CONSUMPTION", True)
+        monkeypatch.setattr("app.market_prices.OFFER_USE_REAL_CONSUMPTION", True)
         _seed_market(db); db.commit()  # profil YOK
         body = client.get(self._url(customer="yok")).json()
         assert body["weighted_ptf_source"] == "hourly_weighted:puant_agir"
@@ -107,7 +107,7 @@ class TestEndpointFlag:
 
     def test_flag_ON_no_customer_id_uses_proxy(self, client, db, monkeypatch):
         """Flag açık ama firma seçilmemiş → proxy (geriye-uyum)."""
-        monkeypatch.setattr("app.main._OFFER_USE_REAL_CONSUMPTION", True)
+        monkeypatch.setattr("app.market_prices.OFFER_USE_REAL_CONSUMPTION", True)
         _seed_market(db); _seed_profile(db); db.commit()
         body = client.get(f"/api/epias/prices/{PERIOD}?auto_fetch=false&profile=puant_agir").json()
         assert body["weighted_ptf_source"] == "hourly_weighted:puant_agir"

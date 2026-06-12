@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { buildPdfFormFields, downloadPdf, PdfMismatchError, pdfErrorFromElectronResult, getEpiasPrices, api } from './api';
+import { buildPdfFormFields, downloadPdf, PdfMismatchError, pdfErrorFromElectronResult, getEpiasPrices, fullProcess, api } from './api';
 
 const extraction: any = {
   consumption_kwh: { value: 1000 },
@@ -86,6 +86,23 @@ describe('getEpiasPrices — SoT-X weighted PTF query', () => {
     expect(spy.mock.calls[0][0] as string).toContain('customer_id=cansu');
     await getEpiasPrices('2025-01', true, 'puant_agir');
     expect(spy.mock.calls[1][0] as string).not.toContain('customer_id=');
+  });
+});
+
+describe('fullProcess — C2 customer_id query', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+  const file = new File([new Uint8Array([1])], 'fatura.pdf');
+
+  it('customer_id verilince /full-process query string içine girer', async () => {
+    const spy = vi.spyOn(api, 'post').mockResolvedValue({ data: {} } as any);
+    await fullProcess(file, { agreement_multiplier: 1.05, customer_id: 'cansu' });
+    expect(spy.mock.calls[0][0] as string).toContain('customer_id=cansu');
+  });
+
+  it('customer_id verilmeyince query eklenmez (geriye-uyum)', async () => {
+    const spy = vi.spyOn(api, 'post').mockResolvedValue({ data: {} } as any);
+    await fullProcess(file, { agreement_multiplier: 1.05 });
+    expect(spy.mock.calls[0][0] as string).not.toContain('customer_id=');
   });
 });
 

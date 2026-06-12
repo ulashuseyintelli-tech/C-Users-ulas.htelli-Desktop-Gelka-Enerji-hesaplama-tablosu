@@ -28,9 +28,6 @@ _PDF_MAX_CONCURRENT = int(os.getenv("PDF_MAX_CONCURRENT", "2"))
 _pdf_semaphore = asyncio.Semaphore(_PDF_MAX_CONCURRENT)
 _pdf_executor = ThreadPoolExecutor(max_workers=_PDF_MAX_CONCURRENT, thread_name_prefix="pdf-render")
 _PDF_RENDER_TIMEOUT = int(os.getenv("PDF_RENDER_TIMEOUT", "30"))  # seconds
-# Seviye 2-b (C1): manuel akışta firma seçilince gerçek tüketim-ağırlıklı PTF kullan.
-# DEFAULT KAPALI → flag kapalıyken production davranışı birebir aynı (profil proxy).
-_OFFER_USE_REAL_CONSUMPTION = os.getenv("OFFER_USE_REAL_CONSUMPTION", "false").lower() == "true"
 from .pdf_render import render_pdf_first_page, get_page1_path
 from .image_prep import preprocess_image_bytes
 from .job_queue import enqueue_job, enqueue_job_idempotent, get_job_by_id, get_jobs_by_invoice, get_active_job, list_jobs
@@ -1023,6 +1020,7 @@ async def full_process(
     btv_rate: float = Query(default=0.01, description="BTV oranı (0.01 = %1 sanayi, 0.05 = %5 ticari)"),
     fast_mode: bool = Query(default=False, description="Hızlı mod: gpt-4o-mini (varsayılan: false - gpt-4o kullan)"),
     debug: bool = Query(default=False, description="Debug modu: LLM raw output dahil"),
+    customer_id: Optional[str] = Query(default=None, description="Firma id (Seviye 2-b/C2): seçiliyse gerçek tüketim profili kullanılır (flag açıkken)"),
     db: Session = Depends(get_db)
 ):
     """
@@ -1359,6 +1357,7 @@ async def full_process(
             params = OfferParams(
                 weighted_ptf_tl_per_mwh=weighted_ptf_tl_per_mwh,
                 yekdem_tl_per_mwh=yekdem_tl_per_mwh,
+                customer_id=customer_id,  # Seviye 2-b/C2: gerçek tüketim profili (flag açıkken)
                 agreement_multiplier=agreement_multiplier,
                 use_reference_prices=use_reference_prices,
                 vat_rate=vat_rate,
@@ -4686,6 +4685,7 @@ async def get_prices_with_epias_fallback(
         weighted_ptf_for_profile,
         default_profile_for_tariff,
         consumption_weighted_ptf,
+        OFFER_USE_REAL_CONSUMPTION,
     )
 
     prices, source_desc = get_market_prices_with_epias_fallback(db, period, auto_fetch)
@@ -4697,7 +4697,7 @@ async def get_prices_with_epias_fallback(
     # Seviye 2-b (C1): flag açık + firma seçili + aktif profil varsa GERÇEK
     # tüketim-ağırlıklı PTF (recon ile parite). Flag kapalı/profil yoksa aşağıdaki
     # profil-proxy'ye düşer — production davranışı flag kapalıyken birebir aynı.
-    cw = consumption_weighted_ptf(db, period, customer_id) if (_OFFER_USE_REAL_CONSUMPTION and customer_id) else None
+    cw = consumption_weighted_ptf(db, period, customer_id) if (OFFER_USE_REAL_CONSUMPTION and customer_id) else None
 
     wr = weighted_ptf_for_profile(db, period, eff_profile)
     if cw is not None and cw > 0:

@@ -15,12 +15,18 @@ Kullanım:
 
 import logging
 import asyncio
+import os
 from datetime import datetime, timezone
 from typing import Optional, Tuple
 from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
+
+# Seviye 2-b (C1+C2): offer akışları, müşteri profili varsa gerçek tüketim-ağırlıklı
+# PTF kullansın. TEK ORTAK FLAG — hem manuel (epias/prices) hem AI (get_ptf_yekdem_for_period).
+# DEFAULT KAPALI → flag kapalıyken production davranışı birebir aynı (profil proxy).
+OFFER_USE_REAL_CONSUMPTION = os.getenv("OFFER_USE_REAL_CONSUMPTION", "false").lower() == "true"
 
 
 # ════════════════════════════════════════════════════════════════════════════

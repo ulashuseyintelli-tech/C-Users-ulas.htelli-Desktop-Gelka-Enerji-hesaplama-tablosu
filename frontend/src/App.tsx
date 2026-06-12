@@ -673,13 +673,13 @@ function App() {
     }
   }, [manualMode, manualValues.consumption_kwh, manualValues.current_unit_price]);
 
-  // Seviye 2-b (C1): yüklü tüketim profili olan firmaları çek (firma dropdown'ı için)
+  // Seviye 2-b (C1+C2): yüklü tüketim profili olan firmaları çek (firma dropdown'ı için).
+  // Her iki akış da (manuel + AI) bu listeyi kullanır → mount'ta bir kez yükle.
   useEffect(() => {
-    if (!manualMode) return;
     pricingGetPeriods()
       .then(r => setConsumptionProfiles(r.consumption_profiles ?? []))
       .catch(() => setConsumptionProfiles([]));  // fail-safe: liste alınamazsa boş
-  }, [manualMode]);
+  }, []);
 
   // Dönem değiştiğinde PTF/YEKDEM fiyatlarını otomatik çek
   useEffect(() => {
@@ -782,6 +782,7 @@ function App() {
         use_reference_prices: useReferencePrices,
         vat_rate: vatRate,
         btv_rate: btvRate,
+        customer_id: selectedCustomerId || undefined,  // Seviye 2-b/C2: gerçek tüketim (flag açıkken)
       });
       
       // Hesaplama hatası varsa göster
@@ -2269,6 +2270,26 @@ function App() {
                 </div>
               </div>
             </div>
+
+            {/* Seviye 2-b/C2: AI akışında firma (gerçek tüketim profili) — opsiyonel */}
+            {!manualMode && consumptionProfiles.length > 0 && (
+              <div className="mb-2">
+                <label className="text-xs font-medium text-gray-700 mb-1 block">
+                  Firma — gerçek tüketim profili (opsiyonel)
+                </label>
+                <select
+                  value={selectedCustomerId}
+                  onChange={(e) => setSelectedCustomerId(e.target.value)}
+                  className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded outline-none focus:ring-1 focus:ring-primary-500"
+                  title="Yüklü tüketim profili olan firma seçilince gerçek tüketim-ağırlıklı PTF kullanılır (backend flag açıkken)"
+                >
+                  <option value="">Firma seçilmedi — profil proxy kullan</option>
+                  {[...new Set(consumptionProfiles.map(p => p.customer_id))].map(cid => (
+                    <option key={cid} value={cid}>📊 {cid} (gerçek tüketim)</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             {/* Analiz Butonu */}
             <button

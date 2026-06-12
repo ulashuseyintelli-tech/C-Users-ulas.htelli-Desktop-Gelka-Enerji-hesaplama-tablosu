@@ -140,6 +140,7 @@ export async function fullProcess(
     use_reference_prices?: boolean;
     vat_rate?: number;
     btv_rate?: number;
+    customer_id?: string;  // Seviye 2-b/C2: firma → gerçek tüketim profili (flag açıkken)
   }
 ): Promise<FullProcessResponse> {
   const formData = new FormData();
@@ -167,7 +168,10 @@ export async function fullProcess(
   if (params.btv_rate !== undefined) {
     queryParams.append('btv_rate', params.btv_rate.toString());
   }
-  
+  if (params.customer_id) {
+    queryParams.append('customer_id', params.customer_id);  // Seviye 2-b/C2
+  }
+
   const response = await api.post(`/full-process?${queryParams.toString()}`, formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   });

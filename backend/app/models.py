@@ -333,6 +333,7 @@ class OfferParams(BaseModel):
     """Teklif hesaplama parametreleri"""
     weighted_ptf_tl_per_mwh: Optional[float] = None  # None = DB'den otomatik çek
     yekdem_tl_per_mwh: Optional[float] = None  # None = DB'den otomatik çek
+    customer_id: Optional[str] = None  # Seviye 2-b/C2: firma → gerçek tüketim profili (flag açıksa)
     agreement_multiplier: float = 1.01
     
     # Override flag: True ise kullanıcı değerleri kullan, False ise DB'den çek

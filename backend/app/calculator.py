@@ -191,9 +191,12 @@ def get_ptf_yekdem_for_period(
         get_market_prices,
         weighted_ptf_for_profile,
         default_profile_for_tariff,
+        consumption_weighted_ptf,
+        OFFER_USE_REAL_CONSUMPTION,
     )
 
     # 1) OVERRIDE — manuel/override PTF önce; hourly devreye girmez.
+    #    ÖNCELİK BOZULMAZ: override her zaman en üstte, gerçek-tüketim dalından da önce.
     if not params.use_reference_prices:
         if params.weighted_ptf_tl_per_mwh is not None and params.weighted_ptf_tl_per_mwh > 0:
             ptf = params.weighted_ptf_tl_per_mwh
@@ -208,6 +211,14 @@ def get_ptf_yekdem_for_period(
     # YEKDEM (aylık skaler) — her dalda aynı kaynak; Seviye 1'de değişmedi.
     ref = get_market_prices(db, period)
     monthly_yekdem = ref.yekdem_tl_per_mwh if ref else 0.0
+
+    # 2') GERÇEK tüketim-ağırlıklı PTF (Seviye 2-b/C2) — flag açık + firma + aktif profil.
+    #     recon ile parite (consumption_weighted_ptf). Yoksa aşağıdaki profil-proxy'ye düşer.
+    #     customer_id yok / flag kapalı → bu dal hiç çalışmaz, davranış birebir aynı.
+    if OFFER_USE_REAL_CONSUMPTION and params.customer_id:
+        cw = consumption_weighted_ptf(db, period, params.customer_id)
+        if cw is not None and cw > 0:
+            return (cw, monthly_yekdem, f"hourly_consumption:{params.customer_id}", None, None)
 
     # 2) HOURLY profil-ağırlıklı PTF
     profile = default_profile_for_tariff(tariff_group)
