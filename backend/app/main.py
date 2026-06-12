@@ -125,6 +125,10 @@ app = FastAPI(
 from .pricing.router import pricing_router
 app.include_router(pricing_router)
 
+# Fatura Mutabakat (recon v2) — müşteri saatlik tüketim + fatura → kâr/zarar mutabakatı
+from .recon.router import recon_router
+app.include_router(recon_router)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Security - API Key Authentication + Rate Limiting

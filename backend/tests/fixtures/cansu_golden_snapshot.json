@@ -1,0 +1,61 @@
+{
+  "format_detected": "format_b",
+  "total_rows": 2713,
+  "successful_rows": 2713,
+  "failed_rows": 0,
+  "multiplier_metadata": null,
+  "periods": {
+    "2026-01": {
+      "record_count": 744,
+      "total_kwh": 194412.8475,
+      "t1_kwh": 87525.086535,
+      "t2_kwh": 41397.41043,
+      "t3_kwh": 65490.350535,
+      "t1_pct": 45.02,
+      "t2_pct": 21.29,
+      "t3_pct": 33.69,
+      "missing_hours": 0,
+      "duplicate_hours": 0,
+      "has_gaps": false
+    },
+    "2026-02": {
+      "record_count": 672,
+      "total_kwh": 195130.206,
+      "t1_kwh": 91812.8835,
+      "t2_kwh": 38994.14043,
+      "t3_kwh": 64323.18207,
+      "t1_pct": 47.05,
+      "t2_pct": 19.98,
+      "t3_pct": 32.97,
+      "missing_hours": 0,
+      "duplicate_hours": 0,
+      "has_gaps": false
+    },
+    "2026-03": {
+      "record_count": 744,
+      "total_kwh": 187696.7325,
+      "t1_kwh": 88051.901535,
+      "t2_kwh": 37452.096,
+      "t3_kwh": 62192.734965,
+      "t1_pct": 46.91,
+      "t2_pct": 19.95,
+      "t3_pct": 33.14,
+      "missing_hours": 0,
+      "duplicate_hours": 0,
+      "has_gaps": false
+    },
+    "2026-04": {
+      "record_count": 553,
+      "total_kwh": 187255.8225,
+      "t1_kwh": 86037.688035,
+      "t2_kwh": 38662.322535,
+      "t3_kwh": 62555.81193,
+      "t1_pct": 45.95,
+      "t2_pct": 20.65,
+      "t3_pct": 33.4,
+      "missing_hours": 167,
+      "duplicate_hours": 0,
+      "has_gaps": true
+    }
+  }
+}

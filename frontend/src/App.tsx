@@ -1,8 +1,8 @@
 ﻿import { useState, useCallback, useMemo, useEffect } from 'react';
-import { Upload, FileText, Zap, TrendingDown, AlertCircle, CheckCircle, Loader2, RefreshCw, Download, Settings, BarChart3 } from 'lucide-react';
+import { Upload, FileText, Zap, TrendingDown, AlertCircle, CheckCircle, Loader2, RefreshCw, Download, Settings } from 'lucide-react';
 import { fullProcess, downloadPdf, FullProcessResponse, pricingAnalyze, pricingGetTemplates, pricingDownloadPdf, pricingDownloadExcel, PricingAnalyzeResponse, normalizeInvoicePeriod, API_BASE, TemplateItem, getVersion, VersionInfo, PdfMismatchError, PdfMismatchContract } from './api';
 import AdminPanel from './AdminPanel';
-import ConsumptionAnalysisPanel from './ConsumptionAnalysisPanel';
+import ReconPage from './recon/ReconPage';
 import { generateBayiRaporPdf } from './bayiRapor';
 
 // EPDK Dağıtım Tarifeleri — Backend API'den çekilir
@@ -196,7 +196,7 @@ function App() {
   
   // Admin panel state
   const [showAdminPanel, setShowAdminPanel] = useState(false);
-  const [showConsumptionAnalysis, setShowConsumptionAnalysis] = useState(false);
+  const [showReconPage, setShowReconPage] = useState(false);
   
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -971,9 +971,9 @@ function App() {
     return <AdminPanel onBack={() => setShowAdminPanel(false)} />;
   }
 
-  // Tüketim Analizi çalışma alanı göster
-  if (showConsumptionAnalysis) {
-    return <ConsumptionAnalysisPanel onBack={() => setShowConsumptionAnalysis(false)} />;
+  // Fatura Mutabakat (recon) sayfası göster
+  if (showReconPage) {
+    return <ReconPage onBack={() => setShowReconPage(false)} />;
   }
 
   return (
@@ -993,12 +993,12 @@ function App() {
             </div>
             <div className="flex items-center gap-1">
               <button
-                onClick={() => setShowConsumptionAnalysis(true)}
+                onClick={() => setShowReconPage(true)}
                 className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                title="Tüketim Analizi"
-                aria-label="Tüketim Analizi"
+                title="Fatura Mutabakat"
+                aria-label="Fatura Mutabakat"
               >
-                <BarChart3 className="w-5 h-5 text-gray-500" />
+                <FileText className="w-5 h-5 text-gray-500" />
               </button>
               <button
                 onClick={() => setShowAdminPanel(true)}

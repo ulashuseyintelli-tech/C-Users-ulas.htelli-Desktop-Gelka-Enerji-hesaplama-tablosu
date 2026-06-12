@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { buildPdfFormFields, downloadPdf, PdfMismatchError, pdfErrorFromElectronResult, getEpiasPrices, api, customerSlug, uploadConsumption, uploadMarketData } from './api';
+import { buildPdfFormFields, downloadPdf, PdfMismatchError, pdfErrorFromElectronResult, getEpiasPrices, api } from './api';
 
 const extraction: any = {
   consumption_kwh: { value: 1000 },
@@ -78,57 +78,6 @@ describe('getEpiasPrices — SoT-X weighted PTF query', () => {
     expect(url).toContain('auto_fetch=true');
     expect(url).not.toContain('profile=');
     expect(url).not.toContain('tariff_group=');
-  });
-});
-
-describe('customerSlug — firma adı → stabil id (TR sadeleştirme)', () => {
-  it('TR karakterleri sadeleştirir ve slug üretir', () => {
-    expect(customerSlug('Cansu Enerji')).toBe('cansu-enerji');
-    expect(customerSlug('Çağrı Şahin A.Ş.')).toBe('cagri-sahin-a-s');
-    expect(customerSlug('  İstanbul  Güç  ')).toBe('istanbul-guc');
-  });
-  it('aynı firma → aynı id (versioning için stabil)', () => {
-    expect(customerSlug('Cansu Enerji')).toBe(customerSlug('CANSU   enerji'));
-  });
-});
-
-describe('uploadConsumption / uploadMarketData — multipart FormData', () => {
-  afterEach(() => { vi.restoreAllMocks(); });
-
-  it('uploadConsumption: file + customer_id + customer_name FormData ile gider', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(mockJsonResponse(200, {
-      status: 'success', customer_id: 'cansu', profiles: [],
-    }));
-    vi.stubGlobal('fetch', fetchMock);
-    const file = new File([new Uint8Array([1, 2])], 'cansu.xlsx');
-    await uploadConsumption(file, 'cansu', 'Cansu');
-    const [url, opts] = fetchMock.mock.calls[0];
-    expect(url).toContain('/api/pricing/upload-consumption');
-    expect(opts.method).toBe('POST');
-    const fd = opts.body as FormData;
-    expect(fd.get('customer_id')).toBe('cansu');
-    expect(fd.get('customer_name')).toBe('Cansu');
-    expect(fd.get('file')).toBeInstanceOf(File);
-  });
-
-  it('uploadConsumption: 422 format hatası → detail.message fırlatır', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
-      mockJsonResponse(422, { detail: { error: 'invalid_consumption_format', message: 'Tüketim Excel formatı ayrıştırılamadı.' } })
-    ));
-    const file = new File([new Uint8Array([1])], 'bad.xlsx');
-    await expect(uploadConsumption(file, 'cansu')).rejects.toThrow('ayrıştırılamadı');
-  });
-
-  it('uploadMarketData: file FormData ile gider', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(mockJsonResponse(200, {
-      status: 'ok', period: '2026-01', total_rows: 744, quality_score: 100, version: 1,
-    }));
-    vi.stubGlobal('fetch', fetchMock);
-    const file = new File([new Uint8Array([1])], 'epias.xlsx');
-    await uploadMarketData(file);
-    const [url, opts] = fetchMock.mock.calls[0];
-    expect(url).toContain('/api/pricing/upload-market-data');
-    expect((opts.body as FormData).get('file')).toBeInstanceOf(File);
   });
 });
 
