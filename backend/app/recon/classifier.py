@@ -10,7 +10,7 @@ IC-1: Tüm toplamlar Decimal ile hesaplanır.
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP  # recon iç tutarlılık: yüzdeler HALF_UP
 
 from ..pricing.models import TimeZone
 from ..pricing.time_zones import classify_hour
@@ -65,8 +65,8 @@ def classify_period_records(records: list[HourlyRecord]) -> TimeZoneSummary:
 
     # Calculate percentages (avoid division by zero)
     if total > Decimal("0"):
-        t1_pct = (t1_sum / total * Decimal("100")).quantize(Decimal("0.01"))
-        t2_pct = (t2_sum / total * Decimal("100")).quantize(Decimal("0.01"))
+        t1_pct = (t1_sum / total * Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        t2_pct = (t2_sum / total * Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         t3_pct = Decimal("100") - t1_pct - t2_pct  # Ensure sum = 100%
     else:
         t1_pct = Decimal("0")

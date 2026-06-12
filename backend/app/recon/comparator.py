@@ -13,10 +13,14 @@ Formüller:
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 
 from .schemas import CostComparison, ComparisonConfig
+
+# Recon iç tutarlılık: tüm para/yüzde yuvarlamaları ROUND_HALF_UP (report_builder/v2
+# ile aynı Türk muhasebe konvansiyonu). v1 comparator önce context-default HALF_EVEN
+# kullanıyordu; bu, recon yanıtı içinde v2 ile ≤0,01 TL tutarsızlık yaratabiliyordu.
 
 
 def compare_costs(
@@ -64,22 +68,22 @@ def compare_costs(
 
     # Mesaj
     if diff_tl > Decimal("0"):
-        message = f"Tasarruf potansiyeli: {float(diff_tl.quantize(Decimal('0.01')))} TL (%{float(diff_pct.quantize(Decimal('0.1')))})"
+        message = f"Tasarruf potansiyeli: {float(diff_tl.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))} TL (%{float(diff_pct.quantize(Decimal('0.1'), rounding=ROUND_HALF_UP))})"
     elif diff_tl < Decimal("0"):
         abs_diff = abs(diff_tl)
         abs_pct = abs(diff_pct)
-        message = f"Mevcut tedarikçi avantajlı: {float(abs_diff.quantize(Decimal('0.01')))} TL (%{float(abs_pct.quantize(Decimal('0.1')))})"
+        message = f"Mevcut tedarikçi avantajlı: {float(abs_diff.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))} TL (%{float(abs_pct.quantize(Decimal('0.1'), rounding=ROUND_HALF_UP))})"
     else:
         message = "Maliyet eşit"
 
     return CostComparison(
-        invoice_energy_tl=float(invoice_energy.quantize(Decimal("0.01"))),
-        invoice_distribution_tl=float(invoice_distribution.quantize(Decimal("0.01"))),
-        invoice_total_tl=float(invoice_total.quantize(Decimal("0.01"))),
-        gelka_energy_tl=float(gelka_energy.quantize(Decimal("0.01"))),
-        gelka_distribution_tl=float(gelka_distribution.quantize(Decimal("0.01"))),
-        gelka_total_tl=float(gelka_total.quantize(Decimal("0.01"))),
-        diff_tl=float(diff_tl.quantize(Decimal("0.01"))),
-        diff_pct=float(diff_pct.quantize(Decimal("0.1"))),
+        invoice_energy_tl=float(invoice_energy.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)),
+        invoice_distribution_tl=float(invoice_distribution.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)),
+        invoice_total_tl=float(invoice_total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)),
+        gelka_energy_tl=float(gelka_energy.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)),
+        gelka_distribution_tl=float(gelka_distribution.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)),
+        gelka_total_tl=float(gelka_total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)),
+        diff_tl=float(diff_tl.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)),
+        diff_pct=float(diff_pct.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)),
         message=message,
     )
