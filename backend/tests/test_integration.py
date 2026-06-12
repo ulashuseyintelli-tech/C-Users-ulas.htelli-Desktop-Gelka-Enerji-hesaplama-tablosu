@@ -145,7 +145,7 @@ class TestCalculationFlow:
         if not validation.is_ready_for_pricing:
             pytest.skip("Extraction not ready for pricing")
         
-        params = OfferParams()
+        params = OfferParams(weighted_ptf_tl_per_mwh=2974.1, use_reference_prices=False)  # SoT-X fail-closed: PTF zorunlu
         result = calculate_offer(extraction, params)
         
         # Basic sanity checks
@@ -164,7 +164,7 @@ class TestCalculationFlow:
         if not validation.is_ready_for_pricing:
             pytest.skip("Extraction not ready for pricing")
         
-        params = OfferParams()
+        params = OfferParams(weighted_ptf_tl_per_mwh=2974.1, use_reference_prices=False)  # SoT-X fail-closed: PTF zorunlu
         result = calculate_offer(extraction, params)
         
         # Current total should be sum of components
@@ -205,7 +205,7 @@ class TestFullFlow:
         if not validation.is_ready_for_pricing:
             pytest.skip("Extraction not ready for pricing")
         
-        params = OfferParams()
+        params = OfferParams(weighted_ptf_tl_per_mwh=2974.1, use_reference_prices=False)  # SoT-X fail-closed: PTF zorunlu
         result = calculate_offer(extraction, params)
         
         # Should have a difference (positive or negative)
@@ -242,8 +242,9 @@ class TestFullFlow:
         """
         extraction = create_mock_extraction(ENERJISA_FIXTURE)
         
-        params1 = OfferParams(agreement_multiplier=1.0)
-        params2 = OfferParams(agreement_multiplier=1.05)
+        # SoT-X fail-closed: PTF kaynağı zorunlu → override yolu ile sabit PTF.
+        params1 = OfferParams(agreement_multiplier=1.0, weighted_ptf_tl_per_mwh=2974.1, use_reference_prices=False)
+        params2 = OfferParams(agreement_multiplier=1.05, weighted_ptf_tl_per_mwh=2974.1, use_reference_prices=False)
         
         result1 = calculate_offer(extraction, params1)
         result2 = calculate_offer(extraction, params2)

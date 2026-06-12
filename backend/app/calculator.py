@@ -169,45 +169,61 @@ class CalculationError(Exception):
 def get_ptf_yekdem_for_period(
     db: Optional[Session],
     period: Optional[str],
-    params: OfferParams
-) -> Tuple[float, float, str, Optional[str]]:
+    params: OfferParams,
+    tariff_group: Optional[str] = None,
+) -> Tuple[float, float, str, Optional[str], Optional[str]]:
     """
-    PTF/YEKDEM değerlerini belirle.
-    
-    Öncelik:
-    1. params.use_reference_prices=False ve değerler verilmişse → override
-    2. DB'den dönem bazlı çek
-    3. Default değerler (fallback)
-    
+    PTF/YEKDEM değerlerini belirle (SoT-X Seviye 1: profil-ağırlıklı PTF).
+    Bkz. docs/sot-x-offer-ptf-parity.md
+
+    Öncelik (kilitli):
+    1. override (use_reference_prices=False + weighted_ptf>0) → hourly DEVREYE GİRMEZ
+    2. hourly_market_prices profil-ağırlıklı PTF (tariff_group → default profil)
+    3. market_reference_prices skaler PTF (>0) + UYARI (saatlik yok)
+    4. yok / PTF<=0 → fail-closed (not_found). Silent default YOK.
+
+    YEKDEM her dalda aylık (market_reference_prices); Seviye 1 yalnız PTF.
+
     Returns:
-        (ptf_tl_per_mwh, yekdem_tl_per_mwh, source, error_message)
+        (ptf_tl_per_mwh, yekdem_tl_per_mwh, source, error_message, warning)
     """
     from .market_prices import (
-        get_market_prices, 
-        DEFAULT_PTF_TL_PER_MWH, 
-        DEFAULT_YEKDEM_TL_PER_MWH
+        get_market_prices,
+        weighted_ptf_for_profile,
+        default_profile_for_tariff,
     )
-    
-    # Override: Kullanıcı değerleri verilmişse ve use_reference_prices=False
+
+    # 1) OVERRIDE — manuel/override PTF önce; hourly devreye girmez.
     if not params.use_reference_prices:
         if params.weighted_ptf_tl_per_mwh is not None and params.weighted_ptf_tl_per_mwh > 0:
             ptf = params.weighted_ptf_tl_per_mwh
             yekdem = params.yekdem_tl_per_mwh or 0
-            return (ptf, yekdem, "override", None)
-    
-    # DB'den çek (dönem varsa)
-    if db is not None and period:
-        prices = get_market_prices(db, period)
-        if prices:
-            return (prices.ptf_tl_per_mwh, prices.yekdem_tl_per_mwh, "reference", None)
-        else:
-            # Dönem için veri yok - HARD ERROR
-            error_msg = f"Dönem {period} için referans fiyat bulunamadı. Admin panelden ekleyin."
-            return (0, 0, "not_found", error_msg)
-    
-    # Fallback: Default değerler (DB yok veya dönem yok)
-    logger.warning(f"PTF/YEKDEM için default değerler kullanılıyor (period={period})")
-    return (DEFAULT_PTF_TL_PER_MWH, DEFAULT_YEKDEM_TL_PER_MWH, "default", None)
+            return (ptf, yekdem, "override", None, None)
+
+    # db/dönem yok → silent default YOK → fail-closed
+    if db is None or not period:
+        return (0, 0, "not_found",
+                "PTF kaynağı yok (db/dönem eksik); teklif üretilemez.", None)
+
+    # YEKDEM (aylık skaler) — her dalda aynı kaynak; Seviye 1'de değişmedi.
+    ref = get_market_prices(db, period)
+    monthly_yekdem = ref.yekdem_tl_per_mwh if ref else 0.0
+
+    # 2) HOURLY profil-ağırlıklı PTF
+    profile = default_profile_for_tariff(tariff_group)
+    wr = weighted_ptf_for_profile(db, period, profile)
+    if wr.ptf_tl_per_mwh is not None and wr.ptf_tl_per_mwh > 0:
+        return (wr.ptf_tl_per_mwh, monthly_yekdem, f"hourly_weighted:{profile}", None, None)
+
+    # 3) FALLBACK — aylık skaler PTF (>0) + uyarı
+    if ref and ref.ptf_tl_per_mwh and ref.ptf_tl_per_mwh > 0:
+        warning = ("Saatlik PTF verisi yok; aylık ortalama kullanıldı. "
+                   "Puant/gece ağırlıklı profillerde teklif sapabilir.")
+        return (ref.ptf_tl_per_mwh, monthly_yekdem, "reference_scalar", None, warning)
+
+    # 4) FAIL-CLOSED — ne hourly ne reference>0
+    error_msg = f"Dönem {period} için geçerli PTF bulunamadı (saatlik yok, referans <= 0)."
+    return (0, 0, "not_found", error_msg, None)
 
 
 def calculate_offer(
@@ -312,13 +328,15 @@ def calculate_offer(
     # ═══════════════════════════════════════════════════════════════════════════════
     # PTF/YEKDEM - DÖNEM BAZLI OTOMATİK ÇEK (invoice_period yukarıda tanımlandı)
     # ═══════════════════════════════════════════════════════════════════════════════
-    ptf_tl_per_mwh, yekdem_tl_per_mwh, pricing_source, pricing_error = get_ptf_yekdem_for_period(
+    _tariff_group = extraction.meta.tariff_group_guess if extraction.meta else None
+    ptf_tl_per_mwh, yekdem_tl_per_mwh, pricing_source, pricing_error, ptf_source_warning = get_ptf_yekdem_for_period(
         db=db,
         period=invoice_period,
-        params=params
+        params=params,
+        tariff_group=_tariff_group,
     )
-    
-    # HARD ERROR: Dönem için referans fiyat yoksa hesaplama yapma
+
+    # HARD ERROR (fail-closed): geçerli PTF yoksa hesaplama yapma (silent default YOK)
     if pricing_error and pricing_source == "not_found":
         raise CalculationError(pricing_error)
     
@@ -607,6 +625,7 @@ def calculate_offer(
         meta_distribution_mismatch_warning=distribution_mismatch_warning,
         # PTF/YEKDEM kaynağı bilgisi
         meta_pricing_source=pricing_source,
+        meta_ptf_source_warning=ptf_source_warning,
         meta_pricing_period=invoice_period,
         meta_ptf_tl_per_mwh=round(ptf_tl_per_mwh, 2),
         meta_yekdem_tl_per_mwh=round(yekdem_tl_per_mwh, 2),

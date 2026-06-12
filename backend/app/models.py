@@ -413,7 +413,8 @@ class CalculationResult(BaseModel):
     meta_distribution_mismatch_warning: Optional[str] = None  # Faturadan okunan vs EPDK farkı
     
     # PTF/YEKDEM kaynağı bilgisi (debug/UI için)
-    meta_pricing_source: str = "unknown"  # "reference" (DB'den), "override" (kullanıcıdan), "default" (fallback)
+    meta_pricing_source: str = "unknown"  # "hourly_weighted:<profil>", "reference_scalar", "override", "not_found"
+    meta_ptf_source_warning: Optional[str] = None  # SoT-X: saatlik yok, aylık skaler fallback uyarısı
     meta_pricing_period: Optional[str] = None  # "2025-01"
     meta_ptf_tl_per_mwh: float = 0  # Kullanılan PTF değeri
     meta_yekdem_tl_per_mwh: float = 0  # Kullanılan YEKDEM değeri

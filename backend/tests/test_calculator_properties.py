@@ -70,6 +70,9 @@ def valid_extraction_strategy(draw):
 def offer_params_strategy(draw):
     """Generate valid OfferParams."""
     return OfferParams(
+        # SoT-X fail-closed: silent default kaldırıldı. Formül testleri için override
+        # yolu (use_reference_prices=False + weighted_ptf) ile bilinen PTF kullanılır.
+        use_reference_prices=False,
         weighted_ptf_tl_per_mwh=draw(st.floats(min_value=1000, max_value=5000, allow_nan=False, allow_infinity=False)),
         yekdem_tl_per_mwh=draw(st.floats(min_value=100, max_value=1000, allow_nan=False, allow_infinity=False)),
         agreement_multiplier=draw(st.floats(min_value=0.9, max_value=1.2, allow_nan=False, allow_infinity=False)),
