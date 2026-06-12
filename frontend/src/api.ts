@@ -717,11 +717,13 @@ export async function getEpiasPrices(
   period: string,
   autoFetch: boolean = true,
   profile?: string,
-  tariffGroup?: string
+  tariffGroup?: string,
+  customerId?: string
 ): Promise<EpiasPricesResponse> {
   const qs = new URLSearchParams({ auto_fetch: String(autoFetch) });
   if (profile) qs.append('profile', profile);
   if (tariffGroup) qs.append('tariff_group', tariffGroup);
+  if (customerId) qs.append('customer_id', customerId);  // Seviye 2-b: gerçek tüketim
   const response = await api.get(`/api/epias/prices/${period}?${qs.toString()}`);
   return response.data;
 }
@@ -959,6 +961,8 @@ export interface PricingPeriodsResponse {
   status: string;
   market_data_periods: string[];
   yekdem_periods: string[];
+  // Yüklü tüketim profili olan firmalar (Seviye 2-b dropdown kaynağı)
+  consumption_profiles?: Array<{ customer_id: string; period: string }>;
 }
 
 export interface TemplateItem {

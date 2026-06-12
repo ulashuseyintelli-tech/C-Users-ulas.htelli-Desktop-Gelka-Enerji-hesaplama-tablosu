@@ -79,6 +79,14 @@ describe('getEpiasPrices — SoT-X weighted PTF query', () => {
     expect(url).not.toContain('profile=');
     expect(url).not.toContain('tariff_group=');
   });
+
+  it('Seviye 2-b: customerId verilince customer_id query eklenir; verilmeyince eklenmez', async () => {
+    const spy = vi.spyOn(api, 'get').mockResolvedValue({ data: body } as any);
+    await getEpiasPrices('2025-01', true, 'puant_agir', undefined, 'cansu');
+    expect(spy.mock.calls[0][0] as string).toContain('customer_id=cansu');
+    await getEpiasPrices('2025-01', true, 'puant_agir');
+    expect(spy.mock.calls[1][0] as string).not.toContain('customer_id=');
+  });
 });
 
 function mockJsonResponse(status: number, body: any) {

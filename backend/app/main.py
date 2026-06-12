@@ -28,6 +28,9 @@ _PDF_MAX_CONCURRENT = int(os.getenv("PDF_MAX_CONCURRENT", "2"))
 _pdf_semaphore = asyncio.Semaphore(_PDF_MAX_CONCURRENT)
 _pdf_executor = ThreadPoolExecutor(max_workers=_PDF_MAX_CONCURRENT, thread_name_prefix="pdf-render")
 _PDF_RENDER_TIMEOUT = int(os.getenv("PDF_RENDER_TIMEOUT", "30"))  # seconds
+# Seviye 2-b (C1): manuel akışta firma seçilince gerçek tüketim-ağırlıklı PTF kullan.
+# DEFAULT KAPALI → flag kapalıyken production davranışı birebir aynı (profil proxy).
+_OFFER_USE_REAL_CONSUMPTION = os.getenv("OFFER_USE_REAL_CONSUMPTION", "false").lower() == "true"
 from .pdf_render import render_pdf_first_page, get_page1_path
 from .image_prep import preprocess_image_bytes
 from .job_queue import enqueue_job, enqueue_job_idempotent, get_job_by_id, get_jobs_by_invoice, get_active_job, list_jobs
@@ -4642,6 +4645,7 @@ async def get_prices_with_epias_fallback(
     auto_fetch: bool = True,
     profile: Optional[str] = None,
     tariff_group: Optional[str] = None,
+    customer_id: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """
@@ -4681,6 +4685,7 @@ async def get_prices_with_epias_fallback(
         get_market_prices_with_epias_fallback,
         weighted_ptf_for_profile,
         default_profile_for_tariff,
+        consumption_weighted_ptf,
     )
 
     prices, source_desc = get_market_prices_with_epias_fallback(db, period, auto_fetch)
@@ -4688,8 +4693,18 @@ async def get_prices_with_epias_fallback(
     # SoT-X Seviye 1: profil-ağırlıklı PTF (hourly) — calculator ile parite.
     # Profil sırası: explicit profile → tariff_group default → puant_agir fail-safe.
     eff_profile = profile or default_profile_for_tariff(tariff_group)
+
+    # Seviye 2-b (C1): flag açık + firma seçili + aktif profil varsa GERÇEK
+    # tüketim-ağırlıklı PTF (recon ile parite). Flag kapalı/profil yoksa aşağıdaki
+    # profil-proxy'ye düşer — production davranışı flag kapalıyken birebir aynı.
+    cw = consumption_weighted_ptf(db, period, customer_id) if (_OFFER_USE_REAL_CONSUMPTION and customer_id) else None
+
     wr = weighted_ptf_for_profile(db, period, eff_profile)
-    if wr.ptf_tl_per_mwh is not None and wr.ptf_tl_per_mwh > 0:
+    if cw is not None and cw > 0:
+        weighted_ptf = cw
+        weighted_source = f"hourly_consumption:{customer_id}"
+        ptf_source_warning = None
+    elif wr.ptf_tl_per_mwh is not None and wr.ptf_tl_per_mwh > 0:
         weighted_ptf = wr.ptf_tl_per_mwh
         weighted_source = f"hourly_weighted:{eff_profile}"
         ptf_source_warning = None

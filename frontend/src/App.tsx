@@ -1,6 +1,6 @@
 ﻿import { useState, useCallback, useMemo, useEffect } from 'react';
 import { Upload, FileText, Zap, TrendingDown, AlertCircle, CheckCircle, Loader2, RefreshCw, Download, Settings } from 'lucide-react';
-import { fullProcess, downloadPdf, FullProcessResponse, pricingAnalyze, pricingGetTemplates, pricingDownloadPdf, pricingDownloadExcel, PricingAnalyzeResponse, normalizeInvoicePeriod, API_BASE, TemplateItem, getVersion, VersionInfo, PdfMismatchError, PdfMismatchContract } from './api';
+import { fullProcess, downloadPdf, FullProcessResponse, pricingAnalyze, pricingGetTemplates, pricingGetPeriods, pricingDownloadPdf, pricingDownloadExcel, PricingAnalyzeResponse, normalizeInvoicePeriod, API_BASE, TemplateItem, getVersion, VersionInfo, PdfMismatchError, PdfMismatchContract } from './api';
 import AdminPanel from './AdminPanel';
 import ReconPage from './recon/ReconPage';
 import { generateBayiRaporPdf } from './bayiRapor';
@@ -217,8 +217,11 @@ function App() {
   const [multiplier, setMultiplier] = useState(1.01);
   // SoT-X Seviye 1: profil-ağırlıklı PTF (manuel akış)
   const [ptfProfile, setPtfProfile] = useState('puant_agir'); // puant_agir|duz|gece_agir
-  const [ptfSource, setPtfSource] = useState<string | null>(null); // hourly_weighted:* | reference_scalar | not_found
+  const [ptfSource, setPtfSource] = useState<string | null>(null); // hourly_consumption:* | hourly_weighted:* | reference_scalar | not_found
   const [ptfSourceWarning, setPtfSourceWarning] = useState<string | null>(null);
+  // Seviye 2-b (C1): yüklü tüketim profili olan firmalar + seçili firma (gerçek tüketim-ağırlıklı PTF)
+  const [consumptionProfiles, setConsumptionProfiles] = useState<Array<{ customer_id: string; period: string }>>([]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState('');
   
   // Bayi komisyonu (toplam marjın yüzdesi olarak, örn: 25 = %25)
   // Çarpan 1.06 ve bayi %25 ise: marj=6p, bayi=6×0.25=1.5p, gelka=4.5p
@@ -670,6 +673,14 @@ function App() {
     }
   }, [manualMode, manualValues.consumption_kwh, manualValues.current_unit_price]);
 
+  // Seviye 2-b (C1): yüklü tüketim profili olan firmaları çek (firma dropdown'ı için)
+  useEffect(() => {
+    if (!manualMode) return;
+    pricingGetPeriods()
+      .then(r => setConsumptionProfiles(r.consumption_profiles ?? []))
+      .catch(() => setConsumptionProfiles([]));  // fail-safe: liste alınamazsa boş
+  }, [manualMode]);
+
   // Dönem değiştiğinde PTF/YEKDEM fiyatlarını otomatik çek
   useEffect(() => {
     // Sadece manuel modda ve dönem seçilmişse çalış
@@ -687,6 +698,8 @@ function App() {
         // SoT-X: profil-ağırlıklı PTF için profile + tariff_group gönder.
         const qs = new URLSearchParams({ auto_fetch: 'true', profile: ptfProfile });
         if (manualValues.tariff_group) qs.append('tariff_group', manualValues.tariff_group);
+        // Seviye 2-b: firma seçiliyse gerçek tüketim-ağırlıklı PTF (backend flag açıksa kullanılır)
+        if (selectedCustomerId) qs.append('customer_id', selectedCustomerId);
         const res = await fetch(`${API_BASE}/api/epias/prices/${period}?${qs.toString()}`);
         if (!res.ok) {
           const errBody = await res.json().catch(() => ({}));
@@ -718,7 +731,7 @@ function App() {
     };
 
     fetchPrices();
-  }, [manualMode, manualValues.invoice_period, ptfProfile, manualValues.tariff_group]);
+  }, [manualMode, manualValues.invoice_period, ptfProfile, manualValues.tariff_group, selectedCustomerId]);
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -1179,23 +1192,44 @@ function App() {
                     })()}
                     {manualMode && (
                       <div className="mt-1.5 space-y-1">
+                        {/* Seviye 2-b: yüklü tüketim profili olan firma → gerçek tüketim-ağırlıklı PTF */}
+                        {(() => {
+                          const firms = consumptionProfiles.filter(p => p.period === manualValues.invoice_period);
+                          if (firms.length === 0) return null;
+                          return (
+                            <select
+                              className="w-full text-[11px] border border-gray-200 rounded px-1.5 py-0.5 bg-white outline-none focus:ring-1 focus:ring-primary-500"
+                              value={selectedCustomerId}
+                              onChange={(e) => setSelectedCustomerId(e.target.value)}
+                              title="Firma gerçek tüketim profili (seçilince gerçek tüketim-ağırlıklı PTF)"
+                            >
+                              <option value="">Firma profili yok — profil proxy kullan</option>
+                              {firms.map(f => (
+                                <option key={f.customer_id} value={f.customer_id}>📊 {f.customer_id} (gerçek tüketim)</option>
+                              ))}
+                            </select>
+                          );
+                        })()}
                         <div className="flex items-center gap-1.5">
                           <select
                             className="text-[11px] border border-gray-200 rounded px-1.5 py-0.5 bg-white outline-none focus:ring-1 focus:ring-primary-500"
                             value={ptfProfile}
                             onChange={(e) => setPtfProfile(e.target.value)}
                             title="Saatlik PTF ağırlık profili"
+                            disabled={ptfSource?.startsWith('hourly_consumption') ?? false}
                           >
                             <option value="duz">Düz profil</option>
                             <option value="puant_agir">Puant ağırlıklı</option>
                             <option value="gece_agir">Gece ağırlıklı</option>
                           </select>
                           {ptfSource && (
-                            ptfSource.startsWith('hourly_weighted')
-                              ? <span className="text-[11px] text-green-600">saatlik ağırlıklı</span>
-                              : ptfSource === 'reference_scalar'
-                                ? <span className="text-[11px] text-amber-600">aylık ortalama</span>
-                                : <span className="text-[11px] text-red-600">PTF yok</span>
+                            ptfSource.startsWith('hourly_consumption')
+                              ? <span className="text-[11px] text-green-700 font-medium">gerçek tüketim ✓</span>
+                              : ptfSource.startsWith('hourly_weighted')
+                                ? <span className="text-[11px] text-green-600">saatlik ağırlıklı (profil)</span>
+                                : ptfSource === 'reference_scalar'
+                                  ? <span className="text-[11px] text-amber-600">aylık ortalama</span>
+                                  : <span className="text-[11px] text-red-600">PTF yok</span>
                           )}
                         </div>
                         {ptfSourceWarning && (

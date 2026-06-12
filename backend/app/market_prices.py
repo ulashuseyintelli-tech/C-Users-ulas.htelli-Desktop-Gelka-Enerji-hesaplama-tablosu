@@ -91,6 +91,64 @@ def weighted_ptf_for_profile(db: Session, period: str, profile: str = "puant_agi
     )
 
 
+def consumption_weighted_ptf(db: Session, period: str, customer_id: str) -> Optional[float]:
+    """Seviye 2-b (C1): müşterinin GERÇEK saatlik tüketimi ile ağırlıklı PTF.
+
+    Σ(kWh_h × PTF_h) / Σ(kWh_h) — profil-katsayı proxy'si DEĞİL, gerçek tüketim.
+    Hesap, recon/pricing ile parite olsun diye pricing_engine.calculate_weighted_prices
+    fonksiyonunu yeniden kullanır (kod tekrarı yok).
+
+    Aktif ConsumptionProfile yok / eşleşen saat yok / toplam kWh=0 → None
+    (caller mevcut profil-proxy'ye düşer; fail-safe korunur).
+    """
+    from .pricing.schemas import HourlyMarketPrice, ConsumptionProfile, ConsumptionHourlyData
+    from .pricing.excel_parser import ParsedMarketRecord, ParsedConsumptionRecord
+    from .pricing.pricing_engine import calculate_weighted_prices
+
+    profile = (
+        db.query(ConsumptionProfile)
+        .filter(
+            ConsumptionProfile.customer_id == customer_id,
+            ConsumptionProfile.period == period,
+            ConsumptionProfile.is_active == 1,
+        )
+        .first()
+    )
+    if not profile:
+        return None
+
+    cons_rows = (
+        db.query(ConsumptionHourlyData.date, ConsumptionHourlyData.hour,
+                 ConsumptionHourlyData.consumption_kwh)
+        .filter(ConsumptionHourlyData.profile_id == profile.id)
+        .all()
+    )
+    if not cons_rows:
+        return None
+
+    mkt_rows = (
+        db.query(HourlyMarketPrice.date, HourlyMarketPrice.hour,
+                 HourlyMarketPrice.ptf_tl_per_mwh, HourlyMarketPrice.smf_tl_per_mwh)
+        .filter(HourlyMarketPrice.period == period, HourlyMarketPrice.is_active == 1)
+        .all()
+    )
+    market_records = [
+        ParsedMarketRecord(period=period, date=d, hour=int(h),
+                           ptf_tl_per_mwh=float(p), smf_tl_per_mwh=float(s or 0))
+        for d, h, p, s in mkt_rows
+    ]
+    consumption_records = [
+        ParsedConsumptionRecord(date=d, hour=int(h), consumption_kwh=float(k))
+        for d, h, k in cons_rows
+    ]
+    try:
+        result = calculate_weighted_prices(market_records, consumption_records)
+    except ValueError:
+        return None  # toplam tüketim 0 vb.
+    ptf = result.weighted_ptf_tl_per_mwh
+    return ptf if ptf and ptf > 0 else None
+
+
 @dataclass
 class MarketPrices:
     """Piyasa referans fiyatları"""
