@@ -1224,13 +1224,15 @@ function App() {
                             <option value="gece_agir">Gece ağırlıklı</option>
                           </select>
                           {ptfSource && (
-                            ptfSource.startsWith('hourly_consumption')
-                              ? <span className="text-[11px] text-green-700 font-medium">gerçek tüketim ✓</span>
-                              : ptfSource.startsWith('hourly_weighted')
-                                ? <span className="text-[11px] text-green-600">saatlik ağırlıklı (profil)</span>
-                                : ptfSource === 'reference_scalar'
-                                  ? <span className="text-[11px] text-amber-600">aylık ortalama</span>
-                                  : <span className="text-[11px] text-red-600">PTF yok</span>
+                            ptfSource === 'manual_override'
+                              ? <span className="text-[11px] text-blue-700 font-medium">Manuel kayıt</span>
+                              : ptfSource.startsWith('hourly_consumption')
+                                ? <span className="text-[11px] text-green-700 font-medium">gerçek tüketim ✓</span>
+                                : ptfSource.startsWith('hourly_weighted')
+                                  ? <span className="text-[11px] text-green-600">saatlik ağırlıklı (profil)</span>
+                                  : ptfSource === 'reference_scalar'
+                                    ? <span className="text-[11px] text-amber-600">aylık ortalama</span>
+                                    : <span className="text-[11px] text-red-600">PTF yok</span>
                           )}
                         </div>
                         {ptfSourceWarning && (

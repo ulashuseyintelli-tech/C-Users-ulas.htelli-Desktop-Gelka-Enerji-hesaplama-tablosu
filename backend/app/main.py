@@ -4700,7 +4700,15 @@ async def get_prices_with_epias_fallback(
     cw = consumption_weighted_ptf(db, period, customer_id) if (OFFER_USE_REAL_CONSUMPTION and customer_id) else None
 
     wr = weighted_ptf_for_profile(db, period, eff_profile)
-    if cw is not None and cw > 0:
+    # PRIORITY 2: MANUEL KAYIT (açık override) — hourly/C2'den ÖNCE. Kullanıcı PTF'i
+    # elle kaydettiyse (source="manual_override") hourly-weighted bunu ezemez. YALNIZ
+    # manual_override; auto/seed skalerler hourly önceliğini bozmaz. GUARD: ptf<=0/None
+    # ise override sayılmaz → fallback zinciri devam eder. (calculator ile aynı precedence.)
+    if prices.source_detail == "manual_override" and prices.ptf_tl_per_mwh and prices.ptf_tl_per_mwh > 0:
+        weighted_ptf = prices.ptf_tl_per_mwh
+        weighted_source = "manual_override"
+        ptf_source_warning = None
+    elif cw is not None and cw > 0:
         weighted_ptf = cw
         weighted_source = f"hourly_consumption:{customer_id}"
         ptf_source_warning = None

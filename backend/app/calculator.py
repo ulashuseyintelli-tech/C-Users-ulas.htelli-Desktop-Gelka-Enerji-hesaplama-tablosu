@@ -212,6 +212,15 @@ def get_ptf_yekdem_for_period(
     ref = get_market_prices(db, period)
     monthly_yekdem = ref.yekdem_tl_per_mwh if ref else 0.0
 
+    # PRIORITY 2: MANUEL KAYIT (açık override) — hourly/C2'den ÖNCE.
+    #   Kullanıcı PTF'i elle girip kaydettiyse (save_period_prices → source="manual_override")
+    #   sistem bunu hourly-weighted/otomatik veriyle ezemez. YALNIZ source=="manual_override"
+    #   tetikler — epias_manual/seed/epias_api auto skalerler bugünkü hourly önceliğini bozmaz.
+    #   GUARD: ptf <= 0 / None → override SAYILMAZ, fallback zinciri devam eder.
+    if (ref and ref.source_detail == "manual_override"
+            and ref.ptf_tl_per_mwh and ref.ptf_tl_per_mwh > 0):
+        return (ref.ptf_tl_per_mwh, monthly_yekdem, "manual_override", None, None)
+
     # 2') GERÇEK tüketim-ağırlıklı PTF (Seviye 2-b/C2) — flag açık + firma + aktif profil.
     #     recon ile parite (consumption_weighted_ptf). Yoksa aşağıdaki profil-proxy'ye düşer.
     #     customer_id yok / flag kapalı → bu dal hiç çalışmaz, davranış birebir aynı.
