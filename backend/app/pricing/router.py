@@ -396,7 +396,7 @@ async def upload_consumption(
     content = await file.read()
     filename = file.filename or "unknown.xlsx"
 
-    parse_output = parse_consumption_excel(content, filename)
+    parse_output = parse_consumption_excel(content, filename, customer_id)
     result = parse_output.result
 
     if not result.success:
