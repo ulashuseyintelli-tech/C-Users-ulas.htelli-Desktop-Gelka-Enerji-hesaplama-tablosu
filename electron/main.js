@@ -69,10 +69,19 @@ function startBackend() {
   }
 
   if (isDev) {
-    const pythonPath = process.platform === 'win32' ? 'python' : 'python3';
+    // Dev modda backend'i venv Python'u ile başlat. Sistem Python'unda (ör. 3.14)
+    // bağımlılıklar (fastapi/uvicorn/reportlab) kurulu olmayabilir → ECONNREFUSED.
+    // Öncelik: backend/.venv → yoksa sistem python'una düş (geri-uyumlu).
+    const backendDir = path.join(__dirname, '..', 'backend');
+    const venvPython = path.join(backendDir, '.venv', 'Scripts',
+      process.platform === 'win32' ? 'python.exe' : 'python');
+    const pythonPath = fs.existsSync(venvPython)
+      ? venvPython
+      : (process.platform === 'win32' ? 'python' : 'python3');
+    logBackend(`Dev backend python: ${pythonPath} (venv=${fs.existsSync(venvPython)})`);
     backendProcess = spawn(pythonPath,
       ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(BACKEND_PORT)],
-      { cwd: path.join(__dirname, '..', 'backend'), env: { ...process.env }, stdio: ['pipe', 'pipe', 'pipe'] }
+      { cwd: backendDir, env: { ...process.env }, stdio: ['pipe', 'pipe', 'pipe'] }
     );
   } else {
     const backendDir = path.join(process.resourcesPath, 'backend');
