@@ -2090,7 +2090,7 @@ async def generate_pdf_simple(
     operator_confirmed_warnings: bool = Form(False),  # R2: %10-40 mismatch onayı
     invoice_total_raw: float = Form(0),  # R2: operatörün girdiği/extract edilen HAM toplam (re-derive için)
     offer_type: str = Form("indexed"),  # Teklif tipi: "indexed" (PTF+YEKDEM×çarpan) | "fixed" (sabit birim fiyat)
-    fixed_unit_price: float = Form(0),  # Sabit modda enerji birim fiyatı — PTF+YEKDEM birleşik (TL/MWh)
+    fixed_unit_price: float = Form(0),  # Sabit modda enerji birim fiyatı — PTF+YEKDEM birleşik (TL/kWh)
 ):
     """Basit parametrelerle PDF oluştur.
 

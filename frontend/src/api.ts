@@ -245,7 +245,7 @@ export function buildPdfFormFields(
     yekdem_tl_per_mwh: number;
     agreement_multiplier: number;
     offer_type?: 'indexed' | 'fixed'; // Teklif tipi: endeksli (PTF+YEKDEM×çarpan) / sabit birim fiyat
-    fixed_unit_price?: number;         // Sabit modda enerji birim fiyatı — PTF+YEKDEM birleşik (TL/MWh)
+    fixed_unit_price?: number;         // Sabit modda enerji birim fiyatı — PTF+YEKDEM birleşik (TL/kWh)
     invoice_total_raw?: number;            // R2: ham/operatör/extraction toplam (guard ground-truth) — calculation.current_total KULLANMA
     operator_confirmed_warnings?: boolean; // R2: %10-40 mismatch onayı
   },
@@ -307,7 +307,7 @@ export async function downloadPdf(
     yekdem_tl_per_mwh: number;
     agreement_multiplier: number;
     offer_type?: 'indexed' | 'fixed'; // Teklif tipi: endeksli / sabit birim fiyat
-    fixed_unit_price?: number;         // Sabit modda enerji birim fiyatı — PTF+YEKDEM birleşik (TL/MWh)
+    fixed_unit_price?: number;         // Sabit modda enerji birim fiyatı — PTF+YEKDEM birleşik (TL/kWh)
     invoice_total_raw?: number;            // R2: ham/operatör/extraction toplam (guard ground-truth) — calculation.current_total KULLANMA
     operator_confirmed_warnings?: boolean; // R2: %10-40 mismatch onayı
   },

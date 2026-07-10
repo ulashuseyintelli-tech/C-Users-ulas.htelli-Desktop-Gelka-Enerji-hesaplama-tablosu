@@ -744,11 +744,18 @@ def _generate_pdf_reportlab(
         elements.append(ct)
         elements.append(Spacer(1, 0.1*cm))
     
-    elements.append(Paragraph(
-        f"Çalışma, aynı tüketim miktarı (<b>{fmt_num(consumption, 2)} kWh</b>), aynı dağıtım bedelleri ve aynı vergi kalemleri esas alınarak yapılmış; "
-        f"fark yalnızca enerji tedarik bedelinden kaynaklanmaktadır.",
-        letter_style
-    ))
+    if is_fixed:
+        elements.append(Paragraph(
+            f"Teklifimiz, mevcut tüketim miktarınız (<b>{fmt_num(consumption, 2)} kWh</b>) esas alınarak, teklif süresi boyunca sabit enerji birim fiyatı üzerinden hazırlanmıştır. "
+            f"Dağıtım bedeli, BTV ve KDV kalemleri mevcut uygulamayla aynı korunur.",
+            letter_style
+        ))
+    else:
+        elements.append(Paragraph(
+            f"Çalışma, aynı tüketim miktarı (<b>{fmt_num(consumption, 2)} kWh</b>), aynı dağıtım bedelleri ve aynı vergi kalemleri esas alınarak yapılmış; "
+            f"fark yalnızca enerji tedarik bedelinden kaynaklanmaktadır.",
+            letter_style
+        ))
     elements.append(Spacer(1, 0.1*cm))
     
     # Enerji Bedelinin Hesaplama Yapısı — teklif tipine göre anlatım
@@ -756,7 +763,7 @@ def _generate_pdf_reportlab(
         # Sabit birim fiyat: PTF/YEKDEM/çarpan yerine sabit fiyat garantisi anlatımı
         elements.append(Paragraph("<b>Sabit Birim Fiyat Garantisi</b>", letter_style))
         elements.append(Paragraph(
-            f"Enerji bedeli, teklif süresi boyunca sabit <b>{fmt_num(fixed_unit_price, 2)} TL/MWh</b> (PTF + YEKDEM dahil) enerji birim fiyatı "
+            f"Enerji bedeli, teklif süresi boyunca sabit <b>{fmt_num(fixed_unit_price, 4)} TL/kWh</b> (PTF + YEKDEM dahil) enerji birim fiyatı "
             f"üzerinden hesaplanır. Bu birim fiyat teklif süresince değişmez; EPİAŞ PTF ve YEKDEM piyasa "
             f"dalgalanmalarından etkilenmez. Böylece maliyet öngörülebilirliği sağlanır.",
             letter_style
@@ -797,94 +804,142 @@ def _generate_pdf_reportlab(
     elements.append(Spacer(1, 0.05*cm))
     
     # ═══════════════════════════════════════════════════════════════════════════
-    # KARŞILAŞTIRMA TABLOSU (Diğer Bedeller ile Ticari Şartlar arasında)
+    # MALİYET TABLOSU — endeksli: Mevcut vs Teklif (tasarruf); sabit: tek sütun teklif faturası
     # ═══════════════════════════════════════════════════════════════════════════
-    elements.append(Paragraph("<b>MALİYET KARŞILAŞTIRMASI</b>", heading_style))
-    
     energy_diff = calculation.current_energy_tl - calculation.offer_energy_tl
     total_diff = abs(calculation.difference_incl_vat_tl)
     savings_pct = abs(calculation.savings_ratio * 100)
-    
-    savings_data = [
-        ["Kalem", "Mevcut Fatura", "Teklifimiz", "Tasarruf"],
-        ["Enerji Bedeli", fmt_tl(calculation.current_energy_tl), fmt_tl(calculation.offer_energy_tl), fmt_tl(energy_diff)],
-        ["Dağıtım Bedeli", fmt_tl(calculation.current_distribution_tl), fmt_tl(calculation.offer_distribution_tl), "-"],
-        ["BTV", fmt_tl(calculation.current_btv_tl), fmt_tl(calculation.offer_btv_tl), "-"],
-        ["KDV Matrahı", fmt_tl(calculation.current_vat_matrah_tl), fmt_tl(calculation.offer_vat_matrah_tl), "-"],
-        [f"KDV (%{int(getattr(calculation, 'meta_vat_rate', 0.20) * 100)})", fmt_tl(calculation.current_vat_tl), fmt_tl(calculation.offer_vat_tl), "-"],
-        ["TOPLAM", fmt_tl(calculation.current_total_with_vat_tl), fmt_tl(calculation.offer_total_with_vat_tl), fmt_tl(total_diff)],
-    ]
-    # Eşit sütun genişlikleri
-    t = Table(savings_data, colWidths=[col4, col4, col4, col4])
-    t.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#10B981')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#ECFDF5')),
-        ('FONTNAME', (0, 0), (-1, -1), font_name),
-        ('GRID', (0, 0), (-1, -1), 0.75, colors.HexColor('#CCCCCC')),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('PADDING', (0, 0), (-1, -1), 4),
-        ('ALIGN', (0, 0), (0, -1), 'LEFT'),  # İlk sütun sola
-        ('ALIGN', (1, 0), (-1, 0), 'CENTER'),  # Header ortala
-        ('ALIGN', (1, 1), (-1, -1), 'RIGHT'),  # Sayılar sağa
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-    ]))
-    elements.append(t)
-    elements.append(Spacer(1, 0.05*cm))
-    
-    # Tasarruf vurgusu - yeşil arka planlı kutu (HTML .save class gibi)
-    savings_text = (
-        f'<font size="6">Aylık Tasarruf</font><br/>'
-        f'<b><font size="10">{fmt_tl(total_diff)} (%{fmt_num(savings_pct)})</font></b>'
-    )
-    savings_style = ParagraphStyle('SavingsBox', fontSize=10, textColor=colors.white, alignment=1, fontName=font_name, leading=14)
-    # Karşılaştırma tablosuyla aynı genişlik: avail_w = 18cm
-    savings_box = Table(
-        [[Paragraph(savings_text, savings_style)]],
-        colWidths=[avail_w],
-    )
-    savings_box.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#10B981')),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('TOPPADDING', (0, 0), (-1, -1), 4),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-        ('LEFTPADDING', (0, 0), (-1, -1), 8),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-    ]))
-    elements.append(savings_box)
-    elements.append(Spacer(1, 0.05*cm))
+    _vat_pct = int(getattr(calculation, 'meta_vat_rate', 0.20) * 100)
+
+    if is_fixed:
+        # Sabit teklif: kıyas/tasarruf YOK — yalnız "Teklif Faturanız" (bizim teklifimiz).
+        # Sabit fiyat bir güvence/hedge; mevcut birim fiyatla kıyas yanıltıcı olur.
+        elements.append(Paragraph("<b>TEKLİF FATURANIZ</b>", heading_style))
+        fatura_data = [
+            ["Kalem", "Tutar"],
+            ["Sabit Birim Fiyat (PTF+YEKDEM)", f"{fmt_num(fixed_unit_price, 4)} TL/kWh"],
+            ["Enerji Bedeli", fmt_tl(calculation.offer_energy_tl)],
+            ["Dağıtım Bedeli", fmt_tl(calculation.offer_distribution_tl)],
+            ["BTV", fmt_tl(calculation.offer_btv_tl)],
+            ["KDV Matrahı", fmt_tl(calculation.offer_vat_matrah_tl)],
+            [f"KDV (%{_vat_pct})", fmt_tl(calculation.offer_vat_tl)],
+            ["TOPLAM (KDV Dahil)", fmt_tl(calculation.offer_total_with_vat_tl)],
+        ]
+        t = Table(fatura_data, colWidths=[avail_w * 0.62, avail_w * 0.38])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#10B981')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#ECFDF5')),
+            ('FONTNAME', (0, 0), (-1, -1), font_name),
+            ('GRID', (0, 0), (-1, -1), 0.75, colors.HexColor('#CCCCCC')),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('PADDING', (0, 0), (-1, -1), 4),
+            ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+            ('ALIGN', (1, 0), (1, 0), 'CENTER'),
+            ('ALIGN', (1, 1), (1, -1), 'RIGHT'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]))
+        elements.append(t)
+        elements.append(Spacer(1, 0.05*cm))
+        # Fiyat güvencesi vurgusu (tasarruf DEĞİL — sabit fiyat cazibesi)
+        guarantee_text = (
+            f'<font size="6">Yıl Boyunca Sabit Fiyat Güvencesi</font><br/>'
+            f'<b><font size="10">{fmt_num(fixed_unit_price, 4)} TL/kWh (PTF+YEKDEM dahil)</font></b>'
+        )
+        guarantee_style = ParagraphStyle('GuaranteeBox', fontSize=10, textColor=colors.white, alignment=1, fontName=font_name, leading=14)
+        guarantee_box = Table([[Paragraph(guarantee_text, guarantee_style)]], colWidths=[avail_w])
+        guarantee_box.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#10B981')),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+            ('LEFTPADDING', (0, 0), (-1, -1), 8),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+        ]))
+        elements.append(guarantee_box)
+        elements.append(Spacer(1, 0.05*cm))
+    else:
+        elements.append(Paragraph("<b>MALİYET KARŞILAŞTIRMASI</b>", heading_style))
+        savings_data = [
+            ["Kalem", "Mevcut Fatura", "Teklifimiz", "Tasarruf"],
+            ["Enerji Bedeli", fmt_tl(calculation.current_energy_tl), fmt_tl(calculation.offer_energy_tl), fmt_tl(energy_diff)],
+            ["Dağıtım Bedeli", fmt_tl(calculation.current_distribution_tl), fmt_tl(calculation.offer_distribution_tl), "-"],
+            ["BTV", fmt_tl(calculation.current_btv_tl), fmt_tl(calculation.offer_btv_tl), "-"],
+            ["KDV Matrahı", fmt_tl(calculation.current_vat_matrah_tl), fmt_tl(calculation.offer_vat_matrah_tl), "-"],
+            [f"KDV (%{_vat_pct})", fmt_tl(calculation.current_vat_tl), fmt_tl(calculation.offer_vat_tl), "-"],
+            ["TOPLAM", fmt_tl(calculation.current_total_with_vat_tl), fmt_tl(calculation.offer_total_with_vat_tl), fmt_tl(total_diff)],
+        ]
+        # Eşit sütun genişlikleri
+        t = Table(savings_data, colWidths=[col4, col4, col4, col4])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#10B981')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#ECFDF5')),
+            ('FONTNAME', (0, 0), (-1, -1), font_name),
+            ('GRID', (0, 0), (-1, -1), 0.75, colors.HexColor('#CCCCCC')),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('PADDING', (0, 0), (-1, -1), 4),
+            ('ALIGN', (0, 0), (0, -1), 'LEFT'),  # İlk sütun sola
+            ('ALIGN', (1, 0), (-1, 0), 'CENTER'),  # Header ortala
+            ('ALIGN', (1, 1), (-1, -1), 'RIGHT'),  # Sayılar sağa
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]))
+        elements.append(t)
+        elements.append(Spacer(1, 0.05*cm))
+
+        # Tasarruf vurgusu - yeşil arka planlı kutu (HTML .save class gibi)
+        savings_text = (
+            f'<font size="6">Aylık Tasarruf</font><br/>'
+            f'<b><font size="10">{fmt_tl(total_diff)} (%{fmt_num(savings_pct)})</font></b>'
+        )
+        savings_style = ParagraphStyle('SavingsBox', fontSize=10, textColor=colors.white, alignment=1, fontName=font_name, leading=14)
+        # Karşılaştırma tablosuyla aynı genişlik: avail_w = 18cm
+        savings_box = Table(
+            [[Paragraph(savings_text, savings_style)]],
+            colWidths=[avail_w],
+        )
+        savings_box.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#10B981')),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+            ('LEFTPADDING', (0, 0), (-1, -1), 8),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+        ]))
+        elements.append(savings_box)
+        elements.append(Spacer(1, 0.05*cm))
     
     # Teklif Parametreleri - Maliyet tablosunun hemen altında
     offer_unit_price = calculation.offer_energy_tl / consumption if consumption > 0 else (params.weighted_ptf_tl_per_mwh / 1000 + params.yekdem_tl_per_mwh / 1000) * params.agreement_multiplier
     current_unit_price = calculation.current_energy_tl / consumption if consumption > 0 else 0
     
     if is_fixed:
-        # Sabit modda mevcut birim fiyat karşılaştırması GÖSTERİLMEZ — sabit birim fiyat (PTF+YEKDEM, TL/MWh) vurgulanır
-        param_data = [
-            ["Sabit Enerji Birim Fiyatı", f"{fmt_num(fixed_unit_price, 2)} TL/MWh", "Teklif Tipi", "Sabit Fiyat (PTF+YEKDEM dahil)"],
-        ]
+        # Sabit modda ayrı parametre tablosu YOK — fiyat zaten "Teklif Faturanız" tablosunda gösteriliyor
+        param_data = None
     else:
         param_data = [
             ["Mevcut Birim Fiyat", f"{fmt_num(current_unit_price, 4)} TL/kWh", "Teklif Birim Fiyat", f"{fmt_num(offer_unit_price, 4)} TL/kWh"],
             ["Anlaşma Çarpanı", fmt_num(params.agreement_multiplier), "Birim Fiyat Farkı", f"{fmt_num(current_unit_price - offer_unit_price, 4)} TL/kWh"],
             ["Ağırlıklı PTF", f"{fmt_num(params.weighted_ptf_tl_per_mwh)} TL/MWh", "YEKDEM", f"{fmt_num(params.yekdem_tl_per_mwh)} TL/MWh"],
         ]
-    # 4 eşit sütun
-    t = Table(param_data, colWidths=[col4, col4, col4, col4])
-    t.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#F3F4F6')),
-        ('BACKGROUND', (2, 0), (2, -1), colors.HexColor('#F3F4F6')),
-        ('GRID', (0, 0), (-1, -1), 0.75, colors.HexColor('#CCCCCC')),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('FONTNAME', (0, 0), (-1, -1), font_name),
-        ('PADDING', (0, 0), (-1, -1), 4),
-        ('ALIGN', (1, 0), (1, -1), 'LEFT'),  # Değerler sola
-        ('ALIGN', (3, 0), (3, -1), 'LEFT'),  # Değerler sola
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-    ]))
-    elements.append(t)
-    elements.append(Spacer(1, 0.05*cm))
+    # 4 eşit sütun — yalnız endeksli modda
+    if param_data:
+        t = Table(param_data, colWidths=[col4, col4, col4, col4])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#F3F4F6')),
+            ('BACKGROUND', (2, 0), (2, -1), colors.HexColor('#F3F4F6')),
+            ('GRID', (0, 0), (-1, -1), 0.75, colors.HexColor('#CCCCCC')),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('FONTNAME', (0, 0), (-1, -1), font_name),
+            ('PADDING', (0, 0), (-1, -1), 4),
+            ('ALIGN', (1, 0), (1, -1), 'LEFT'),  # Değerler sola
+            ('ALIGN', (3, 0), (3, -1), 'LEFT'),  # Değerler sola
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ]))
+        elements.append(t)
+        elements.append(Spacer(1, 0.05*cm))
     
     # Fatura Bilgileri - Teklif Parametreleri'nin hemen altında
     elements.append(Paragraph("<b>Fatura Bilgileri</b>", letter_style))
@@ -906,12 +961,20 @@ def _generate_pdf_reportlab(
     elements.append(Spacer(1, 0.05*cm))
     
     # Sonuç paragrafı - ilk sayfada kalsın
-    elements.append(Paragraph(
-        f"Yapılan hesaplamalar sonucunda; mevcut durumda KDV hariç toplam bedel <b>{fmt_tl(calculation.current_vat_matrah_tl)}</b>, "
-        f"teklifimiz kapsamında KDV hariç toplam bedel <b>{fmt_tl(calculation.offer_vat_matrah_tl)}</b> olmak üzere, "
-        f"<b>KDV hariç %{fmt_num(savings_pct)} oranında tasarruf</b> sağlanmaktadır.",
-        letter_style
-    ))
+    if is_fixed:
+        elements.append(Paragraph(
+            f"Sabit birim fiyat teklifimiz kapsamında; mevcut tüketiminizle KDV dahil toplam fatura tutarınız "
+            f"<b>{fmt_tl(calculation.offer_total_with_vat_tl)}</b> olacaktır. Bu birim fiyat teklif süresi boyunca sabittir; "
+            f"piyasa fiyat artışlarından etkilenmez, maliyet öngörülebilirliği sağlar.",
+            letter_style
+        ))
+    else:
+        elements.append(Paragraph(
+            f"Yapılan hesaplamalar sonucunda; mevcut durumda KDV hariç toplam bedel <b>{fmt_tl(calculation.current_vat_matrah_tl)}</b>, "
+            f"teklifimiz kapsamında KDV hariç toplam bedel <b>{fmt_tl(calculation.offer_vat_matrah_tl)}</b> olmak üzere, "
+            f"<b>KDV hariç %{fmt_num(savings_pct)} oranında tasarruf</b> sağlanmaktadır.",
+            letter_style
+        ))
     elements.append(Spacer(1, 0.05*cm))
     
     if contact_person:

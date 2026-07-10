@@ -215,7 +215,7 @@ function App() {
   // Teklif tipi: 'indexed' = endeksli (PTF+YEKDEM × çarpan), 'fixed' = sabit birim fiyat (TL/kWh).
   // Sabit modda satışçı tek bir enerji birim fiyatı girer; dağıtım/BTV/KDV aynen korunur.
   const [offerType, setOfferType] = useState<'indexed' | 'fixed'>('indexed');
-  const [fixedUnitPrice, setFixedUnitPrice] = useState(0); // Sabit enerji birim fiyatı — PTF+YEKDEM birleşik, TL/MWh (örn 4000). Enerji hesabında /1000 ile kWh'e çevrilir. Yalnız 'fixed' modda kullanılır.
+  const [fixedUnitPrice, setFixedUnitPrice] = useState(0); // Sabit enerji birim fiyatı — PTF+YEKDEM birleşik, TL/kWh (örn 5,6). Mevcut Birim Fiyat ile aynı birim. Enerji = kWh × fiyat. Yalnız 'fixed' modda kullanılır.
   const [ptfPrice, setPtfPrice] = useState(2974.1);
   const [yekdemPrice, setYekdemPrice] = useState(364.0);
   const [multiplier, setMultiplier] = useState(1.01);
@@ -385,8 +385,8 @@ function App() {
       const offerBasePrice = includeYekdem ? (ptfKwh + yekdemKwh) : ptfKwh;
 
       // Teklif hesaplama — sabit: kWh × sabit birim fiyat; endeksli: (kWh × baz) × çarpan
-      const offer_energy_base = isFixed ? (kwh * (fixedUnitPrice / 1000)) : (kwh * offerBasePrice);
-      const offer_energy_tl = isFixed ? (kwh * (fixedUnitPrice / 1000)) : (offer_energy_base * multiplier);
+      const offer_energy_base = isFixed ? (kwh * fixedUnitPrice) : (kwh * offerBasePrice);
+      const offer_energy_tl = isFixed ? (kwh * fixedUnitPrice) : (offer_energy_base * multiplier);
       const offer_distribution_tl = kwh * distUnitPrice;
       // BTV oranı: Sanayi %1, Ticarethane/Kamu/Özel %5
       const offer_btv_tl = offer_energy_tl * btvRate;
@@ -493,8 +493,8 @@ function App() {
     // ❌ Yanlış: birim_fiyat = PTF × marj, enerji = kWh × birim_fiyat
     // ✅ Doğru: enerji_base = kWh × PTF, enerji = enerji_base × marj
     // Sabit modda ise: enerji = kWh × sabit birim fiyat (çarpan uygulanmaz)
-    const offer_energy_base = isFixed ? (kwh * (fixedUnitPrice / 1000)) : (kwh * offerBasePrice);
-    const offer_energy_tl = isFixed ? (kwh * (fixedUnitPrice / 1000)) : (offer_energy_base * multiplier);
+    const offer_energy_base = isFixed ? (kwh * fixedUnitPrice) : (kwh * offerBasePrice);
+    const offer_energy_tl = isFixed ? (kwh * fixedUnitPrice) : (offer_energy_base * multiplier);
 
     const offer_distribution_tl = kwh * distUnitPrice;
     // BTV oranı: Sanayi %1, Ticarethane/Kamu/Özel %5
@@ -944,9 +944,10 @@ function App() {
           // Sabit modda PTF/YEKDEM/çarpan anlamsız; guard'ı sağlamak için PTF'yi sabit fiyat×1000 gönderiyoruz,
           // gerçek sabit fiyat offer_type + fixed_unit_price ile ayrıca iletilir (PDF sabit anlatım kullanır).
           offer_type: offerType,
-          // Sabit modda fixedUnitPrice zaten TL/MWh (PTF+YEKDEM birleşik) — dönüşüm yok.
+          // Sabit modda fixedUnitPrice TL/kWh (PTF+YEKDEM birleşik). PDF'e TL/kWh gider;
+          // weighted_ptf guard'ı TL/MWh beklediği için ×1000 ile geçirilir.
           fixed_unit_price: offerType === 'fixed' ? fixedUnitPrice : 0,
-          weighted_ptf_tl_per_mwh: offerType === 'fixed' ? fixedUnitPrice : ptfPrice,
+          weighted_ptf_tl_per_mwh: offerType === 'fixed' ? fixedUnitPrice * 1000 : ptfPrice,
           yekdem_tl_per_mwh: offerType === 'fixed' ? 0 : (liveCalculation.include_yekdem ? yekdemPrice : 0),
           agreement_multiplier: offerType === 'fixed' ? 1 : multiplier,
           // R2: ham toplam — manuel YENİ alan, AI extraction; calculation.current_total KULLANILMAZ
@@ -1148,7 +1149,7 @@ function App() {
                   </div>
                 )}
                 
-                {/* Teklif Tipi: Endeksli (PTF+YEKDEM×çarpan) ↔ Sabit Birim Fiyat (PTF+YEKDEM birleşik, TL/MWh) */}
+                {/* Teklif Tipi: Endeksli (PTF+YEKDEM×çarpan) ↔ Sabit Birim Fiyat (PTF+YEKDEM birleşik, TL/kWh) */}
                 <div className="flex items-center gap-1">
                   <button
                     type="button"
@@ -1162,7 +1163,7 @@ function App() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setOfferType('fixed')}
+                    onClick={() => { setOfferType('fixed'); setOfferDisplayMode('energy'); }}
                     className={`flex-1 px-2 py-1 text-xs rounded transition-colors ${
                       offerType === 'fixed' ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                     }`}
@@ -1550,21 +1551,21 @@ function App() {
                 
                 </>
                 ) : (
-                  /* Sabit Birim Fiyat — PTF+YEKDEM birleşik, TL/MWh; sadece enerji, dağıtım/BTV/KDV korunur */
+                  /* Sabit Birim Fiyat — PTF+YEKDEM birleşik, TL/kWh; sadece enerji, dağıtım/BTV/KDV korunur */
                   <div>
-                    <label className="text-xs font-medium text-gray-700 mb-1 block">Sabit Birim Fiyat — PTF+YEKDEM (TL/MWh)</label>
+                    <label className="text-xs font-medium text-gray-700 mb-1 block">Sabit Birim Fiyat — PTF+YEKDEM (TL/kWh)</label>
                     <input
                       type="number"
                       className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 focus:border-primary-500 outline-none"
                       value={fixedUnitPrice || ''}
                       onChange={(e) => setFixedUnitPrice(e.target.value === '' ? 0 : parseFloat(e.target.value))}
                       onFocus={(e) => { if (fixedUnitPrice === 0) e.target.value = ''; }}
-                      step="1"
+                      step="0.01"
                       min="0"
-                      placeholder="Örn: 4.000"
+                      placeholder="Örn: 5,6"
                     />
                     <p className="text-[11px] text-gray-500 mt-1">
-                      PTF + YEKDEM dahil sabit enerji birim fiyatı (TL/MWh). Dağıtım, BTV ve KDV mevcut haliyle korunur; PTF/YEKDEM dalgalanması teklife yansımaz.
+                      PTF + YEKDEM dahil sabit enerji birim fiyatı (TL/kWh — Mevcut Birim Fiyat ile aynı birim). Dağıtım, BTV ve KDV mevcut haliyle korunur; PTF/YEKDEM dalgalanması teklife yansımaz.
                     </p>
                   </div>
                 )}
@@ -2914,7 +2915,7 @@ function App() {
                 <div className="card p-3">
                   <div className="flex justify-between items-center mb-2">
                     <h3 className="text-sm font-semibold text-gray-900">
-                      Detaylı Karşılaştırma
+                      {offerType === 'fixed' ? 'Teklif Faturanız' : 'Detaylı Karşılaştırma'}
                     </h3>
                     <button
                       onClick={handleDownloadPdf}
@@ -2935,7 +2936,8 @@ function App() {
                     </button>
                   </div>
                   
-                  {/* Teklif Birim Fiyat Gösterim Modu */}
+                  {/* Teklif Birim Fiyat Gösterim Modu — yalnız endeksli modda (sabit teklifte kıyas yok) */}
+                  {offerType === 'indexed' && (
                   <div className="flex items-center gap-1 mb-2">
                     <span className="text-[10px] text-gray-500 mr-1">Birim Fiyat:</span>
                     <button
@@ -2957,7 +2959,9 @@ function App() {
                       Toplam (PTF+YEKDEM+Dağıtım)
                     </button>
                   </div>
+                  )}
                   
+                  {offerType === 'indexed' ? (
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="border-b border-gray-200">
@@ -3044,6 +3048,49 @@ function App() {
                       </tr>
                     </tbody>
                   </table>
+                  ) : (
+                  /* SABİT MOD — tek sütun "Teklif Faturanız": kıyas/tasarruf yok, sadece bizim teklifimiz */
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-gray-200">
+                        <th className="text-left py-1 px-2 font-medium text-gray-500">Kalem</th>
+                        <th className="text-right py-1 px-2 font-medium text-gray-500">Tutar</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      <tr className="bg-blue-50/50">
+                        <td className="py-1 px-2 text-gray-600 italic">Sabit Birim Fiyat (PTF+YEKDEM)</td>
+                        <td className="py-1 px-2 text-right text-primary-700 font-medium">
+                          {fixedUnitPrice.toLocaleString('tr-TR', {minimumFractionDigits: 4, maximumFractionDigits: 4})} TL/kWh
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="py-1 px-2 text-gray-700">Enerji Bedeli</td>
+                        <td className="py-1 px-2 text-right text-gray-900">{formatCurrency(liveCalculation.offer_energy_tl)}</td>
+                      </tr>
+                      <tr>
+                        <td className="py-1 px-2 text-gray-700">Dağıtım Bedeli</td>
+                        <td className="py-1 px-2 text-right text-gray-900">{formatCurrency(liveCalculation.offer_distribution_tl)}</td>
+                      </tr>
+                      <tr>
+                        <td className="py-1 px-2 text-gray-700">BTV</td>
+                        <td className="py-1 px-2 text-right text-gray-900">{formatCurrency(liveCalculation.offer_btv_tl)}</td>
+                      </tr>
+                      <tr>
+                        <td className="py-1 px-2 text-gray-700">KDV Matrahı</td>
+                        <td className="py-1 px-2 text-right text-gray-900">{formatCurrency(liveCalculation.offer_vat_matrah_tl)}</td>
+                      </tr>
+                      <tr>
+                        <td className="py-1 px-2 text-gray-700">KDV (%{Math.round(vatRate * 100)})</td>
+                        <td className="py-1 px-2 text-right text-gray-900">{formatCurrency(liveCalculation.offer_vat_tl)}</td>
+                      </tr>
+                      <tr className="bg-primary-50 font-semibold">
+                        <td className="py-1 px-2 text-gray-900">TOPLAM (KDV Dahil)</td>
+                        <td className="py-1 px-2 text-right text-primary-700">{formatCurrency(liveCalculation.offer_total_with_vat_tl)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  )}
                 </div>
 
                 {mismatchInfo && mismatchInfo.requires_operator_confirmation && (
