@@ -252,15 +252,11 @@ ipcMain.handle('download:pdf', async (event, { url, formData, fileName }) => {
     .replace(/[/\\:*?"<>|]/g, '_')  // Tehlikeli karakterleri temizle
     .replace(/\.\./g, '_');          // Path traversal engelle
 
-  const win = BrowserWindow.fromWebContents(event.sender);
-  if (!win) return { ok: false, error: 'Pencere bulunamadı.' };
-
-  // ── 4) Kullanıcıya "Farklı Kaydet" dialogu göster ──
-  const { canceled, filePath } = await dialog.showSaveDialog(win, {
-    defaultPath: path.join(app.getPath('desktop'), safeName),
-    filters: [{ name: 'PDF Dosyası', extensions: ['pdf'] }],
-  });
-  if (canceled || !filePath) return { ok: false, canceled: true };
+  // ── 4) Doğrudan Masaüstü'ne kaydet (dialog yok) ──
+  // Kullanıcı isteği: "Farklı Kaydet" penceresi çıkmadan teklif PDF'i doğrudan
+  // Masaüstü'ne kaydedilir ve otomatik açılır (aşağıdaki shell.openPath).
+  // Dosya adı zaman damgalı (teklif_..._YYYYMMDDHHMMSS.pdf) → üzerine yazma riski yok.
+  const filePath = path.join(app.getPath('desktop'), safeName);
 
   // ── 5) multipart/form-data body oluştur (boundary injection korumalı) ──
   const boundary = '----ElectronBoundary' + require('crypto').randomBytes(16).toString('hex');
