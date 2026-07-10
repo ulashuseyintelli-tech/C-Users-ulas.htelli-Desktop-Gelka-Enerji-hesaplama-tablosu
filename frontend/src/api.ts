@@ -244,6 +244,8 @@ export function buildPdfFormFields(
     weighted_ptf_tl_per_mwh: number;
     yekdem_tl_per_mwh: number;
     agreement_multiplier: number;
+    offer_type?: 'indexed' | 'fixed'; // Teklif tipi: endeksli (PTF+YEKDEM×çarpan) / sabit birim fiyat
+    fixed_unit_price?: number;         // Sabit modda enerji birim fiyatı — PTF+YEKDEM birleşik (TL/MWh)
     invoice_total_raw?: number;            // R2: ham/operatör/extraction toplam (guard ground-truth) — calculation.current_total KULLANMA
     operator_confirmed_warnings?: boolean; // R2: %10-40 mismatch onayı
   },
@@ -279,6 +281,8 @@ export function buildPdfFormFields(
     savings_ratio: calculation.savings_ratio.toString(),
     invoice_total_raw: (params.invoice_total_raw ?? 0).toString(),
     operator_confirmed_warnings: params.operator_confirmed_warnings ? 'true' : 'false',
+    offer_type: params.offer_type ?? 'indexed',
+    fixed_unit_price: (params.fixed_unit_price ?? 0).toString(),
   };
   if (calculation.meta_vat_rate !== undefined) fields.vat_rate = calculation.meta_vat_rate.toString();
   if (tariffGroup) fields.tariff_group = tariffGroup;
@@ -302,6 +306,8 @@ export async function downloadPdf(
     weighted_ptf_tl_per_mwh: number;
     yekdem_tl_per_mwh: number;
     agreement_multiplier: number;
+    offer_type?: 'indexed' | 'fixed'; // Teklif tipi: endeksli / sabit birim fiyat
+    fixed_unit_price?: number;         // Sabit modda enerji birim fiyatı — PTF+YEKDEM birleşik (TL/MWh)
     invoice_total_raw?: number;            // R2: ham/operatör/extraction toplam (guard ground-truth) — calculation.current_total KULLANMA
     operator_confirmed_warnings?: boolean; // R2: %10-40 mismatch onayı
   },

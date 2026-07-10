@@ -2089,6 +2089,8 @@ async def generate_pdf_simple(
     offer_validity_days: int = Form(15),  # Teklif geçerlilik süresi (gün)
     operator_confirmed_warnings: bool = Form(False),  # R2: %10-40 mismatch onayı
     invoice_total_raw: float = Form(0),  # R2: operatörün girdiği/extract edilen HAM toplam (re-derive için)
+    offer_type: str = Form("indexed"),  # Teklif tipi: "indexed" (PTF+YEKDEM×çarpan) | "fixed" (sabit birim fiyat)
+    fixed_unit_price: float = Form(0),  # Sabit modda enerji birim fiyatı — PTF+YEKDEM birleşik (TL/MWh)
 ):
     """Basit parametrelerle PDF oluştur.
 
@@ -2096,10 +2098,18 @@ async def generate_pdf_simple(
     Üstü 429 döner. Render timeout: _PDF_RENDER_TIMEOUT saniye.
     Temp dosya yazmaz — bytes doğrudan response'a stream edilir.
     """
-    # ── P0 guard: Teklif PTF zorunlu — PTF<=0 → çöp teklif (manuel modda boş PTF). ──
+    # ── P0 guard: Teklif fiyatı zorunlu — çöp teklif PDF'i üretme. ──
     # Çağrıldığı yerler: api.ts downloadPdf → App.tsx handleDownloadPdf (manuel+AI) + Electron.
-    # YEKDEM'e dokunulmaz (0/tahmini/kesin meşru); yalnızca PTF zorunluluğu kapatılır.
-    if weighted_ptf_tl_per_mwh is None or weighted_ptf_tl_per_mwh <= 0:
+    # Sabit modda ("fixed") sabit birim fiyat > 0 zorunlu; endeksli modda PTF > 0 zorunlu.
+    # YEKDEM'e dokunulmaz (0/tahmini/kesin meşru).
+    if offer_type == "fixed":
+        if fixed_unit_price is None or fixed_unit_price <= 0:
+            return JSONResponse(
+                status_code=422,
+                content={"error": {"code": "invalid_fixed_price",
+                         "message": "Sabit birim fiyat zorunludur ve 0'dan büyük olmalıdır."}},
+            )
+    elif weighted_ptf_tl_per_mwh is None or weighted_ptf_tl_per_mwh <= 0:
         return JSONResponse(
             status_code=422,
             content={"error": {"code": "invalid_ptf",
@@ -2283,6 +2293,8 @@ async def generate_pdf_simple(
                 contact_person=contact_person,
                 offer_date=offer_date,
                 offer_validity_days=offer_validity_days,
+                offer_type=offer_type,
+                fixed_unit_price=fixed_unit_price,
             )
 
         _t_exec_start = _time.monotonic()

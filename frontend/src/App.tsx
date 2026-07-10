@@ -212,6 +212,10 @@ function App() {
   const [dragActive, setDragActive] = useState(false);
   
   // Teklif parametreleri
+  // Teklif tipi: 'indexed' = endeksli (PTF+YEKDEM × çarpan), 'fixed' = sabit birim fiyat (TL/kWh).
+  // Sabit modda satışçı tek bir enerji birim fiyatı girer; dağıtım/BTV/KDV aynen korunur.
+  const [offerType, setOfferType] = useState<'indexed' | 'fixed'>('indexed');
+  const [fixedUnitPrice, setFixedUnitPrice] = useState(0); // Sabit enerji birim fiyatı — PTF+YEKDEM birleşik, TL/MWh (örn 4000). Enerji hesabında /1000 ile kWh'e çevrilir. Yalnız 'fixed' modda kullanılır.
   const [ptfPrice, setPtfPrice] = useState(2974.1);
   const [yekdemPrice, setYekdemPrice] = useState(364.0);
   const [multiplier, setMultiplier] = useState(1.01);
@@ -374,13 +378,15 @@ function App() {
       const current_vat_tl = current_vat_matrah_tl * vatRate;
       const current_total_with_vat_tl = current_vat_matrah_tl + current_vat_tl;
       
-      // YEKDEM dahil et (manuel modda her zaman dahil)
-      const includeYekdem = yekdemPrice > 0;
+      // Teklif tipi: sabit modda enerji birim fiyatı doğrudan girilir (PTF/YEKDEM/çarpan devre dışı).
+      const isFixed = offerType === 'fixed';
+      // YEKDEM dahil et (manuel modda her zaman dahil) — sabit modda birim fiyata gömülü kabul edilir
+      const includeYekdem = isFixed ? false : (yekdemPrice > 0);
       const offerBasePrice = includeYekdem ? (ptfKwh + yekdemKwh) : ptfKwh;
-      
-      // Teklif hesaplama
-      const offer_energy_base = kwh * offerBasePrice;
-      const offer_energy_tl = offer_energy_base * multiplier;
+
+      // Teklif hesaplama — sabit: kWh × sabit birim fiyat; endeksli: (kWh × baz) × çarpan
+      const offer_energy_base = isFixed ? (kwh * (fixedUnitPrice / 1000)) : (kwh * offerBasePrice);
+      const offer_energy_tl = isFixed ? (kwh * (fixedUnitPrice / 1000)) : (offer_energy_base * multiplier);
       const offer_distribution_tl = kwh * distUnitPrice;
       // BTV oranı: Sanayi %1, Ticarethane/Kamu/Özel %5
       const offer_btv_tl = offer_energy_tl * btvRate;
@@ -393,22 +399,22 @@ function App() {
       const difference_incl_vat_tl = current_total_with_vat_tl - offer_total_with_vat_tl;
       const savings_ratio = current_total_with_vat_tl > 0 ? difference_incl_vat_tl / current_total_with_vat_tl : 0;
       
-      // Tedarikçi karı
-      const supplier_profit_tl = offer_energy_base * (multiplier - 1);
-      const supplier_profit_margin = (multiplier - 1) * 100;
-      
-      // Bayi komisyonu — Puan paylaşımı modeli
+      // Tedarikçi karı — sabit modda PTF maliyet bazı yok, çarpan-tabanlı marj hesaplanmaz (0)
+      const supplier_profit_tl = isFixed ? 0 : offer_energy_base * (multiplier - 1);
+      const supplier_profit_margin = isFixed ? 0 : (multiplier - 1) * 100;
+
+      // Bayi komisyonu — Puan paylaşımı modeli (yalnız endeksli modda)
       // offer_energy_base = kWh × (PTF + YEKDEM) — baz enerji bedeli
-      const bayiResult = bayiEnabled 
+      const bayiResult = (!isFixed && bayiEnabled)
         ? calculateBayiCommission(multiplier, offer_energy_base, bayiOzelOnayPuan)
         : { segment: null, commission_tl: 0, bayiPoints: 0, gelkaPoints: 0, totalMarginPoints: 0, requiresApproval: false };
       const bayi_commission_tl = bayiResult.commission_tl;
       const gelka_net_profit_tl = supplier_profit_tl - bayi_commission_tl;
       const bayiPuanHesap = bayiResult.bayiPoints;
-      
-      // Dual margin hesaplama (v3)
-      const gross_margin_energy = offer_energy_tl - (kwh * offerBasePrice);
-      const gross_margin_total = gross_margin_energy - offer_distribution_tl;
+
+      // Dual margin hesaplama (v3) — sabit modda maliyet bazı olmadığından 0
+      const gross_margin_energy = isFixed ? 0 : offer_energy_tl - (kwh * offerBasePrice);
+      const gross_margin_total = isFixed ? 0 : gross_margin_energy - offer_distribution_tl;
       const net_margin = gross_margin_total - bayi_commission_tl;
 
       return {
@@ -473,20 +479,23 @@ function App() {
     // Faturadan okunan toplam (SOURCE OF TRUTH) - backend hesaplamasını kullan
     const current_total_with_vat_tl = backendCalc?.current_total_with_vat_tl ?? (current_vat_matrah_tl + current_vat_tl);
     
+    // Teklif tipi: sabit modda enerji birim fiyatı doğrudan girilir (PTF/YEKDEM/çarpan devre dışı).
+    const isFixed = offerType === 'fixed';
     // YEKDEM: Backend'in kararını kullan (faturada YEKDEM varsa dahil et, yoksa etme)
-    // meta_include_yekdem_in_offer backend tarafından faturaya göre belirleniyor
-    const includeYekdem = backendCalc?.meta_include_yekdem_in_offer || false;
-    
+    // meta_include_yekdem_in_offer backend tarafından faturaya göre belirleniyor — sabit modda birim fiyata gömülü
+    const includeYekdem = isFixed ? false : (backendCalc?.meta_include_yekdem_in_offer || false);
+
     // Teklif fatura: Parametrelere göre frontend'de hesapla
     // YEKDEM sadece faturada varsa dahil edilir
     const offerBasePrice = includeYekdem ? (ptfKwh + yekdemKwh) : ptfKwh;
-    
+
     // ÖNEMLİ: Excel mantığı - önce enerji bedeli, sonra marj
     // ❌ Yanlış: birim_fiyat = PTF × marj, enerji = kWh × birim_fiyat
     // ✅ Doğru: enerji_base = kWh × PTF, enerji = enerji_base × marj
-    const offer_energy_base = kwh * offerBasePrice;
-    const offer_energy_tl = offer_energy_base * multiplier;
-    
+    // Sabit modda ise: enerji = kWh × sabit birim fiyat (çarpan uygulanmaz)
+    const offer_energy_base = isFixed ? (kwh * (fixedUnitPrice / 1000)) : (kwh * offerBasePrice);
+    const offer_energy_tl = isFixed ? (kwh * (fixedUnitPrice / 1000)) : (offer_energy_base * multiplier);
+
     const offer_distribution_tl = kwh * distUnitPrice;
     // BTV oranı: Sanayi %1, Ticarethane/Kamu/Özel %5
     const offer_btv_tl = offer_energy_tl * btvRate;
@@ -499,21 +508,21 @@ function App() {
     const difference_incl_vat_tl = current_total_with_vat_tl - offer_total_with_vat_tl;
     const savings_ratio = current_total_with_vat_tl > 0 ? difference_incl_vat_tl / current_total_with_vat_tl : 0;
     
-    // Tedarikçi karı (marjdan gelen kar)
-    const supplier_profit_tl = offer_energy_base * (multiplier - 1);
-    const supplier_profit_margin = (multiplier - 1) * 100;
-    
-    // Bayi komisyonu — Puan paylaşımı modeli
-    const bayiResult = bayiEnabled 
+    // Tedarikçi karı (marjdan gelen kar) — sabit modda çarpan yok, 0
+    const supplier_profit_tl = isFixed ? 0 : offer_energy_base * (multiplier - 1);
+    const supplier_profit_margin = isFixed ? 0 : (multiplier - 1) * 100;
+
+    // Bayi komisyonu — Puan paylaşımı modeli (yalnız endeksli modda)
+    const bayiResult = (!isFixed && bayiEnabled)
       ? calculateBayiCommission(multiplier, offer_energy_base, bayiOzelOnayPuan)
       : { segment: null, commission_tl: 0, bayiPoints: 0, gelkaPoints: 0, totalMarginPoints: 0, requiresApproval: false };
     const bayi_commission_tl = bayiResult.commission_tl;
     const gelka_net_profit_tl = supplier_profit_tl - bayi_commission_tl;
     const bayiPuanHesap = bayiResult.bayiPoints;
-    
-    // Dual margin hesaplama (v3)
-    const gross_margin_energy = offer_energy_tl - offer_energy_base;
-    const gross_margin_total = gross_margin_energy - offer_distribution_tl;
+
+    // Dual margin hesaplama (v3) — sabit modda maliyet bazı olmadığından 0
+    const gross_margin_energy = isFixed ? 0 : offer_energy_tl - offer_energy_base;
+    const gross_margin_total = isFixed ? 0 : gross_margin_energy - offer_distribution_tl;
     const net_margin = gross_margin_total - bayi_commission_tl;
 
     return {
@@ -551,7 +560,7 @@ function App() {
       gross_margin_total_tl: gross_margin_total,
       net_margin_tl: net_margin,
     };
-  }, [result?.extraction, result?.calculation, ptfPrice, yekdemPrice, multiplier, getDistributionUnitPrice, manualMode, manualValues, btvRate, vatRate, bayiEnabled, bayiOzelOnayPuan]);
+  }, [result?.extraction, result?.calculation, offerType, fixedUnitPrice, ptfPrice, yekdemPrice, multiplier, getDistributionUnitPrice, manualMode, manualValues, btvRate, vatRate, bayiEnabled, bayiOzelOnayPuan]);
 
   // ── Risk Buffer hesaplama — türetilen değerler (state değil) ──
   const selectedTemplate = useMemo(
@@ -850,8 +859,14 @@ function App() {
 
   const handleDownloadPdf = async () => {
     if (!liveCalculation) return;
-    // P0 guard: PTF zorunlu — boş/0 ise çöp teklif PDF'i üretme.
-    if (!ptfPrice || ptfPrice <= 0) {
+    // P0 guard: teklif fiyatı zorunlu — boş/0 ise çöp teklif PDF'i üretme.
+    // Sabit modda sabit birim fiyat, endeksli modda PTF zorunlu.
+    if (offerType === 'fixed') {
+      if (!fixedUnitPrice || fixedUnitPrice <= 0) {
+        setError("Sabit birim fiyat zorunludur ve 0'dan büyük olmalıdır.");
+        return;
+      }
+    } else if (!ptfPrice || ptfPrice <= 0) {
       setError("Teklif PTF değeri zorunludur ve 0'dan büyük olmalıdır.");
       return;
     }
@@ -926,9 +941,14 @@ function App() {
           meta_vat_rate: vatRate,
         },
         {
-          weighted_ptf_tl_per_mwh: ptfPrice,
-          yekdem_tl_per_mwh: liveCalculation.include_yekdem ? yekdemPrice : 0,
-          agreement_multiplier: multiplier,
+          // Sabit modda PTF/YEKDEM/çarpan anlamsız; guard'ı sağlamak için PTF'yi sabit fiyat×1000 gönderiyoruz,
+          // gerçek sabit fiyat offer_type + fixed_unit_price ile ayrıca iletilir (PDF sabit anlatım kullanır).
+          offer_type: offerType,
+          // Sabit modda fixedUnitPrice zaten TL/MWh (PTF+YEKDEM birleşik) — dönüşüm yok.
+          fixed_unit_price: offerType === 'fixed' ? fixedUnitPrice : 0,
+          weighted_ptf_tl_per_mwh: offerType === 'fixed' ? fixedUnitPrice : ptfPrice,
+          yekdem_tl_per_mwh: offerType === 'fixed' ? 0 : (liveCalculation.include_yekdem ? yekdemPrice : 0),
+          agreement_multiplier: offerType === 'fixed' ? 1 : multiplier,
           // R2: ham toplam — manuel YENİ alan, AI extraction; calculation.current_total KULLANILMAZ
           invoice_total_raw: manualMode
             ? (manualValues.invoice_total_raw || 0)
@@ -1128,6 +1148,32 @@ function App() {
                   </div>
                 )}
                 
+                {/* Teklif Tipi: Endeksli (PTF+YEKDEM×çarpan) ↔ Sabit Birim Fiyat (PTF+YEKDEM birleşik, TL/MWh) */}
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setOfferType('indexed')}
+                    className={`flex-1 px-2 py-1 text-xs rounded transition-colors ${
+                      offerType === 'indexed' ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                    title="EPİAŞ PTF + YEKDEM endeksine bağlı teklif"
+                  >
+                    Endeksli (PTF+YEKDEM)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setOfferType('fixed')}
+                    className={`flex-1 px-2 py-1 text-xs rounded transition-colors ${
+                      offerType === 'fixed' ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                    title="Sabit TL/kWh birim fiyatlı teklif"
+                  >
+                    Sabit Birim Fiyat
+                  </button>
+                </div>
+
+                {offerType === 'indexed' ? (
+                <>
                 {/* PTF ve YEKDEM yan yana */}
                 <div className="grid grid-cols-2 gap-2">
                   <div>
@@ -1502,6 +1548,27 @@ function App() {
                   )}
                 </div>
                 
+                </>
+                ) : (
+                  /* Sabit Birim Fiyat — PTF+YEKDEM birleşik, TL/MWh; sadece enerji, dağıtım/BTV/KDV korunur */
+                  <div>
+                    <label className="text-xs font-medium text-gray-700 mb-1 block">Sabit Birim Fiyat — PTF+YEKDEM (TL/MWh)</label>
+                    <input
+                      type="number"
+                      className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 focus:border-primary-500 outline-none"
+                      value={fixedUnitPrice || ''}
+                      onChange={(e) => setFixedUnitPrice(e.target.value === '' ? 0 : parseFloat(e.target.value))}
+                      onFocus={(e) => { if (fixedUnitPrice === 0) e.target.value = ''; }}
+                      step="1"
+                      min="0"
+                      placeholder="Örn: 4.000"
+                    />
+                    <p className="text-[11px] text-gray-500 mt-1">
+                      PTF + YEKDEM dahil sabit enerji birim fiyatı (TL/MWh). Dağıtım, BTV ve KDV mevcut haliyle korunur; PTF/YEKDEM dalgalanması teklife yansımaz.
+                    </p>
+                  </div>
+                )}
+
                 {/* ═══ Risk Analizi Paneli ═══ */}
                 <div className="pt-2 border-t border-gray-100">
                   <div className="flex items-center justify-between mb-1">
@@ -2851,7 +2918,7 @@ function App() {
                     </h3>
                     <button
                       onClick={handleDownloadPdf}
-                      disabled={pdfLoading || !ptfPrice || ptfPrice <= 0 || (!!mismatchInfo?.requires_operator_confirmation && !operatorConfirmed)}
+                      disabled={pdfLoading || (offerType === 'fixed' ? !fixedUnitPrice || fixedUnitPrice <= 0 : !ptfPrice || ptfPrice <= 0) || (!!mismatchInfo?.requires_operator_confirmation && !operatorConfirmed)}
                       className="btn-primary flex items-center gap-1 px-3 py-1 text-xs"
                     >
                       {pdfLoading ? (
@@ -2901,8 +2968,10 @@ function App() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {manualMode && manualValues.current_unit_price > 0 && (() => {
+                      {/* Birim fiyat karşılaştırma satırı yalnız ENDEKSLİ modda — sabit teklifte mevcut birim fiyat gösterilmez */}
+                      {offerType === 'indexed' && manualMode && manualValues.current_unit_price > 0 && (() => {
                         const distUnitPrice = liveCalculation.distribution_unit_price || 0;
+                        // Endeksli mod: enerji birim fiyatı = (PTF+YEKDEM)×çarpan
                         const energyOfferPrice = ((ptfPrice / 1000 + (liveCalculation.include_yekdem ? yekdemPrice / 1000 : 0)) * multiplier);
                         
                         let offerPrice: number;
@@ -2995,7 +3064,7 @@ function App() {
                 <div className="flex gap-2">
                   <button
                     onClick={handleDownloadPdf}
-                    disabled={pdfLoading || !ptfPrice || ptfPrice <= 0 || (!!mismatchInfo?.requires_operator_confirmation && !operatorConfirmed)}
+                    disabled={pdfLoading || (offerType === 'fixed' ? !fixedUnitPrice || fixedUnitPrice <= 0 : !ptfPrice || ptfPrice <= 0) || (!!mismatchInfo?.requires_operator_confirmation && !operatorConfirmed)}
                     className="btn-primary flex-1 flex items-center justify-center gap-2 py-2 text-sm"
                   >
                     {pdfLoading ? (

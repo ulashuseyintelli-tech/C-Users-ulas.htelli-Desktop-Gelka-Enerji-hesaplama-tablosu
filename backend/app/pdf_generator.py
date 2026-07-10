@@ -522,8 +522,14 @@ def _generate_pdf_reportlab(
     contact_person: Optional[str] = None,
     offer_date: Optional[str] = None,
     offer_validity_days: int = 15,
+    offer_type: str = "indexed",
+    fixed_unit_price: float = 0,
 ) -> bytes:
-    """Generate PDF using ReportLab (pure Python, works everywhere)."""
+    """Generate PDF using ReportLab (pure Python, works everywhere).
+
+    offer_type: "indexed" (PTF+YEKDEM×çarpan endeksli anlatım) | "fixed" (sabit birim fiyat anlatımı).
+    fixed_unit_price: sabit modda enerji birim fiyatı — PTF+YEKDEM birleşik (TL/MWh) — anlatım/parametre tablosunda gösterilir.
+    """
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
     from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT, TA_JUSTIFY
@@ -680,7 +686,10 @@ def _generate_pdf_reportlab(
     consumption = float(get_val(extraction.consumption_kwh, 0))
     vendor = get_val(extraction.vendor)
     period = get_val(extraction.invoice_period)
-    
+
+    # Teklif tipi: sabit modda anlatım PTF/YEKDEM/çarpan yerine "sabit birim fiyat garantisi" olur.
+    is_fixed = (offer_type == "fixed")
+
     # Başlık - yeşil alt çizgili
     title_para = Paragraph("ENERJİ TASARRUF TEKLİFİ", title_style)
     title_table = Table([[title_para]], colWidths=[avail_w])
@@ -742,32 +751,43 @@ def _generate_pdf_reportlab(
     ))
     elements.append(Spacer(1, 0.1*cm))
     
-    # Enerji Bedelinin Hesaplama Yapısı
-    elements.append(Paragraph("<b>Enerji Bedelinin Hesaplama Yapısı</b>", letter_style))
-    elements.append(Paragraph(
-        f"Enerji bedeli, EPİAŞ verileri esas alınarak oluşturulmaktadır. İlgili fatura dönemi için EPİAŞ saatlik PTF ile "
-        f"abonenin tüketim değerleri kullanılarak Ağırlıklı PTF hesaplanır. Üzerine YEKDEM birim bedeli eklenerek toplam enerji birim maliyeti "
-        f"oluşturulur. Bu maliyet, anlaşma fiyat katsayısı (<b>{params.agreement_multiplier:.2f}</b>) ile çarpılarak nihai enerji bedeline ulaşılır.",
-        letter_style
-    ))
-    # SoT-X: saatlik PTF yoksa aylık ortalamaya düşüldü → fallback dipnotu
-    if getattr(calculation, "meta_pricing_source", "") == "reference_scalar" or getattr(calculation, "meta_ptf_source_warning", None):
+    # Enerji Bedelinin Hesaplama Yapısı — teklif tipine göre anlatım
+    if is_fixed:
+        # Sabit birim fiyat: PTF/YEKDEM/çarpan yerine sabit fiyat garantisi anlatımı
+        elements.append(Paragraph("<b>Sabit Birim Fiyat Garantisi</b>", letter_style))
         elements.append(Paragraph(
-            "<i>Not: İlgili dönem için EPİAŞ saatlik PTF verisi bulunmadığından Ağırlıklı PTF, "
-            "aylık ortalama PTF üzerinden hesaplanmıştır.</i>",
+            f"Enerji bedeli, teklif süresi boyunca sabit <b>{fmt_num(fixed_unit_price, 2)} TL/MWh</b> (PTF + YEKDEM dahil) enerji birim fiyatı "
+            f"üzerinden hesaplanır. Bu birim fiyat teklif süresince değişmez; EPİAŞ PTF ve YEKDEM piyasa "
+            f"dalgalanmalarından etkilenmez. Böylece maliyet öngörülebilirliği sağlanır.",
             letter_style
         ))
-    elements.append(Spacer(1, 0.1*cm))
+        elements.append(Spacer(1, 0.1*cm))
+    else:
+        elements.append(Paragraph("<b>Enerji Bedelinin Hesaplama Yapısı</b>", letter_style))
+        elements.append(Paragraph(
+            f"Enerji bedeli, EPİAŞ verileri esas alınarak oluşturulmaktadır. İlgili fatura dönemi için EPİAŞ saatlik PTF ile "
+            f"abonenin tüketim değerleri kullanılarak Ağırlıklı PTF hesaplanır. Üzerine YEKDEM birim bedeli eklenerek toplam enerji birim maliyeti "
+            f"oluşturulur. Bu maliyet, anlaşma fiyat katsayısı (<b>{params.agreement_multiplier:.2f}</b>) ile çarpılarak nihai enerji bedeline ulaşılır.",
+            letter_style
+        ))
+        # SoT-X: saatlik PTF yoksa aylık ortalamaya düşüldü → fallback dipnotu
+        if getattr(calculation, "meta_pricing_source", "") == "reference_scalar" or getattr(calculation, "meta_ptf_source_warning", None):
+            elements.append(Paragraph(
+                "<i>Not: İlgili dönem için EPİAŞ saatlik PTF verisi bulunmadığından Ağırlıklı PTF, "
+                "aylık ortalama PTF üzerinden hesaplanmıştır.</i>",
+                letter_style
+            ))
+        elements.append(Spacer(1, 0.1*cm))
 
-    # YEKDEM Uygulaması
-    elements.append(Paragraph("<b>YEKDEM Uygulaması</b>", letter_style))
-    elements.append(Paragraph(
-        "YEKDEM bedeli tahmini değerdir. EPİAŞ tarafından açıklanacak kesin YEKDEM bedeline göre "
-        "sonraki dönem faturasında mahsup veya ek tahakkuk yapılabilir.",
-        letter_style
-    ))
-    elements.append(Spacer(1, 0.1*cm))
-    
+        # YEKDEM Uygulaması (yalnız endeksli modda — sabit fiyata gömülüdür)
+        elements.append(Paragraph("<b>YEKDEM Uygulaması</b>", letter_style))
+        elements.append(Paragraph(
+            "YEKDEM bedeli tahmini değerdir. EPİAŞ tarafından açıklanacak kesin YEKDEM bedeline göre "
+            "sonraki dönem faturasında mahsup veya ek tahakkuk yapılabilir.",
+            letter_style
+        ))
+        elements.append(Spacer(1, 0.1*cm))
+
     # Diğer Bedeller
     elements.append(Paragraph("<b>Diğer Bedeller</b>", letter_style))
     elements.append(Paragraph(
@@ -839,11 +859,17 @@ def _generate_pdf_reportlab(
     offer_unit_price = calculation.offer_energy_tl / consumption if consumption > 0 else (params.weighted_ptf_tl_per_mwh / 1000 + params.yekdem_tl_per_mwh / 1000) * params.agreement_multiplier
     current_unit_price = calculation.current_energy_tl / consumption if consumption > 0 else 0
     
-    param_data = [
-        ["Mevcut Birim Fiyat", f"{fmt_num(current_unit_price, 4)} TL/kWh", "Teklif Birim Fiyat", f"{fmt_num(offer_unit_price, 4)} TL/kWh"],
-        ["Anlaşma Çarpanı", fmt_num(params.agreement_multiplier), "Birim Fiyat Farkı", f"{fmt_num(current_unit_price - offer_unit_price, 4)} TL/kWh"],
-        ["Ağırlıklı PTF", f"{fmt_num(params.weighted_ptf_tl_per_mwh)} TL/MWh", "YEKDEM", f"{fmt_num(params.yekdem_tl_per_mwh)} TL/MWh"],
-    ]
+    if is_fixed:
+        # Sabit modda mevcut birim fiyat karşılaştırması GÖSTERİLMEZ — sabit birim fiyat (PTF+YEKDEM, TL/MWh) vurgulanır
+        param_data = [
+            ["Sabit Enerji Birim Fiyatı", f"{fmt_num(fixed_unit_price, 2)} TL/MWh", "Teklif Tipi", "Sabit Fiyat (PTF+YEKDEM dahil)"],
+        ]
+    else:
+        param_data = [
+            ["Mevcut Birim Fiyat", f"{fmt_num(current_unit_price, 4)} TL/kWh", "Teklif Birim Fiyat", f"{fmt_num(offer_unit_price, 4)} TL/kWh"],
+            ["Anlaşma Çarpanı", fmt_num(params.agreement_multiplier), "Birim Fiyat Farkı", f"{fmt_num(current_unit_price - offer_unit_price, 4)} TL/kWh"],
+            ["Ağırlıklı PTF", f"{fmt_num(params.weighted_ptf_tl_per_mwh)} TL/MWh", "YEKDEM", f"{fmt_num(params.yekdem_tl_per_mwh)} TL/MWh"],
+        ]
     # 4 eşit sütun
     t = Table(param_data, colWidths=[col4, col4, col4, col4])
     t.setStyle(TableStyle([
@@ -941,11 +967,16 @@ def generate_offer_pdf_bytes(
     contact_person: Optional[str] = None,
     offer_date: Optional[str] = None,
     offer_validity_days: int = 15,
+    offer_type: str = "indexed",
+    fixed_unit_price: float = 0,
 ) -> bytes:
     """
     Generate PDF offer document as bytes.
 
     Priority: ReportLab (best layout with header/footer PNG) > Playwright > WeasyPrint
+
+    offer_type: "indexed" (endeksli anlatım) | "fixed" (sabit birim fiyat anlatımı).
+    fixed_unit_price: sabit modda enerji birim fiyatı — PTF+YEKDEM birleşik (TL/MWh).
 
     Returns:
         PDF file bytes (ready for storage.put_bytes)
@@ -960,6 +991,8 @@ def generate_offer_pdf_bytes(
                 contact_person=contact_person,
                 offer_date=offer_date,
                 offer_validity_days=offer_validity_days,
+                offer_type=offer_type,
+                fixed_unit_price=fixed_unit_price,
             )
             logger.info(f"Generated PDF with ReportLab: {len(pdf_bytes)} bytes for offer {offer_id}")
             return pdf_bytes
