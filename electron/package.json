@@ -9,7 +9,7 @@
     "start": "electron .",
     "dev": "electron .",
     "build:frontend": "cd ../frontend && npm run build",
-    "build:backend": "cd ../backend && pyinstaller --onefile --name gelka-backend --add-data \"app;app\" --hidden-import uvicorn.logging --hidden-import uvicorn.protocols.http --hidden-import uvicorn.protocols.http.auto --hidden-import uvicorn.protocols.websockets --hidden-import uvicorn.protocols.websockets.auto --hidden-import uvicorn.lifespan --hidden-import uvicorn.lifespan.on run_server.py",
+    "build:backend": "cd ../backend && .venv\\Scripts\\python.exe -m pip install -q -r requirements.txt pyinstaller && .venv\\Scripts\\python.exe -m PyInstaller --noconfirm --clean gelka-backend.spec",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
     "dist:win": "electron-builder --win"
