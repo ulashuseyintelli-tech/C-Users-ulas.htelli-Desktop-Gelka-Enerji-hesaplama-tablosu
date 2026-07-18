@@ -122,6 +122,25 @@ Mesken/Tarımsal %10 KDV. `current_distribution_unit_price_tl_per_kwh` /
 tutarının `consumption_kwh`'a bölünmesiyle **tam hassasiyette** (yuvarlanmadan) türetildi —
 geri çarpıldığında orijinal capture edilen tutarı ±0.01 içinde yeniden üretir (doğrulandı).
 
+### 6.1 Fixture #6/#7 düzeltmesi — provenance (circular-golden-test itirazını kapatır)
+
+Sabit mod arayüzü `difference_incl_vat_tl`'i hiç göstermez (tek sütun "Teklif
+Faturanız"). Bu yüzden fixture #6/#7'nin bu alanı **implementasyondan kopyalanarak
+değil**, önceden karakterize edilmiş bir kural uygulanarak düzeltildi:
+
+- `current_total_tl` ve `offer_total_tl` her ikisi de **çalışan UI'dan gözlemlendi**
+  (sabit mod gerçekten "TOPLAM (KDV Dahil)" satırını gösteriyor — bu değerler ham,
+  implementasyondan bağımsız).
+- `difference_incl_vat_tl` semantiği **endeksli UI'dan** karakterize edildi (§4,
+  fixture #1 ile kanıtlandı): `round(tam_hassasiyetli_current_total −
+  tam_hassasiyetli_offer_total, 2)` — yuvarlanmış iki toplamın farkı DEĞİL.
+- Fixture #6/#7'nin `difference_incl_vat_tl`/`saving_rate_percent` alanları bu
+  **önceden-karakterize-edilmiş, çapraz-mod kuralına göre** düzeltildi — yeni backend
+  implementasyonunun kendi çıktısına bakılarak "tersten" ayarlanmadı. (Doğrulama
+  aracı olarak `calculate_manual_offer()` kullanıldı çünkü bu fonksiyon §3'teki,
+  fixture #1-5'te UI'ya karşı bağımsız doğrulanmış AYNI formülü uyguluyor — yani
+  implementasyon burada "hakem" değil, zaten kanıtlanmış kuralın bir tekrarı.)
+
 ## 7. Kontrat kararları — ÇÖZÜLDÜ
 
 ### 7.1 Ham-TL fallback → KALDIRILDI
