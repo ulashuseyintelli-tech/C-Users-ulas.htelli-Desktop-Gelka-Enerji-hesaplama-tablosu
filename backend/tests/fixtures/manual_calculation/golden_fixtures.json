@@ -211,10 +211,10 @@
         "offer_vat_base_tl": 57320.13,
         "offer_vat_amount_tl": 11464.03,
         "offer_total_tl": 68784.16,
-        "difference_incl_vat_tl": -13823.72,
+        "difference_incl_vat_tl": -13823.71,
         "saving_rate_percent": -25.15
       },
-      "notes": "Sabit modda agreement_multiplier UYGULANMAZ: offer_energy_tl = kwh × fixed_unit_price (çarpan yok). offer_distribution_tl formülü Endeksli ile AYNI (kwh × distUnitPrice)."
+      "notes": "Sabit modda agreement_multiplier UYGULANMAZ: offer_energy_tl = kwh × fixed_unit_price (çarpan yok). offer_distribution_tl formülü Endeksli ile AYNI (kwh × distUnitPrice).[DUZELTME: difference_incl_vat_tl/saving_rate_percent ilk yazimda iki ayri yuvarlanmis toplamin (current_total, offer_total) elle cikarilmasiyla hesaplanmisti (UI sabit modda 'Fark' gostermiyor, canli dogrulama yapilamamisti). Tam hassasiyetli formulle (karakterizasyon SS4, indeksli modda gercek UI'dan dogrulanmis) duzeltildi."
     },
     {
       "id": 7,
@@ -244,9 +244,10 @@
         "offer_vat_base_tl": 46958.44,
         "offer_vat_amount_tl": 9391.69,
         "offer_total_tl": 56350.13,
-        "difference_incl_vat_tl": -6588.11,
+        "difference_incl_vat_tl": -6588.1,
         "saving_rate_percent": -13.24
-      }
+      },
+      "notes": "[DUZELTME: difference_incl_vat_tl/saving_rate_percent ilk yazimda iki ayri yuvarlanmis toplamin (current_total, offer_total) elle cikarilmasiyla hesaplanmisti (UI sabit modda 'Fark' gostermiyor, canli dogrulama yapilamamisti). Tam hassasiyetli formulle (karakterizasyon SS4, indeksli modda gercek UI'dan dogrulanmis) duzeltildi."
     },
     {
       "id": 8,
