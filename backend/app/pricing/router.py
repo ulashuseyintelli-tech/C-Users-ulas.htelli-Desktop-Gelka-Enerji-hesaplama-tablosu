@@ -9,6 +9,7 @@ Endpoint'ler:
   POST /api/pricing/analyze              — Tam fiyatlama analizi
   POST /api/pricing/simulate             — Katsayı simülasyonu
   POST /api/pricing/compare              — Çoklu ay karşılaştırma
+  POST /api/pricing/calculate-manual     — Manuel giriş → teklif hesaplama (pure, OCR/DB'siz)
   GET  /api/pricing/templates            — Profil şablonları listesi
   GET  /api/pricing/periods              — Yüklü dönemler listesi
   YEKDEM CRUD endpoint'leri
@@ -130,6 +131,11 @@ from .pricing_cache import (
 )
 from .version_manager import get_active_version
 from .pricing_report import generate_pdf_report, generate_excel_report
+from .manual_calculator import (
+    ManualCalculationRequest,
+    ManualCalculationResponse,
+    calculate_manual_offer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -908,6 +914,31 @@ def compare(
         comparison=comparisons,
         safe_multiplier=safe_result,
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Manuel Hesaplama — Canonical Pure Calculator (PATCH 2B, additive)
+# ═══════════════════════════════════════════════════════════════════════════════
+# OCR/InvoiceExtraction/EPDK-lookup GEREKTİRMEZ — mobil/masaüstü manuel giriş akışı
+# için. calculate_offer() (app/calculator.py) DEĞİŞTİRİLMEDİ, ayrı bir akıştır.
+# Karakterizasyon + golden fixture: docs/manual-calculation-characterization.md
+
+
+@pricing_router.post("/calculate-manual", response_model=ManualCalculationResponse)
+def calculate_manual(
+    req: ManualCalculationRequest,
+    _key: str | None = Depends(_require_pricing_key),
+):
+    """Manuel giriş → teklif hesaplama (pure, DB/OCR erişimi yok).
+
+    Çağrıldığı yerler:
+    - Mobil uygulama (PATCH 2C) → manuel giriş ekranı → endeksli/sabit teklif
+    - Masaüstü web (gelecekte, ayrı bir cutover kararıyla) → liveCalculation yerine
+
+    offer_type="indexed" ve offer_type="fixed" için farklı zorunlu alan seti
+    (bkz. ManualCalculationRequest) — yanlış varyant alanı gönderilirse 422.
+    """
+    return calculate_manual_offer(req)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
