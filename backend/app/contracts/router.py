@@ -42,10 +42,47 @@ from .schemas import (
 
 logger = logging.getLogger(__name__)
 
-contracts_router = APIRouter(prefix="/api/contracts", tags=["contracts"])
-
 _ALLOWED_DOCUMENT_MIME_TYPES = {"application/pdf", "image/jpeg", "image/png"}
 _MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024  # mevcut validate_uploaded_file ile aynı sınır
+
+
+def _require_default_tenant_boundary(tenant_id: str = Depends(get_tenant_id)) -> str:
+    """
+    OWNER KARARI (final read-only architecture review, madde 3): Customer
+    tablosunda tenant_id YOK (CustomerLegalProfile/UploadedReferenceDocument/
+    Contract'ın customer_id üzerinden paylaştığı, tenant'sız bir havuz).
+    Büyük bir Customer migration'ı olmadan bu havuzu güvenli şekilde
+    tenant'lara bölmenin yolu yok.
+
+    Bu yüzden V1'de sözleşme modülü YALNIZ default tenant ile çalışır —
+    explicit, fail-closed bir invariant olarak. Başka bir X-Tenant-Id ile
+    gelen HERHANGİ bir sözleşme isteği (belge yükleme, taslak, finalize, ...)
+    403 ile reddedilir; sessizce "default"a düşürülmez ve tenant'sız
+    Customer/Document havuzuna asla karışmaz.
+
+    Bu, ..services.tenant.get_tenant_id'nin (settings.tenant_required=False
+    iken header yoksa "default" döndüren, fail-open) genel davranışını
+    DEĞİŞTİRMEZ — yalnız sözleşme router'ına ek, daha sıkı bir kapı ekler.
+    """
+    if tenant_id != settings.default_tenant:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "tenant_not_supported",
+                "message": (
+                    "Sözleşme modülü V1 yalnız varsayılan tenant ile çalışır "
+                    "(Customer tablosunda tenant izolasyonu yok)."
+                ),
+            },
+        )
+    return tenant_id
+
+
+contracts_router = APIRouter(
+    prefix="/api/contracts",
+    tags=["contracts"],
+    dependencies=[Depends(_require_default_tenant_boundary)],
+)
 
 
 def _require_contracts_key(x_api_key: Optional[str] = Header(default=None)) -> Optional[str]:
@@ -372,7 +409,11 @@ def preview_contract(
     contract = db.query(db_models.Contract).filter(db_models.Contract.id == contract_id, db_models.Contract.tenant_id == tenant_id).first()
     if not contract:
         raise HTTPException(status_code=404, detail={"error": "contract_not_found", "message": "Sözleşme bulunamadı"})
-    if contract.status == "FINALIZED":
+    if contract.status in ("FINALIZED", "FINALIZING"):
+        # FINALIZING: HIGH#1 — bir finalize isteği tam bu anda işlemde;
+        # preview'ın status'u READY_TO_GENERATE'e geri almasına izin
+        # vermek finalize'ın final CAS'ını (status=='FINALIZING' beklentisi)
+        # bozar. FINALIZED zaten immutable.
         raise HTTPException(status_code=409, detail={"error": "contract_finalized", "message": "Finalize edilmiş sözleşme değiştirilemez"})
 
     from . import pdf_service  # Faz 7'de eklenecek — döngüsel import'tan kaçınmak için burada import edilir
@@ -394,11 +435,28 @@ def finalize_contract(
     _key: Optional[str] = Depends(_require_contracts_key),
     db: Session = Depends(get_db),
 ):
+    """
+    HIGH#1 (final architecture review) — eşzamanlılık/idempotency:
+    - Zaten FINALIZED ise: yeniden PDF ÜRETMEZ, mevcut sonucu idempotent
+      olarak döndürür (retry/response-loss güvenli).
+    - CAS claim (service.try_claim_contract_for_finalize) yalnız TEK bir
+      eşzamanlı isteğin PDF üretimine başlamasını sağlar; kaybeden istek
+      hemen (PDF üretmeden) ya idempotent sonucu ya da 409 döner.
+    - HIGH#2: mark_offer_completed artık ASLA exception fırlatmaz — bu
+      endpoint'in başarı yanıtı offer-lifecycle yan etkisine bağımlı değil.
+    """
     contract = db.query(db_models.Contract).filter(db_models.Contract.id == contract_id, db_models.Contract.tenant_id == tenant_id).first()
     if not contract:
         raise HTTPException(status_code=404, detail={"error": "contract_not_found", "message": "Sözleşme bulunamadı"})
+
+    def _idempotent_response(c: db_models.Contract) -> ContractFinalizeResponse:
+        return ContractFinalizeResponse(
+            contract_id=c.id, status=c.status, pdf_storage_ref=c.pdf_storage_ref, pdf_sha256=c.pdf_sha256,
+            contract_number=c.contract_number,
+        )
+
     if contract.status == "FINALIZED":
-        raise HTTPException(status_code=409, detail={"error": "already_finalized", "message": "Sözleşme zaten finalize edilmiş"})
+        return _idempotent_response(contract)
     if not contract.extraction_snapshot_json:
         raise HTTPException(status_code=409, detail={"error": "preview_required", "message": "Önce önizleme yapılmalı"})
 
@@ -412,26 +470,29 @@ def finalize_contract(
     if document_ids and service.has_unresolved_conflicts(db, document_ids):
         raise HTTPException(status_code=409, detail={"error": "unresolved_conflicts", "message": "Çözülmemiş belge çelişkileri var — finalize edilemez"})
 
-    from . import pdf_service
+    claimed = service.try_claim_contract_for_finalize(db, contract_id, tenant_id)
+    if not claimed:
+        db.refresh(contract)
+        if contract.status == "FINALIZED":
+            return _idempotent_response(contract)
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "finalize_in_progress", "message": "Sözleşme şu anda başka bir istek tarafından finalize ediliyor"},
+        )
 
-    pdf_bytes, pdf_sha256 = pdf_service.generate_contract_pdf(contract.extraction_snapshot_json)
+    try:
+        pdf_ref, pdf_sha256 = service.finalize_contract_pdf_and_commit(
+            db, contract_id, tenant_id, contract.extraction_snapshot_json
+        )
+    except Exception as exc:  # noqa: BLE001 — service katmanı zaten revert+cleanup yaptı, burada yalnız 500'e çevir
+        logger.error(f"Contract {contract_id} finalize başarısız: {type(exc).__name__}")
+        raise HTTPException(
+            status_code=500, detail={"error": "finalize_failed", "message": "Sözleşme finalize edilemedi, lütfen tekrar deneyin"}
+        ) from exc
 
-    from ..services.storage import get_storage
-    storage = get_storage()
-    pdf_ref = storage.put_bytes(
-        key=f"contracts/generated/{tenant_id}/{contract.id}.pdf", data=pdf_bytes, content_type="application/pdf"
-    )
-
-    contract.contract_snapshot_json = contract.extraction_snapshot_json
-    contract.pdf_storage_ref = pdf_ref
-    contract.pdf_sha256 = pdf_sha256
-    contract.status = "FINALIZED"
-    contract.finalized_at = datetime.utcnow()
-    contract.template_version = "v1"
-    db.commit()
-
+    db.refresh(contract)
     offer = db.query(db_models.Offer).filter(db_models.Offer.id == contract.offer_id).first()
-    service.mark_offer_completed(db, offer)
+    service.mark_offer_completed(db, offer)  # HIGH#2: best-effort, asla exception fırlatmaz
 
     return ContractFinalizeResponse(
         contract_id=contract.id, status=contract.status, pdf_storage_ref=pdf_ref, pdf_sha256=pdf_sha256,

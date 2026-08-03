@@ -11,9 +11,11 @@ zaman interpolate edilmez).
 import hashlib
 import json
 import logging
+import uuid
 from datetime import datetime
 from typing import Optional
 
+from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Session
 
 from .. import database as db_models
@@ -397,6 +399,133 @@ def build_contract_snapshot(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Finalize concurrency / idempotency (HIGH#1 — final architecture review)
+#
+# Compare-and-set (CAS) desenli claim: tek bir atomic UPDATE...WHERE ifadesi
+# ile hem "hâlâ beklenen durumda mı" kontrolü hem de durum değişikliği aynı
+# anda yapılır. Bu, satır kilidi (SELECT...FOR UPDATE) GEREKTİRMEDEN, hem
+# SQLite hem Postgres'te doğru ve taşınabilir çalışır — veritabanı motoru
+# aynı satıra eşzamanlı UPDATE'leri zaten kendi içinde sıraya koyar; WHERE
+# koşulu "kaybeden" isteğin rowcount=0 görmesini garanti eder. Bu yüzden
+# ayrı bir Postgres/SQLite dallanmasına gerek yok (talep edilen sonucun
+# birebir aynısı, daha az kodla ve iki backend'de de kanıtlanabilir şekilde).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_FINALIZE_CLAIMABLE_STATUSES = ["READY_TO_GENERATE", "GENERATED"]
+
+
+def try_claim_contract_for_finalize(db: Session, contract_id: int, tenant_id: str) -> bool:
+    """
+    Contract'ı finalize için atomically "claim" eder (READY_TO_GENERATE|
+    GENERATED -> FINALIZING). Yalnız TEK bir eşzamanlı istek rowcount=1
+    görür (kazanan); diğerleri rowcount=0 görür ve PDF üretimine hiç
+    başlamaz — "aynı anda iki render başlamasını engelle" gereksinimi
+    burada, satır kilidi olmadan, doğrudan WHERE koşuluyla sağlanır.
+    """
+    result = db.execute(
+        sa_update(db_models.Contract)
+        .where(
+            db_models.Contract.id == contract_id,
+            db_models.Contract.tenant_id == tenant_id,
+            db_models.Contract.status.in_(_FINALIZE_CLAIMABLE_STATUSES),
+        )
+        .values(status="FINALIZING")
+    )
+    db.commit()
+    return result.rowcount == 1
+
+
+def revert_contract_finalizing_to_ready(db: Session, contract_id: int) -> None:
+    """
+    PDF üretimi/storage/final commit başarısız olursa FINALIZING'i geri alır
+    (READY_TO_GENERATE) — retry mümkün olsun diye. Contract kalıcı olarak
+    FINALIZING'te takılı kalmaz.
+    """
+    db.execute(
+        sa_update(db_models.Contract)
+        .where(db_models.Contract.id == contract_id, db_models.Contract.status == "FINALIZING")
+        .values(status="READY_TO_GENERATE")
+    )
+    db.commit()
+
+
+def finalize_contract_pdf_and_commit(db: Session, contract_id: int, tenant_id: str, snapshot: dict) -> tuple[str, str]:
+    """
+    Claim edilmiş (FINALIZING) bir Contract için PDF üretir, GEÇİCİ bir
+    storage key'ine yazar (storage backend'in gerçekten yazabildiğini DB'ye
+    dokunmadan kanıtlamak için), sonra canonical key'e yazar — put_bytes'ın
+    GERÇEK dönüş değeri pdf_storage_ref olarak kullanılır (storage backend'e
+    göre değişebilir; ör. LocalStorage tam çözümlenmiş dosya yolu döndürür,
+    ham key değil — bu yüzden ham key'i DB'ye yazmak download'da "path
+    traversal" yanlış-pozitifine yol açar). DB'yi FINALIZED'e taşır (yalnız
+    hâlâ FINALIZING ise — final CAS). Herhangi bir adım başarısız olursa:
+    Contract READY_TO_GENERATE'e geri alınır, geçici VE (varsa) canonical
+    dosya silinir — DB hiçbir zaman var olmayan/tutarsız bir ref'e işaret
+    etmez (download zaten yalnız contract.pdf_storage_ref set'liyse dosya
+    servis eder, o yüzden bu noktada bir dosyanın diskte kalması tek başına
+    güvenlik riski değildir, ama temizlik yine de yapılır — "orphan dosya
+    yok" gereksinimi).
+
+    Döner: (pdf_storage_ref, pdf_sha256)
+    """
+    from . import pdf_service  # döngüsel import'tan kaçınmak için burada
+
+    storage = get_storage()
+    temp_key = f"contracts/generated/{tenant_id}/{contract_id}.pdf.tmp-{uuid.uuid4().hex}"
+    canonical_key = f"contracts/generated/{tenant_id}/{contract_id}.pdf"
+    temp_ref: Optional[str] = None
+    canonical_ref: Optional[str] = None
+
+    try:
+        pdf_bytes, pdf_sha256 = pdf_service.generate_contract_pdf(snapshot)
+        # put_bytes'ın dönüş değeri DB/delete'e yazılacak GERÇEK ref'tir (backend'e
+        # göre değişebilir; LocalStorage tam çözümlenmiş yol döndürür, ham key değil).
+        temp_ref = storage.put_bytes(key=temp_key, data=pdf_bytes, content_type="application/pdf")
+        canonical_ref = storage.put_bytes(key=canonical_key, data=pdf_bytes, content_type="application/pdf")
+
+        result = db.execute(
+            sa_update(db_models.Contract)
+            .where(db_models.Contract.id == contract_id, db_models.Contract.status == "FINALIZING")
+            .values(
+                contract_snapshot_json=snapshot,
+                pdf_storage_ref=canonical_ref,
+                pdf_sha256=pdf_sha256,
+                status="FINALIZED",
+                finalized_at=datetime.utcnow(),
+                template_version="v1",
+            )
+        )
+        if result.rowcount != 1:
+            # Beklenmiyor (yalnız biz FINALIZING'e taşımıştık) ama savunmacı davran.
+            raise RuntimeError(f"Contract {contract_id} finalize sırasında beklenmeyen durumda (FINALIZING değil)")
+        db.commit()
+
+        try:
+            storage.delete(temp_ref)
+        except Exception as exc:  # noqa: BLE001 — geçici dosya temizliği best-effort
+            logger.warning(f"Contract {contract_id}: geçici PDF silinemedi ({temp_key}): {type(exc).__name__}")
+
+        return canonical_ref, pdf_sha256
+
+    except Exception:
+        db.rollback()
+        if temp_ref is not None:
+            try:
+                storage.delete(temp_ref)
+            except Exception as cleanup_exc:  # noqa: BLE001
+                logger.warning(f"Contract {contract_id}: geçici dosya temizliği başarısız: {type(cleanup_exc).__name__}")
+        if canonical_ref is not None:
+            # DB commit'i canonical yazımından SONRA başarısız oldu — artık
+            # DB'de referanssız kalan canonical dosyayı da temizle.
+            try:
+                storage.delete(canonical_ref)
+            except Exception as cleanup_exc:  # noqa: BLE001
+                logger.warning(f"Contract {contract_id}: canonical dosya temizliği başarısız: {type(cleanup_exc).__name__}")
+        revert_contract_finalizing_to_ready(db, contract_id)
+        raise
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Offer lifecycle bağlama (owner kararı: Offer artık kalıcı domain nesnesi,
 # mevcut draft/sent/viewed/accepted/contracting/completed durum makinesi
 # yeniden kullanılır — bkz. app/services/offer_lifecycle.py)
@@ -409,21 +538,45 @@ def build_contract_snapshot(
 # sinyalidir — gerçek kapı Contract.status'tur (zaten var/test edilmiş).
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def mark_offer_contracting(db: Session, offer: Optional[db_models.Offer]) -> None:
-    """Sözleşme taslağı oluşturulduğunda Offer'ı 'contracting' durumuna taşımayı DENER."""
+def _mark_offer_status_best_effort(db: Session, offer: Optional[db_models.Offer], new_status: str, notes: str) -> None:
+    """
+    Ortak best-effort geçiş — HIGH#2 düzeltmesi: yalnız ValueError (geçersiz
+    geçiş — beklenen/idempotent durum) DEĞİL, herhangi bir beklenmeyen
+    exception da (ör. transition_offer_status içindeki log_action'ın kendi
+    db.commit()'i patlarsa) burada durdurulur. Contract/finalize'ın temel
+    başarısı bu yan etkiye ASLA bağımlı olmamalı — çağıran bu fonksiyonun
+    hiçbir zaman exception fırlatmayacağına güvenebilir.
+
+    GÜVENLİK: log satırında yalnız offer id + exception tipi var; T.C.,
+    belge metni veya snapshot içeriği asla yok (mevcut PII kuralıyla aynı).
+
+    İdempotency: transition_offer_status zaten VALID_OFFER_TRANSITIONS'a
+    göre doğrulama yapıyor — offer hedef duruma (veya ötesine) zaten
+    geçmişse ValueError fırlatır ve log_action TEKRAR ÇAĞRILMAZ, yani bir
+    retry aynı lifecycle event'i iki kez yazmaz.
+    """
     if offer is None:
         return
     try:
-        transition_offer_status(db, offer, "contracting", notes="Sözleşme hazırlama başlatıldı", actor_type="system")
+        transition_offer_status(db, offer, new_status, notes=notes, actor_type="system")
     except ValueError as exc:
-        logger.info(f"Offer {offer.id} 'contracting' durumuna taşınamadı (yok sayıldı): {exc}")
+        # Beklenen: geçersiz/zaten-gerçekleşmiş geçiş (terminal state, vs.) — bilgi seviyesinde.
+        logger.info(f"Offer {offer.id} '{new_status}' durumuna taşınamadı (yok sayıldı): {exc}")
+    except Exception as exc:  # noqa: BLE001 — kasıtlı geniş yakalama, bkz. docstring
+        # Beklenmeyen: DB/audit hatası gibi — Contract'ın kendi başarısını etkilemesin,
+        # yalnız operasyonel takip için uyarı seviyesinde logla.
+        db.rollback()
+        logger.warning(
+            f"Offer {offer.id} '{new_status}' durumuna taşınırken beklenmeyen hata "
+            f"(sözleşme işlemi başarılı sayılmaya devam eder): {type(exc).__name__}"
+        )
+
+
+def mark_offer_contracting(db: Session, offer: Optional[db_models.Offer]) -> None:
+    """Sözleşme taslağı oluşturulduğunda Offer'ı 'contracting' durumuna taşımayı DENER (best-effort)."""
+    _mark_offer_status_best_effort(db, offer, "contracting", notes="Sözleşme hazırlama başlatıldı")
 
 
 def mark_offer_completed(db: Session, offer: Optional[db_models.Offer]) -> None:
-    """Sözleşme finalize edildiğinde Offer'ı 'completed' durumuna taşımayı DENER."""
-    if offer is None:
-        return
-    try:
-        transition_offer_status(db, offer, "completed", notes="Sözleşme finalize edildi", actor_type="system")
-    except ValueError as exc:
-        logger.info(f"Offer {offer.id} 'completed' durumuna taşınamadı (yok sayıldı): {exc}")
+    """Sözleşme finalize edildiğinde Offer'ı 'completed' durumuna taşımayı DENER (best-effort)."""
+    _mark_offer_status_best_effort(db, offer, "completed", notes="Sözleşme finalize edildi")

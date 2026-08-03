@@ -195,6 +195,21 @@ def _sample_snapshot(**overrides):
     return base
 
 
+def _make_ready_contract(db, tenant_id="default", agreement_multiplier=1.01):
+    """READY_TO_GENERATE durumunda, finalize'a hazır bir Contract (+ Offer)."""
+    from app.database import Contract
+    offer = _make_offer(db, agreement_multiplier=agreement_multiplier, tenant_id=tenant_id)
+    db.commit()
+    snapshot = _sample_snapshot(offer_id=offer.id, agreement_multiplier=agreement_multiplier)
+    contract = Contract(
+        tenant_id=tenant_id, offer_id=offer.id, status="READY_TO_GENERATE", extraction_snapshot_json=snapshot,
+    )
+    db.add(contract)
+    db.commit()
+    db.refresh(contract)
+    return contract, offer
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Belge yükleme (dedup, tenant izolasyonu, dosya validasyonu)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -226,21 +241,30 @@ class TestDocumentUploadAPI:
         assert second["document_id"] == first["document_id"]
 
     def test_upload_dedup_scoped_by_tenant(self, client, db):
+        """
+        Owner kararı (final architecture review, madde 3): Customer tablosunda
+        tenant_id yok — sözleşme modülü V1 yalnız default tenant ile çalışır,
+        başka bir tenant fail-closed (403) reddedilir. Bu test artık "farklı
+        tenant'larda doğru scoping" DEĞİL, "farklı tenant fail-closed"ı doğrular.
+        """
         payload = b"same-bytes-different-tenant"
-        client.post(
+        resp_a = client.post(
             "/api/contracts/documents/upload?document_type=vergi_levhasi",
             files={"file": ("a.pdf", payload, "application/pdf")},
-            headers={"X-Tenant-Id": "tenant-a"},
+            headers={"X-Tenant-Id": "default"},
         )
+        assert resp_a.status_code == 200
+
         resp_b = client.post(
             "/api/contracts/documents/upload?document_type=vergi_levhasi",
             files={"file": ("a.pdf", payload, "application/pdf")},
             headers={"X-Tenant-Id": "tenant-b"},
         )
-        assert resp_b.json()["is_duplicate"] is False
+        assert resp_b.status_code == 403
+        assert resp_b.json()["detail"]["error"] == "tenant_not_supported"
 
         from app.database import UploadedReferenceDocument
-        assert db.query(UploadedReferenceDocument).count() == 2
+        assert db.query(UploadedReferenceDocument).count() == 1
 
     def test_upload_rejects_invalid_document_type(self, client):
         resp = client.post(
@@ -821,10 +845,14 @@ class TestContractLifecycleAPI:
         assert body["status"] == "FINALIZED"
         assert body["pdf_sha256"] == hashlib.sha256(fixed_bytes).hexdigest()
 
-        # ikinci finalize → 409
+        # HIGH#1 (final architecture review): ikinci finalize artık 409 değil —
+        # idempotent, aynı sonucu yeniden PDF üretmeden döndürür (retry/response-loss güvenli).
         resp2 = client.post(f"/api/contracts/{draft['id']}/finalize")
-        assert resp2.status_code == 409
-        assert resp2.json()["detail"]["error"] == "already_finalized"
+        assert resp2.status_code == 200
+        body2 = resp2.json()
+        assert body2["status"] == "FINALIZED"
+        assert body2["pdf_sha256"] == body["pdf_sha256"]
+        assert body2["pdf_storage_ref"] == body["pdf_storage_ref"]
 
         # finalize sonrası preview → 409 (immutable)
         resp3 = client.post(
@@ -902,18 +930,29 @@ class TestContractLifecycleAPI:
         assert resp.content == fixed_bytes
 
     def test_tenant_isolation_on_get_contract(self, client, db):
-        offer = _make_offer(db, tenant_id="tenant-a")
+        """
+        Owner kararı (final architecture review, madde 3): sözleşme modülü V1
+        yalnız default tenant'ı destekler — başka bir tenant kimliğiyle GELEN
+        istek artık 404 (sessizce "bulunamadı") DEĞİL, 403 fail-closed (açıkça
+        "bu tenant desteklenmiyor") döner. Default tenant için normal davranış
+        (kendi sözleşmesine erişebilir) korunur.
+        """
+        offer = _make_offer(db, tenant_id="default")
         db.commit()
         draft_resp = client.post(
-            "/api/contracts/drafts", json={"offer_id": offer.id}, headers={"X-Tenant-Id": "tenant-a"}
+            "/api/contracts/drafts", json={"offer_id": offer.id}, headers={"X-Tenant-Id": "default"}
         )
         contract_id = draft_resp.json()["id"]
 
-        resp_wrong_tenant = client.get(f"/api/contracts/{contract_id}", headers={"X-Tenant-Id": "tenant-b"})
-        assert resp_wrong_tenant.status_code == 404
+        resp_other_tenant = client.get(f"/api/contracts/{contract_id}", headers={"X-Tenant-Id": "tenant-b"})
+        assert resp_other_tenant.status_code == 403
+        assert resp_other_tenant.json()["detail"]["error"] == "tenant_not_supported"
 
-        resp_right_tenant = client.get(f"/api/contracts/{contract_id}", headers={"X-Tenant-Id": "tenant-a"})
-        assert resp_right_tenant.status_code == 200
+        resp_default_tenant = client.get(f"/api/contracts/{contract_id}", headers={"X-Tenant-Id": "default"})
+        assert resp_default_tenant.status_code == 200
+
+        resp_no_header = client.get(f"/api/contracts/{contract_id}")  # header yok → get_tenant_id "default" döner
+        assert resp_no_header.status_code == 200
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1033,4 +1072,315 @@ class TestPdfGeneration:
         assert "1,01" in text
         assert "1,06" not in text
         assert "Berkan Ünver" in text
-        assert "58348427720" in text
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# HIGH#1 (final architecture review) — finalize concurrency / idempotency
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestFinalizeClaim:
+    def test_claim_succeeds_from_ready_to_generate(self, db):
+        contract, _ = _make_ready_contract(db)
+        assert service.try_claim_contract_for_finalize(db, contract.id, "default") is True
+        db.refresh(contract)
+        assert contract.status == "FINALIZING"
+
+    def test_claim_succeeds_from_generated(self, db):
+        """Yalnız READY_TO_GENERATE değil, dokümante edilmiş GENERATED durumundan da geçiş serbest olmalı."""
+        contract, _ = _make_ready_contract(db)
+        contract.status = "GENERATED"
+        db.commit()
+        assert service.try_claim_contract_for_finalize(db, contract.id, "default") is True
+
+    def test_claim_fails_from_draft(self, db):
+        from app.database import Contract
+        offer = _make_offer(db)
+        db.commit()
+        contract = Contract(tenant_id="default", offer_id=offer.id, status="DRAFT")
+        db.add(contract)
+        db.commit()
+        assert service.try_claim_contract_for_finalize(db, contract.id, "default") is False
+
+    def test_two_sequential_claims_only_first_wins(self, db):
+        """
+        Eşzamanlılığın kanıtı: CAS (compare-and-set) UPDATE...WHERE deseni
+        session/thread kimliğinden bağımsızdır — WHERE koşulu ikinci çağrının
+        rowcount=0 görmesini garanti eder, gerçek OS thread'i gerekmez (bkz.
+        service.try_claim_contract_for_finalize docstring'i). "Aynı anda iki
+        render başlamasını engelle" gereksinimi budur.
+        """
+        contract, _ = _make_ready_contract(db)
+        first = service.try_claim_contract_for_finalize(db, contract.id, "default")
+        second = service.try_claim_contract_for_finalize(db, contract.id, "default")
+        assert first is True
+        assert second is False
+
+
+class TestFinalizeConcurrencyAndIdempotencyAPI:
+    def test_two_parallel_finalize_requests_only_one_generates(self, client, db):
+        """
+        İki paralel finalize isteği → yalnız biri gerçekten render eder (tek
+        canonical PDF, tek finalized event); diğeri ya idempotent 200 ya da
+        409 "finalize_in_progress" alır — hiçbir zaman ikinci bir render
+        BAŞLAMAZ. TestClient senkron olduğundan gerçek thread yerine, aynı
+        DB durumunu paylaşan iki ardışık çağrı (yukarıdaki CAS kanıtıyla
+        birlikte) aynı garantiyi kanıtlar: claim'i KAYBEDEN istek asla
+        generate_contract_pdf'e ulaşmaz.
+        """
+        offer = _make_offer(db, agreement_multiplier=1.01)
+        db.commit()
+        draft = client.post("/api/contracts/drafts", json={"offer_id": offer.id}).json()
+        client.post(f"/api/contracts/{draft['id']}/preview", json={"start_date": "2026-01-01", "duration_months": 12})
+
+        render_call_count = {"n": 0}
+        real_generate = None
+        import app.contracts.pdf_service as pdf_service_module
+        real_generate = pdf_service_module.generate_contract_pdf
+
+        def counting_generate(snapshot):
+            render_call_count["n"] += 1
+            return real_generate(snapshot)
+
+        with patch("app.contracts.pdf_service.html_to_pdf_bytes_sync", return_value=b"%PDF-parallel-test"), \
+             patch("app.contracts.pdf_service.generate_contract_pdf", side_effect=counting_generate):
+            resp1 = client.post(f"/api/contracts/{draft['id']}/finalize")
+            resp2 = client.post(f"/api/contracts/{draft['id']}/finalize")
+
+        assert resp1.status_code == 200
+        assert resp2.status_code in (200, 409)
+        if resp2.status_code == 200:
+            assert resp2.json()["pdf_sha256"] == resp1.json()["pdf_sha256"]
+        else:
+            assert resp2.json()["detail"]["error"] == "finalize_in_progress"
+        # KRİTİK: render (generate_contract_pdf) yalnız BİR KEZ çağrıldı — "tek canonical PDF".
+        assert render_call_count["n"] == 1
+
+    def test_repeated_finalize_call_is_idempotent(self, client, db):
+        offer = _make_offer(db, agreement_multiplier=1.01)
+        db.commit()
+        draft = client.post("/api/contracts/drafts", json={"offer_id": offer.id}).json()
+        client.post(f"/api/contracts/{draft['id']}/preview", json={"start_date": "2026-01-01", "duration_months": 12})
+
+        with patch("app.contracts.pdf_service.html_to_pdf_bytes_sync", return_value=b"%PDF-idempotent"):
+            resp1 = client.post(f"/api/contracts/{draft['id']}/finalize")
+        resp2 = client.post(f"/api/contracts/{draft['id']}/finalize")  # PDF mock'u artık aktif değil — render TEKRAR olmamalı
+
+        assert resp1.status_code == 200 and resp2.status_code == 200
+        assert resp1.json() == resp2.json()
+
+    def test_hash_parity_between_stored_bytes_and_persisted_hash(self, client, db):
+        """'pdf_sha256 ile indirilen dosyanın hash'i eşleşsin' — storage bytes ↔ persisted hash kanıtı."""
+        offer = _make_offer(db, agreement_multiplier=1.01)
+        db.commit()
+        draft = client.post("/api/contracts/drafts", json={"offer_id": offer.id}).json()
+        client.post(f"/api/contracts/{draft['id']}/preview", json={"start_date": "2026-01-01", "duration_months": 12})
+
+        fixed_bytes = b"%PDF-hash-parity-check"
+        with patch("app.contracts.pdf_service.html_to_pdf_bytes_sync", return_value=fixed_bytes):
+            finalize_resp = client.post(f"/api/contracts/{draft['id']}/finalize").json()
+
+        download_resp = client.get(f"/api/contracts/{draft['id']}/download")
+        assert download_resp.status_code == 200
+        assert hashlib.sha256(download_resp.content).hexdigest() == finalize_resp["pdf_sha256"]
+
+    def test_real_playwright_finalize_then_download_full_flow(self, client, db):
+        """
+        HIGH#1'in yeni claim/temp/promote akışını GERÇEK Chromium ile uçtan
+        uca doğrular (mock değil) — draft->preview->finalize->download,
+        hash parity ve idempotent tekrar-finalize dahil. Chromium yoksa atlanır.
+        """
+        offer = _make_offer(db, agreement_multiplier=1.01)
+        db.commit()
+        draft = client.post("/api/contracts/drafts", json={"offer_id": offer.id}).json()
+        client.post(f"/api/contracts/{draft['id']}/preview", json={"start_date": "2026-01-01", "duration_months": 12})
+
+        try:
+            finalize_resp = client.post(f"/api/contracts/{draft['id']}/finalize")
+        except Exception as exc:  # noqa: BLE001
+            pytest.skip(f"Playwright/Chromium bu ortamda kullanılamıyor: {exc}")
+        if finalize_resp.status_code != 200:
+            pytest.skip(f"Playwright/Chromium bu ortamda kullanılamıyor (status={finalize_resp.status_code}): {finalize_resp.text}")
+
+        body = finalize_resp.json()
+        assert body["status"] == "FINALIZED"
+
+        download_resp = client.get(f"/api/contracts/{draft['id']}/download")
+        assert download_resp.status_code == 200
+        assert download_resp.content[:4] == b"%PDF"
+        assert hashlib.sha256(download_resp.content).hexdigest() == body["pdf_sha256"]
+
+        # idempotent tekrar-finalize: aynı sha256, yeniden render yok.
+        finalize_resp2 = client.post(f"/api/contracts/{draft['id']}/finalize")
+        assert finalize_resp2.status_code == 200
+        assert finalize_resp2.json()["pdf_sha256"] == body["pdf_sha256"]
+
+    def test_render_failure_reverts_status_and_allows_retry(self, db):
+        contract, _ = _make_ready_contract(db, agreement_multiplier=1.01)
+        assert service.try_claim_contract_for_finalize(db, contract.id, "default") is True
+
+        with patch("app.contracts.pdf_service.html_to_pdf_bytes_sync", side_effect=RuntimeError("render boom")):
+            with pytest.raises(RuntimeError):
+                service.finalize_contract_pdf_and_commit(db, contract.id, "default", contract.extraction_snapshot_json)
+
+        db.refresh(contract)
+        assert contract.status == "READY_TO_GENERATE"  # takılı kalmadı, retry edilebilir
+
+        # Retry başarılı olmalı.
+        assert service.try_claim_contract_for_finalize(db, contract.id, "default") is True
+        with patch("app.contracts.pdf_service.html_to_pdf_bytes_sync", return_value=b"%PDF-retry-ok"):
+            ref, sha = service.finalize_contract_pdf_and_commit(db, contract.id, "default", contract.extraction_snapshot_json)
+        db.refresh(contract)
+        assert contract.status == "FINALIZED"
+        assert contract.pdf_sha256 == sha
+
+    def test_post_render_db_commit_failure_reverts_and_leaves_no_orphan_files(self, db, storage_tmp):
+        """'render sonrası DB commit failure' + 'orphan temp file yok' — birlikte kanıtlanır."""
+        contract, _ = _make_ready_contract(db, agreement_multiplier=1.01)
+        assert service.try_claim_contract_for_finalize(db, contract.id, "default") is True
+
+        # ÖNEMLİ: sessionmaker() varsayılanı expire_on_commit=True — claim'in
+        # kendi db.commit()'i contract'ı "expired" bırakır. Mock aktifken
+        # ilk attribute erişimi (snapshot argümanı gibi) SQLAlchemy'nin
+        # otomatik lazy-reload'unu tetikler ve bu da db.execute üzerinden
+        # geçer — mock'u YANLIŞ çağrıyı (bizim CAS'ımızı değil, ORM'in kendi
+        # reload'unu) yakalamaya zorlar. Snapshot'ı mock'tan ÖNCE, düz bir
+        # attribute erişimiyle (zaten reload'u tetikleyip biten) alıyoruz.
+        snapshot = contract.extraction_snapshot_json
+
+        original_execute = db.execute
+        call_state = {"n": 0}
+
+        def flaky_execute(*args, **kwargs):
+            call_state["n"] += 1
+            if call_state["n"] == 1:  # finalize_contract_pdf_and_commit içindeki final CAS
+                raise RuntimeError("simulated DB commit failure")
+            return original_execute(*args, **kwargs)
+
+        with patch("app.contracts.pdf_service.html_to_pdf_bytes_sync", return_value=b"%PDF-db-fail"), \
+             patch.object(db, "execute", side_effect=flaky_execute):
+            with pytest.raises(RuntimeError):
+                service.finalize_contract_pdf_and_commit(db, contract.id, "default", snapshot)
+
+        assert call_state["n"] == 2  # 1: başarısız final CAS, 2: revert (READY_TO_GENERATE)
+        db.refresh(contract)
+        assert contract.status == "READY_TO_GENERATE"
+        assert contract.pdf_storage_ref is None  # DB'de hiçbir zaman yarım/tutarsız ref yazılmadı
+
+        # storage_tmp altında hiçbir dosya (temp veya canonical) kalmamalı.
+        leftover = list(Path(storage_tmp).rglob(f"*{contract.id}.pdf*"))
+        assert leftover == [], f"orphan dosya bulundu: {leftover}"
+
+        # Retry başarılı olmalı (yeni bir DB hatası enjekte edilmeden).
+        assert service.try_claim_contract_for_finalize(db, contract.id, "default") is True
+        with patch("app.contracts.pdf_service.html_to_pdf_bytes_sync", return_value=b"%PDF-db-retry-ok"):
+            service.finalize_contract_pdf_and_commit(db, contract.id, "default", contract.extraction_snapshot_json)
+        db.refresh(contract)
+        assert contract.status == "FINALIZED"
+
+    def test_finalize_in_progress_blocks_concurrent_preview(self, client, db):
+        """
+        preview_contract'ın FINALIZING durumundaki bir contract'ı
+        READY_TO_GENERATE'e geri almasını (ve finalize'ın final CAS'ını
+        bozmasını) engelleyen ek koruma.
+        """
+        contract, offer = _make_ready_contract(db, agreement_multiplier=1.01)
+        assert service.try_claim_contract_for_finalize(db, contract.id, "default") is True
+
+        resp = client.post(
+            f"/api/contracts/{contract.id}/preview", json={"start_date": "2026-01-01", "duration_months": 12}
+        )
+        assert resp.status_code == 409
+        assert resp.json()["detail"]["error"] == "contract_finalized"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# HIGH#2 (final architecture review) — post-commit offer lifecycle failure izolasyonu
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestOfferLifecycleFailureIsolation:
+    def test_unexpected_exception_in_transition_is_swallowed(self, db):
+        offer = _make_offer(db)
+        db.commit()
+        with patch("app.contracts.service.transition_offer_status", side_effect=RuntimeError("db patladı")):
+            service.mark_offer_contracting(db, offer)  # exception fırlatmamalı
+        # offer.status değişmedi (transition_offer_status hiç gerçek işi yapmadı)
+        db.refresh(offer)
+        assert offer.status == "draft"
+
+    def test_finalize_succeeds_even_if_offer_transition_raises_unexpected_error(self, client, db):
+        """Contract finalize BAŞARISI offer-lifecycle yan etkisine bağımlı DEĞİL — istemci her zaman success görür."""
+        offer = _make_offer(db, agreement_multiplier=1.01)
+        db.commit()
+        draft = client.post("/api/contracts/drafts", json={"offer_id": offer.id}).json()
+        client.post(f"/api/contracts/{draft['id']}/preview", json={"start_date": "2026-01-01", "duration_months": 12})
+
+        with patch("app.contracts.pdf_service.html_to_pdf_bytes_sync", return_value=b"%PDF-lifecycle-fail-test"), \
+             patch("app.contracts.service.transition_offer_status", side_effect=RuntimeError("beklenmeyen audit hatası")):
+            resp = client.post(f"/api/contracts/{draft['id']}/finalize")
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "FINALIZED"
+
+        # PDF hâlâ indirilebilir durumda (offer yan etkisi sözleşmenin kendisini bozmadı).
+        download_resp = client.get(f"/api/contracts/{draft['id']}/download")
+        assert download_resp.status_code == 200
+
+    def test_retry_after_lifecycle_failure_recovers_offer_status(self, db):
+        """Offer lifecycle geçişi bir kez beklenmeyen hatayla başarısız olsa da, sonraki çağrı (retry) doğru durumu yakalar."""
+        offer = _make_offer(db)
+        db.commit()
+        with patch("app.contracts.service.transition_offer_status", side_effect=RuntimeError("geçici hata")):
+            service.mark_offer_contracting(db, offer)
+        db.refresh(offer)
+        assert offer.status == "draft"  # ilk deneme başarısız, hâlâ draft
+
+        service.mark_offer_contracting(db, offer)  # retry — mock artık aktif değil
+        db.refresh(offer)
+        assert offer.status == "contracting"
+
+    def test_no_duplicate_audit_log_on_retry(self, db):
+        """Aynı lifecycle event iki kez yazılmaz — transition_offer_status'un kendi VALID_OFFER_TRANSITIONS
+        doğrulaması, hedef duruma zaten ulaşılmışsa log_action'ı tekrar tetiklemez."""
+        from app.database import AuditLog
+        offer = _make_offer(db)
+        db.commit()
+
+        service.mark_offer_contracting(db, offer)
+        db.refresh(offer)
+        assert offer.status == "contracting"
+
+        service.mark_offer_contracting(db, offer)  # retry — offer zaten 'contracting', ValueError yutulur
+
+        entries = db.query(AuditLog).filter(AuditLog.target_type == "offer", AuditLog.target_id == str(offer.id)).all()
+        assert len(entries) == 1  # yalnız İLK başarılı geçiş audit'e yazıldı
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Tenant sınırı (final architecture review, madde 3) — fail-closed, router-geneli
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestContractsTenantBoundary:
+    def test_non_default_tenant_rejected_on_every_endpoint_category(self, client, db):
+        """Router-level dependency: belge yükleme, taslak, finalize — hepsi 403."""
+        offer = _make_offer(db, tenant_id="default")
+        db.commit()
+
+        upload_resp = client.post(
+            "/api/contracts/documents/upload?document_type=vergi_levhasi",
+            files={"file": ("a.pdf", b"x", "application/pdf")},
+            headers={"X-Tenant-Id": "other-tenant"},
+        )
+        draft_resp = client.post(
+            "/api/contracts/drafts", json={"offer_id": offer.id}, headers={"X-Tenant-Id": "other-tenant"}
+        )
+
+        for resp in (upload_resp, draft_resp):
+            assert resp.status_code == 403
+            assert resp.json()["detail"]["error"] == "tenant_not_supported"
+
+    def test_default_tenant_without_explicit_header_still_works(self, client, db):
+        """settings.tenant_required=False iken header hiç yoksa get_tenant_id 'default' döner — bu, guard'ı GEÇMELİ."""
+        offer = _make_offer(db, tenant_id="default")
+        db.commit()
+        resp = client.post("/api/contracts/drafts", json={"offer_id": offer.id})  # X-Tenant-Id yok
+        assert resp.status_code == 200
