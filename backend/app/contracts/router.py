@@ -189,16 +189,27 @@ def resolve_field_candidate(
     _key: Optional[str] = Depends(_require_contracts_key),
     db: Session = Depends(get_db),
 ):
+    """
+    Çağrıldığı yerler:
+    - Desktop UI → Sözleşme Hazırla → çelişki/alan onay ekranı (Faz 8'de eklenecek)
+    """
     candidate = db.query(db_models.DocumentFieldCandidate).filter(
         db_models.DocumentFieldCandidate.id == candidate_id, db_models.DocumentFieldCandidate.tenant_id == tenant_id
     ).first()
     if not candidate:
         raise HTTPException(status_code=404, detail={"error": "candidate_not_found", "message": "Alan adayı bulunamadı"})
 
+    # DocumentFieldCandidate'da document için gerçek bir relationship yok
+    # (yalnız document_id FK var) — source_document response'ta gösterilebilsin
+    # diye belgeyi burada ayrıca sorgularız (get_extraction_result'taki desenle aynı).
+    document = db.query(db_models.UploadedReferenceDocument).filter(
+        db_models.UploadedReferenceDocument.id == candidate.document_id
+    ).first()
+
     updated = service.resolve_candidate(
         db, candidate_id=candidate_id, decision=request.decision, corrected_value=request.corrected_value, decided_by=request.decided_by
     )
-    updated.document = candidate.document
+    updated.document = document
     return _candidate_to_out(updated)
 
 
