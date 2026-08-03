@@ -129,6 +129,11 @@ app.include_router(pricing_router)
 from .recon.router import recon_router
 app.include_router(recon_router)
 
+# Sözleşme Oluşturma (Contract Generation V1) — vergi levhası + imza sirküleri
+# OCR + teklif çarpanı bağlama + PDF üretimi
+from .contracts.router import contracts_router
+app.include_router(contracts_router)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Security - API Key Authentication + Rate Limiting

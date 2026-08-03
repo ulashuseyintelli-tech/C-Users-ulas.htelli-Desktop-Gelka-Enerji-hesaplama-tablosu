@@ -1,0 +1,24 @@
+{% include "_base_style.html" %}
+<h1>MÜŞTERİ BİLGİLENDİRME FORMU</h1>
+
+<p>İşbu Bilgilendirme Formu ile Gelka Enerji Yatırım Sanayi ve Ticaret A.Ş. (“Tedarikçi”) ile akdedilecek Elektrik Enerjisi Satışına İlişkin İkili Anlaşma kapsamında Abone/Müşteri olarak tarafım; sözleşme şartları, fiyatlandırma yöntemi, faturalandırma esasları ve elektrik piyasasından kaynaklanabilecek mali yükümlülükler hakkında açık ve anlaşılır şekilde bilgilendirildiğimi, yapılan bilgilendirmeyi okuduğumu, anladığımı ve kabul ettiğimi beyan ederim.</p>
+
+<h3>1. Fiyatlandırma ve Faturalandırma Hakkında Bilgilendirme</h3>
+<p>Elektrik satış sözleşmesi kapsamında uygulanacak fiyatlandırma yönteminin yalnızca aktif enerji tüketimi (kWh) üzerinden hesaplandığını; aktif enerji bedeli dışında kalan dağıtım bedeli, iletim bedeli, sistem kullanım bedelleri, reaktif enerji bedelleri, sayaç ve benzeri bedeller ile elektrik piyasasından kaynaklanan diğer mali yükümlülüklerin faturaya ayrıca yansıtılacağını bildiğimi ve kabul ettiğimi beyan ederim.</p>
+<p>Elektrik piyasası kapsamında oluşabilecek YEKDEM bedeli, dengesizlik bedeli, kapasite bedeli, piyasa işletim bedeli, fark fonu, iletim ek ücretleri ve benzeri piyasa bedellerinin ilgili mevzuat ve piyasa uygulamaları çerçevesinde faturaya yansıtılabileceği hususunda tarafımın bilgilendirildiğini ve bu bedellere ilişkin itiraz, indirim veya iade talebinde bulunmayacağımı kabul ederim.</p>
+
+<h3>2. Ticari Riskler ve Sözleşmesel Yükümlülükler</h3>
+<p>Ödeme şekli, ödeme süreleri, teminat yükümlülüğü, gecikme faizi, sözleşmenin haklı nedenle feshi, portföyden çıkarma ve sözleşme süresi dolmadan sözleşmeden çıkılması halinde uygulanabilecek cezai şartlar hakkında tarafımın açık şekilde bilgilendirildiğini kabul ederim. Ayrıca sözleşme süresince veya sözleşmenin sona ermesi sonrasında teminat talep edilmesinin piyasa koşulları, geçmiş tüketim verileri veya tahsilat risklerinden kaynaklanabileceği tarafımca bilinmektedir.</p>
+<p>Serbest tüketici olarak tedarikçi değişikliği yapmam halinde önceki tedarikçime karşı doğmuş borç, taahhüt ve yükümlülüklerimi ilgili mevzuat çerçevesinde yerine getirmem gerektiği tarafımca bilinmektedir.</p>
+
+<h3>3. Serbest İrade ve Kabul Beyanı</h3>
+<p>Tarafıma sunulan fiyatlandırma seçenekleri, ticari şartlar ve sözleşmesel riskler hakkında yeterli bilgilendirme yapıldığını; sözleşme hükümlerini değerlendirebilmem için yeterli süre tanındığını; yönelttiğim soruların cevaplandığını ve sözleşmeyi herhangi bir baskı altında kalmaksızın kendi serbest irademle kabul ettiğimi beyan ederim.</p>
+<p>İşbu Bilgilendirme Formu’nda yer alan tüm açıklamaları okuduğumu, anladığımı ve kabul ettiğimi; sonradan eksik bilgilendirildiğim, yanlış yönlendirildiğim veya yeterli süre verilmediği yönünde herhangi bir iddiada bulunmayacağımı kabul ve beyan ederim.</p>
+
+<div style="margin-top:30px">
+  <p><strong>ABONE / MÜŞTERİ</strong></p>
+  <p>Ad – Soyad / Unvan: {{ legal_name or '' }}{% if representative_full_name %} ({{ representative_full_name }}){% endif %}<br>
+  T.C. / VKN: {{ representative_national_id or tax_number or '' }}<br>
+  İmza / Kaşe: ______________________<br>
+  Tarih: ______________________</p>
+</div>
