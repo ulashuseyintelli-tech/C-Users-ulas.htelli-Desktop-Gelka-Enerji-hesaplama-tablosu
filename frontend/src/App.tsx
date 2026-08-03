@@ -215,6 +215,7 @@ function App() {
   // (ekrandaki NİHAİ değerlerle) persist edilir; offerId burada tutulur ve
   // Sözleşme Hazırla bu id'yi kullanır (kendisi offer OLUŞTURMAZ).
   const [persistedOfferId, setPersistedOfferId] = useState<number | null>(null);
+  const [persistedCustomerId, setPersistedCustomerId] = useState<number | undefined>(undefined);
   const [offerPersisting, setOfferPersisting] = useState(false);
   const [contractWizardOpen, setContractWizardOpen] = useState(false);
   
@@ -781,6 +782,7 @@ function App() {
     setLoading(true);
     setError(null);
     setPersistedOfferId(null);  // yeni analiz → önceki offer artık bu ekranla ilgisiz
+    setPersistedCustomerId(undefined);
     setContractWizardOpen(false);
 
     try {
@@ -839,6 +841,7 @@ function App() {
     setResult(null);
     setError(null);
     setPersistedOfferId(null);
+    setPersistedCustomerId(undefined);
     setContractWizardOpen(false);
     setManualMode(false);
     setConsumptionInput('');
@@ -990,6 +993,7 @@ function App() {
           customerIdForOffer
         );
         setPersistedOfferId(persisted.id);
+        setPersistedCustomerId(customerIdForOffer);
       } finally {
         setOfferPersisting(false);
       }
@@ -3169,6 +3173,7 @@ function App() {
           open={contractWizardOpen}
           onClose={() => setContractWizardOpen(false)}
           offerId={persistedOfferId}
+          customerId={persistedCustomerId}
         />
       )}
     </div>
