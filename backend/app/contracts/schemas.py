@@ -115,6 +115,16 @@ class ConflictResolutionRequest(BaseModel):
     decided_by: Optional[str] = None
 
 
+class ConflictDetectionRequest(BaseModel):
+    """Verilen belge id'leri arasında çelişki tespiti tetikler (aynı sözleşme
+    hazırlama oturumunda yüklenen vergi levhası + imza sirküleri gibi)."""
+    document_ids: list[int]
+
+
+class ConflictDetectionResponse(BaseModel):
+    changed_candidates: list[FieldCandidateOut]
+
+
 class LegalProfileSaveRequest(BaseModel):
     customer_id: Optional[int] = None
     legal_name: str

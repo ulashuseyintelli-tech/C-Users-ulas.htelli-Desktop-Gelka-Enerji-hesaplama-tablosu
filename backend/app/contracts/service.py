@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from .. import database as db_models
 from ..services.storage import get_storage
+from ..services.offer_lifecycle import transition_offer_status
 from .schemas import (
     TaxCertificateExtraction,
     SignatureCircularExtraction,
@@ -354,6 +355,18 @@ def build_contract_snapshot(
     tariff_resolution = resolve_tariff_group(offer) if offer else TariffGroupResolution(
         value=None, source_path="offer_missing", resolution_status="not_found"
     )
+    # Otomatik çözümleme başarısızsa (not_found) ve kullanıcı Ek Protokol
+    # tamamlama ekranında elle bir tarife grubu girdiyse onu kullan. Template
+    # (additional_protocol_v1.html) resolution_status == "not_found" iken zaten
+    # "elle girilmiştir" notu gösteriyor — bu yalnız o notu değerle eşler,
+    # resolution_status'u "resolved"e ÇEVİRMEZ (gerçekten otomatik çözülmedi).
+    manual_tariff_group = complete_fields.get("tariff_group")
+    if tariff_resolution.resolution_status == "not_found" and manual_tariff_group:
+        tariff_resolution = TariffGroupResolution(
+            value=manual_tariff_group,
+            source_path="complete_fields.tariff_group (elle girildi)",
+            resolution_status="not_found",
+        )
 
     return {
         "legal_name": legal_profile.legal_name if legal_profile else None,
@@ -381,3 +394,36 @@ def build_contract_snapshot(
         "agreement_multiplier": offer.agreement_multiplier if offer else None,
         "template_version": "v1",
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Offer lifecycle bağlama (owner kararı: Offer artık kalıcı domain nesnesi,
+# mevcut draft/sent/viewed/accepted/contracting/completed durum makinesi
+# yeniden kullanılır — bkz. app/services/offer_lifecycle.py)
+#
+# Best-effort: geçiş kuralına uymayan durumlarda (ör. offer zaten
+# "completed" iken aynı offer'dan İKİNCİ bir sözleşme taslağı açılması —
+# owner'ın "aynı tekliften farklı sözleşme üretilebilir" isteğiyle kasıtlı
+# olarak mümkün) sözleşme akışını ENGELLEMEZ, yalnız durum güncellemesini
+# atlar. Offer.status burada bir iş kuralı kapısı değil, izlenebilirlik
+# sinyalidir — gerçek kapı Contract.status'tur (zaten var/test edilmiş).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def mark_offer_contracting(db: Session, offer: Optional[db_models.Offer]) -> None:
+    """Sözleşme taslağı oluşturulduğunda Offer'ı 'contracting' durumuna taşımayı DENER."""
+    if offer is None:
+        return
+    try:
+        transition_offer_status(db, offer, "contracting", notes="Sözleşme hazırlama başlatıldı", actor_type="system")
+    except ValueError as exc:
+        logger.info(f"Offer {offer.id} 'contracting' durumuna taşınamadı (yok sayıldı): {exc}")
+
+
+def mark_offer_completed(db: Session, offer: Optional[db_models.Offer]) -> None:
+    """Sözleşme finalize edildiğinde Offer'ı 'completed' durumuna taşımayı DENER."""
+    if offer is None:
+        return
+    try:
+        transition_offer_status(db, offer, "completed", notes="Sözleşme finalize edildi", actor_type="system")
+    except ValueError as exc:
+        logger.info(f"Offer {offer.id} 'completed' durumuna taşınamadı (yok sayıldı): {exc}")

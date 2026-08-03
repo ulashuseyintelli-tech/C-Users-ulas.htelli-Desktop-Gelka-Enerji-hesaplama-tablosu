@@ -8,10 +8,12 @@ header-key kontrolü. Tenant izolasyonu: app/services/tenant.get_tenant_id
 (fail-closed — settings.tenant_required=True ise header zorunlu).
 """
 import logging
+import os
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
 
 from .. import database as db_models
@@ -20,6 +22,8 @@ from ..services.tenant import get_tenant_id
 from ..core.config import settings
 from . import service
 from .schemas import (
+    ConflictDetectionRequest,
+    ConflictDetectionResponse,
     ConflictResolutionRequest,
     ContractCompleteFieldsRequest,
     ContractDraftCreateRequest,
@@ -213,6 +217,47 @@ def resolve_field_candidate(
     return _candidate_to_out(updated)
 
 
+@contracts_router.post("/documents/detect-conflicts", response_model=ConflictDetectionResponse)
+def detect_conflicts(
+    request: ConflictDetectionRequest,
+    tenant_id: str = Depends(get_tenant_id),
+    _key: Optional[str] = Depends(_require_contracts_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Verilen belgeler arasında (aynı field_name, farklı normalized_value)
+    çelişki tespiti tetikler. service.detect_conflicts_for_customer_documents
+    Faz 4'te yazılmış ama hiçbir endpoint'ten çağrılmıyordu — bu endpoint onu
+    UI'a açar (belge review ekranı bu olmadan hiç çelişki göremezdi).
+
+    Çağrıldığı yerler:
+    - Desktop UI → Sözleşme Hazırla → her iki belge de extract edildikten
+      sonra otomatik (Faz 8'de eklenecek)
+    """
+    documents = (
+        db.query(db_models.UploadedReferenceDocument)
+        .filter(
+            db_models.UploadedReferenceDocument.id.in_(request.document_ids),
+            db_models.UploadedReferenceDocument.tenant_id == tenant_id,
+        )
+        .all()
+    )
+    found_ids = {d.id for d in documents}
+    missing = set(request.document_ids) - found_ids
+    if missing:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "document_not_found", "message": f"Belge(ler) bulunamadı: {sorted(missing)}"},
+        )
+
+    changed = service.detect_conflicts_for_customer_documents(db, request.document_ids)
+    documents_by_id = {d.id: d for d in documents}
+    for c in changed:
+        c.document = documents_by_id.get(c.document_id)
+
+    return ConflictDetectionResponse(changed_candidates=[_candidate_to_out(c) for c in changed])
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Tüzel kişilik / yetkili kaydı
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -307,6 +352,9 @@ def create_contract_draft(
     db.add(contract)
     db.commit()
     db.refresh(contract)
+
+    service.mark_offer_contracting(db, offer)
+
     return ContractOut(
         id=contract.id, customer_id=contract.customer_id, offer_id=contract.offer_id, contract_number=contract.contract_number,
         status=contract.status, start_date=None, end_date=None, created_at=contract.created_at.isoformat(),
@@ -382,6 +430,9 @@ def finalize_contract(
     contract.template_version = "v1"
     db.commit()
 
+    offer = db.query(db_models.Offer).filter(db_models.Offer.id == contract.offer_id).first()
+    service.mark_offer_completed(db, offer)
+
     return ContractFinalizeResponse(
         contract_id=contract.id, status=contract.status, pdf_storage_ref=pdf_ref, pdf_sha256=pdf_sha256,
         contract_number=contract.contract_number,
@@ -403,3 +454,65 @@ def get_contract(
         status=contract.status, start_date=contract.start_date.isoformat() if contract.start_date else None,
         end_date=contract.end_date.isoformat() if contract.end_date else None, created_at=contract.created_at.isoformat(),
     )
+
+
+@contracts_router.get("/{contract_id}/download")
+def download_contract_pdf(
+    contract_id: int,
+    expires: int = Query(default=300, ge=60, le=3600, description="Presigned URL geçerlilik süresi (saniye)"),
+    tenant_id: str = Depends(get_tenant_id),
+    _key: Optional[str] = Depends(_require_contracts_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Finalize edilmiş sözleşme PDF'ini indir (download_offer_pdf, main.py ile
+    aynı desen: S3 → presigned URL, local → dosya stream).
+
+    Çağrıldığı yerler:
+    - Desktop UI → Sözleşme Hazırla → finalize sonrası indirme adımı (Faz 8'de eklenecek)
+    """
+    contract = db.query(db_models.Contract).filter(
+        db_models.Contract.id == contract_id, db_models.Contract.tenant_id == tenant_id
+    ).first()
+    if not contract:
+        raise HTTPException(status_code=404, detail={"error": "contract_not_found", "message": "Sözleşme bulunamadı"})
+    if not contract.pdf_storage_ref:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "pdf_not_generated", "message": "PDF henüz oluşturulmamış. Önce finalize edin."},
+        )
+
+    ref = contract.pdf_storage_ref
+    filename = f"sozlesme_{contract.id}.pdf"
+    content_type = "application/pdf"
+
+    from ..services.storage import get_storage
+    from ..services.storage_local import LocalStorage
+    storage = get_storage()
+
+    presigned_url = storage.get_presigned_url(ref, expires_in=expires)
+    if presigned_url:
+        return JSONResponse({
+            "type": "presigned_url",
+            "url": presigned_url,
+            "expires_seconds": expires,
+            "filename": filename,
+            "content_type": content_type,
+        })
+
+    if isinstance(storage, LocalStorage):
+        try:
+            local_path = storage.resolve_local_path(ref)
+        except ValueError as e:
+            logger.error(f"Path traversal attempt on contract {contract_id}: {ref}")
+            raise HTTPException(status_code=400, detail={"error": "invalid_ref", "message": str(e)})
+
+        if not os.path.exists(local_path):
+            raise HTTPException(status_code=404, detail={"error": "file_missing", "message": "Sözleşme PDF dosyası bulunamadı"})
+
+        return FileResponse(path=local_path, filename=filename, media_type=content_type)
+
+    if os.path.exists(ref):
+        return FileResponse(path=ref, filename=filename, media_type=content_type)
+
+    raise HTTPException(status_code=404, detail={"error": "file_missing", "message": "Sözleşme PDF dosyası bulunamadı"})

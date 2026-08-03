@@ -451,6 +451,33 @@ class TestConflictDetection:
         changed = service.detect_conflicts_for_customer_documents(db, [doc1.id])
         assert changed == []
 
+    def test_detect_conflicts_endpoint_flags_real_scenario(self, client, db):
+        """
+        Regresyon: service.detect_conflicts_for_customer_documents Faz 4'te
+        yazılmış ama hiçbir endpoint'ten çağrılmıyordu — review ekranı hiçbir
+        zaman gerçek bir çelişki göremezdi. Bu test /documents/detect-conflicts
+        endpoint'ini gerçek Mudurnu/Kahramankazan senaryosuyla doğrular.
+        """
+        doc1 = _make_document(db, "vergi_levhasi")
+        doc2 = _make_document(db, "imza_sirkusu")
+        run1, run2 = _make_run(db, doc1), _make_run(db, doc2)
+        _make_candidate(db, run1, doc1, "tax_office", "Mudurnu Vergi Dairesi")
+        _make_candidate(db, run2, doc2, "tax_office", "Kahramankazan Vergi Dairesi")
+        db.commit()
+
+        resp = client.post("/api/contracts/documents/detect-conflicts", json={"document_ids": [doc1.id, doc2.id]})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body["changed_candidates"]) == 2
+        assert all(c["conflict_status"] == "conflict" for c in body["changed_candidates"])
+
+    def test_detect_conflicts_endpoint_missing_document_returns_404(self, client, db):
+        doc1 = _make_document(db, "vergi_levhasi")
+        db.commit()
+        resp = client.post("/api/contracts/documents/detect-conflicts", json={"document_ids": [doc1.id, 9999]})
+        assert resp.status_code == 404
+        assert resp.json()["detail"]["error"] == "document_not_found"
+
     def test_has_unresolved_conflicts_reflects_detection_state(self, db):
         doc1 = _make_document(db, "vergi_levhasi")
         doc2 = _make_document(db, "imza_sirkusu")
@@ -640,8 +667,81 @@ class TestContractSnapshot:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Offer yaşam döngüsü — owner kararı: draft/sent/viewed/accepted/contracting/
+# completed mevcut durum makinesi yeniden kullanılıyor (bkz. offer_lifecycle.py)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestOfferLifecycle:
+    def test_transition_offer_status_valid(self, db):
+        from app.contracts.service import mark_offer_contracting
+        offer = _make_offer(db)
+        db.commit()
+        mark_offer_contracting(db, offer)
+        assert offer.status == "contracting"
+
+    def test_transition_offer_status_writes_audit_log(self, db):
+        from app.database import AuditLog
+        from app.contracts.service import mark_offer_contracting
+        offer = _make_offer(db)
+        db.commit()
+        mark_offer_contracting(db, offer)
+
+        entry = db.query(AuditLog).filter(AuditLog.target_type == "offer", AuditLog.target_id == str(offer.id)).first()
+        assert entry is not None
+        assert entry.details_json["new_status"] == "contracting"
+
+    def test_mark_offer_contracting_none_offer_is_noop(self, db):
+        from app.contracts.service import mark_offer_contracting
+        mark_offer_contracting(db, None)  # patlamamalı
+
+    def test_mark_offer_completed_on_terminal_state_is_silently_ignored(self, db):
+        from app.contracts.service import mark_offer_completed
+        offer = _make_offer(db)
+        offer.status = "rejected"  # terminal, "completed"e geçiş yok
+        db.commit()
+
+        mark_offer_completed(db, offer)  # ValueError yutulmalı, patlamamalı
+        assert offer.status == "rejected"  # değişmedi
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Sözleşme yaşam döngüsü — API uçtan uca (draft → preview → finalize)
 # ═══════════════════════════════════════════════════════════════════════════
+
+class TestManualTariffGroupFallback:
+    def test_manual_tariff_group_used_when_resolution_not_found(self, db):
+        """
+        Regresyon: complete_fields.tariff_group (kullanıcının Ek Protokol
+        tamamlama ekranında elle girdiği tarife grubu) build_contract_snapshot
+        tarafından hiç okunmuyordu — resolve_tariff_group her zaman kazanıyor,
+        elle girilen değer sessizce atılıyordu (şablonun 'elle girilmiştir'
+        notuyla çelişen boş [BELİRTİLMEDİ] sonucu doğuruyordu).
+        """
+        from app.database import Contract
+        customer = _make_customer(db)
+        offer = _make_offer(db, customer_id=customer.id, extraction_result=None)  # → not_found
+        db.commit()
+        contract = Contract(tenant_id="default", customer_id=customer.id, offer_id=offer.id, status="DRAFT")
+        db.add(contract)
+        db.flush()
+
+        snapshot = service.build_contract_snapshot(db, contract, complete_fields={"tariff_group": "AG-TT (elle)"})
+        assert snapshot["tariff_group"]["value"] == "AG-TT (elle)"
+        assert snapshot["tariff_group"]["resolution_status"] == "not_found"  # gerçekten otomatik çözülmedi
+
+    def test_auto_resolution_wins_over_manual_when_available(self, db):
+        from app.database import Contract
+        customer = _make_customer(db)
+        offer = _make_offer(db, customer_id=customer.id, extraction_result={"meta": {"tariff_group_guess": "OG-TT"}})
+        db.commit()
+        contract = Contract(tenant_id="default", customer_id=customer.id, offer_id=offer.id, status="DRAFT")
+        db.add(contract)
+        db.flush()
+
+        snapshot = service.build_contract_snapshot(db, contract, complete_fields={"tariff_group": "elle-girilen-farkli-deger"})
+        assert snapshot["tariff_group"]["value"] == "OG-TT"  # otomatik çözüm elle girileni ezer
+        assert snapshot["tariff_group"]["resolution_status"] == "resolved"
+
 
 class TestContractLifecycleAPI:
     def test_create_draft_requires_existing_offer(self, client):
@@ -732,6 +832,74 @@ class TestContractLifecycleAPI:
         )
         assert resp3.status_code == 409
         assert resp3.json()["detail"]["error"] == "contract_finalized"
+
+    def test_create_draft_transitions_offer_to_contracting(self, client, db):
+        offer = _make_offer(db)
+        db.commit()
+        assert offer.status == "draft"
+
+        client.post("/api/contracts/drafts", json={"offer_id": offer.id})
+
+        db.refresh(offer)
+        assert offer.status == "contracting"
+
+    def test_finalize_transitions_offer_to_completed(self, client, db):
+        from app.database import Offer
+        offer = _make_offer(db, agreement_multiplier=1.01)
+        db.commit()
+        draft = client.post("/api/contracts/drafts", json={"offer_id": offer.id}).json()
+        client.post(f"/api/contracts/{draft['id']}/preview", json={"start_date": "2026-01-01", "duration_months": 12})
+
+        with patch("app.contracts.pdf_service.html_to_pdf_bytes_sync", return_value=b"%PDF-fake"):
+            client.post(f"/api/contracts/{draft['id']}/finalize")
+
+        db.refresh(offer)
+        assert offer.status == "completed"
+
+    def test_second_draft_on_completed_offer_does_not_block_or_crash(self, client, db):
+        """
+        owner kararı: aynı tekliften farklı sözleşme üretilebilir. Offer zaten
+        'completed' iken (terminal state) ikinci bir draft açmak, offer status
+        geçişi başarısız olsa bile (best-effort) sözleşme akışını engellememeli.
+        """
+        offer = _make_offer(db, agreement_multiplier=1.01)
+        db.commit()
+        draft1 = client.post("/api/contracts/drafts", json={"offer_id": offer.id}).json()
+        client.post(f"/api/contracts/{draft1['id']}/preview", json={"start_date": "2026-01-01", "duration_months": 12})
+        with patch("app.contracts.pdf_service.html_to_pdf_bytes_sync", return_value=b"%PDF-fake"):
+            client.post(f"/api/contracts/{draft1['id']}/finalize")
+        db.refresh(offer)
+        assert offer.status == "completed"
+
+        resp2 = client.post("/api/contracts/drafts", json={"offer_id": offer.id})
+        assert resp2.status_code == 200  # engellenmedi
+
+        db.refresh(offer)
+        assert offer.status == "completed"  # terminal state'ten çıkarılmadı, sessizce yok sayıldı
+
+    def test_download_before_finalize_returns_404(self, client, db):
+        offer = _make_offer(db)
+        db.commit()
+        draft = client.post("/api/contracts/drafts", json={"offer_id": offer.id}).json()
+
+        resp = client.get(f"/api/contracts/{draft['id']}/download")
+        assert resp.status_code == 404
+        assert resp.json()["detail"]["error"] == "pdf_not_generated"
+
+    def test_download_after_finalize_streams_pdf_bytes(self, client, db):
+        offer = _make_offer(db, agreement_multiplier=1.01)
+        db.commit()
+        draft = client.post("/api/contracts/drafts", json={"offer_id": offer.id}).json()
+        client.post(f"/api/contracts/{draft['id']}/preview", json={"start_date": "2026-01-01", "duration_months": 12})
+
+        fixed_bytes = b"%PDF-fake-contract-bytes"
+        with patch("app.contracts.pdf_service.html_to_pdf_bytes_sync", return_value=fixed_bytes):
+            client.post(f"/api/contracts/{draft['id']}/finalize")
+
+        resp = client.get(f"/api/contracts/{draft['id']}/download")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "application/pdf"
+        assert resp.content == fixed_bytes
 
     def test_tenant_isolation_on_get_contract(self, client, db):
         offer = _make_offer(db, tenant_id="tenant-a")
