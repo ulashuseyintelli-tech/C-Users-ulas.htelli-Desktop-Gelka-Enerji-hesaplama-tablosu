@@ -525,10 +525,212 @@ class Incident(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# SÖZLEŞME OLUŞTURMA TABLOLARI (Contract Generation V1)
+#
+# Vergi levhası + imza sirküleri OCR çıkarımından abone tüzel kişilik/yetkili
+# bilgisi + mevcut Offer'ın agreement_multiplier'ı birleştirilerek elektrik
+# satış sözleşmesi PDF'i üretilir. Çağrıldığı yerler: bkz. app/contracts/router.py
+# (Faz 4'te eklenecek). T.C. kimlik no bilinçli olarak düz metin saklanır (V1
+# kararı — encryption-at-rest gerekmiyor) ama log/hata mesajı/ilgisiz list
+# endpoint'lerine hiçbir zaman yazılmaz (bkz. app/contracts/schemas.py response
+# modelleri, alan bazında hariç tutma).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class CustomerLegalProfile(Base):
+    """
+    Müşterinin tüzel kişilik/vergi bilgileri — vergi levhası + imza sirkülerinden
+    OCR ile çıkarılıp kullanıcı onayından geçtikten sonra burada saklanır.
+    Customer'ın kendisine değil ayrı tabloya konur: offer/invoice akışlarının
+    çoğu bu alanlara hiç ihtiyaç duymaz, Customer'ı şişirmemek için ayrıldı.
+    """
+    __tablename__ = "customer_legal_profiles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(String(64), nullable=False, default="default", index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+
+    legal_name = Column(String(255), nullable=False)
+    tax_number = Column(String(20), nullable=False)
+    tax_office = Column(String(255), nullable=False)
+    mersis_number = Column(String(32), nullable=True)
+    trade_registry_number = Column(String(64), nullable=True)
+    registered_address = Column(Text, nullable=False)
+    facility_address = Column(Text, nullable=True)
+    notification_address = Column(Text, nullable=True)
+
+    verification_status = Column(String(20), nullable=False, default="pending", index=True)  # pending|confirmed
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    customer = relationship("Customer")
+    representatives = relationship("CustomerAuthorizedRepresentative", back_populates="legal_profile")
+
+
+class CustomerAuthorizedRepresentative(Base):
+    """
+    Bir tüzel kişiliğin birden fazla yetkilisi, müşterek/münferit temsil biçimi
+    ve süreli/süresiz yetkisi olabileceği için ayrı tabloda (imza sirkülerinden).
+    T.C. kimlik no burada DÜZ METİN saklanır (V1 owner kararı) — yalnız
+    contract-hazırlama/review/preview/final PDF akışlarında gösterilir, genel
+    listeleme/log/hata mesajlarına asla yazılmaz (uygulama katmanında garanti
+    edilir, bkz. app/contracts/schemas.py).
+    """
+    __tablename__ = "customer_authorized_representatives"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(String(64), nullable=False, default="default", index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    legal_profile_id = Column(Integer, ForeignKey("customer_legal_profiles.id"), nullable=True, index=True)
+
+    full_name = Column(String(255), nullable=False)
+    national_id = Column(String(11), nullable=False)  # T.C. kimlik no, düz metin (V1 kararı)
+
+    authority_type = Column(String(50), nullable=True)  # Münferiden / Müştereken
+    authority_scope = Column(String(255), nullable=True)  # Temsil şekli metni
+    authority_start_date = Column(DateTime, nullable=True)
+    authority_end_date = Column(DateTime, nullable=True)
+    is_indefinite = Column(Boolean, nullable=False, default=False)  # "Aksi Karar Alınıncaya Kadar"
+
+    source_document_id = Column(Integer, ForeignKey("uploaded_reference_documents.id"), nullable=True)
+    verification_status = Column(String(20), nullable=False, default="pending", index=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    legal_profile = relationship("CustomerLegalProfile", back_populates="representatives")
+
+
+class UploadedReferenceDocument(Base):
+    """
+    Vergi levhası / imza sirküleri gibi sözleşme-öncesi referans belge yüklemeleri.
+    Invoice tablosundaki file_hash dedup deseni tekrarlanır ama belge tipinden
+    bağımsız, tek tabloda (document_type ile ayrışır).
+    """
+    __tablename__ = "uploaded_reference_documents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(String(64), nullable=False, default="default", index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+
+    document_type = Column(String(30), nullable=False, index=True)  # vergi_levhasi | imza_sirkusu
+    original_filename = Column(String(500), nullable=False)
+    mime_type = Column(String(100), nullable=False)
+    file_size = Column(Integer, nullable=False)
+    sha256 = Column(String(64), nullable=False, index=True)
+    storage_ref = Column(String(500), nullable=False)
+    document_date = Column(DateTime, nullable=True)  # belgenin kendi tarihi (imza sirküsü tarihi vb.)
+
+    processing_status = Column(String(20), nullable=False, default="uploaded", index=True)
+    # uploaded | extracting | extracted | failed
+
+    uploaded_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "customer_id", "sha256", name="uq_reference_doc_dedup"),
+    )
+
+
+class DocumentExtractionRun(Base):
+    """
+    Ham model çağrısının kaydı — normalize edilmiş field_candidates tablosundan
+    ayrı tutulur ki tek bir extraction denemesi (model/prompt versiyonu, hata
+    durumu) audit edilebilsin ve tekrar çalıştırma geçmişi korunsun.
+    """
+    __tablename__ = "document_extraction_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(String(64), nullable=False, default="default", index=True)
+    document_id = Column(Integer, ForeignKey("uploaded_reference_documents.id"), nullable=False, index=True)
+
+    extractor_type = Column(String(50), nullable=False)  # tax_certificate | signature_circular
+    extractor_version = Column(String(20), nullable=False)
+    model_name = Column(String(50), nullable=False)
+    prompt_version = Column(String(20), nullable=False)
+
+    status = Column(String(20), nullable=False, default="running", index=True)  # running|completed|failed
+    started_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+    raw_response_ref = Column(String(500), nullable=True)  # storage_ref, DB'ye ham JSON gömülmez
+    error_code = Column(String(100), nullable=True)
+
+
+class DocumentFieldCandidate(Base):
+    """
+    Extraction run'ın ürettiği HER alan adayı — value/confidence/source/evidence
+    ile birlikte. Belgeler arası çelişki tespiti bu tablo üzerinden (aynı
+    field_name, farklı document_id, farklı normalized_value) yapılır.
+    """
+    __tablename__ = "document_field_candidates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(String(64), nullable=False, default="default", index=True)
+    extraction_run_id = Column(Integer, ForeignKey("document_extraction_runs.id"), nullable=False, index=True)
+    document_id = Column(Integer, ForeignKey("uploaded_reference_documents.id"), nullable=False, index=True)
+
+    field_name = Column(String(100), nullable=False, index=True)  # örn. legal_name, tax_office
+    raw_value = Column(Text, nullable=True)
+    normalized_value = Column(Text, nullable=True)
+    confidence = Column(Float, nullable=False, default=0.0)
+    source_page = Column(Integer, nullable=False, default=1)
+    source_text = Column(Text, nullable=True)  # evidence
+
+    validation_status = Column(String(20), nullable=False, default="pending", index=True)
+    # pending | confirmed | overridden | rejected
+    conflict_status = Column(String(20), nullable=False, default="none", index=True)
+    # none | conflict | resolved
+
+    user_decision = Column(String(20), nullable=True)  # accepted | corrected | rejected
+    corrected_value = Column(Text, nullable=True)
+    decided_by = Column(String(100), nullable=True)
+    decided_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Contract(Base):
+    """
+    Üretilen sözleşme kaydı. FINALIZED sonrası contract_snapshot_json donar,
+    Customer/Offer/CustomerLegalProfile sonradan değişse bile bu kayıt PDF'te
+    ne yazdığını birebir yansıtmaya devam eder (immutable snapshot).
+    """
+    __tablename__ = "contracts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(String(64), nullable=False, default="default", index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    offer_id = Column(Integer, ForeignKey("offers.id"), nullable=False, index=True)
+    legal_profile_id = Column(Integer, ForeignKey("customer_legal_profiles.id"), nullable=True)
+    authorized_representative_id = Column(Integer, ForeignKey("customer_authorized_representatives.id"), nullable=True)
+
+    contract_number = Column(String(50), nullable=True, unique=True, index=True)
+    status = Column(String(30), nullable=False, default="DRAFT", index=True)
+    # DRAFT|DOCUMENTS_UPLOADED|EXTRACTION_COMPLETED|REVIEW_REQUIRED|READY_TO_GENERATE|GENERATED|FINALIZED|VOID
+
+    start_date = Column(DateTime, nullable=True)
+    end_date = Column(DateTime, nullable=True)
+    template_version = Column(String(20), nullable=True)
+
+    extraction_snapshot_json = Column(JSON, nullable=True)  # review ekranındaki tüm aday+karar durumu
+    contract_snapshot_json = Column(JSON, nullable=True)  # FINALIZED anında donan tüm alanlar
+
+    pdf_storage_ref = Column(String(500), nullable=True)
+    pdf_sha256 = Column(String(64), nullable=True)
+
+    created_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    finalized_at = Column(DateTime, nullable=True)
+
+    offer = relationship("Offer")
+    customer = relationship("Customer")
+
+
 def init_db():
     """
     Veritabanı tablolarını oluştur.
-    
+
     NOT: Production'da Alembic migration kullanılmalı.
     Bu fonksiyon sadece dev/test için.
     """
