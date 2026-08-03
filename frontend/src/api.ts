@@ -178,6 +178,63 @@ export async function fullProcess(
   return response.data;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Offer persist — owner kararı: Offer artık kalıcı domain nesnesi.
+// Canonical akış: Hesapla → (kullanıcı sonucu ayarlar) → PDF İndir anında
+// persist edilir (o an ekrandaki NİHAİ değerlerle) → offer_id → Sözleşme
+// Hazırla bu id'yi kullanır. "Sözleşme Hazırla" KENDİSİ offer oluşturmaz.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Backend CalculationResult'ın (models.py) zorunlu (default'suz) alanları
+// CalculateResponse'ta (TS, yalnız optional) yok — bu tip bunları da zorunlu
+// kılar ki persist sırasında eksik gönderilmesin.
+export interface OfferCalculationPayload extends CalculateResponse {
+  current_demand_tl: number;
+  offer_ptf_tl: number;
+  offer_yekdem_tl: number;
+  offer_demand_tl: number;
+  unit_price_savings_ratio: number;
+}
+
+export interface CreateOfferResponse {
+  id: number;
+  savings_amount: number;
+  savings_ratio: number;
+  status: string;
+  created_at: string;
+}
+
+// Offer.customer_id doldurmak için — bkz. contracts modülünün document/conflict
+// scoping'i customer_id'ye dayanıyor (customer_id boşsa TÜM null-customer_id
+// belgeleri aynı "müşteri" sayılır, ilgisiz sözleşmeler arasında yanlış
+// çelişki tespitine yol açar). Dedup YOK (her offer kendi anlık kaydı,
+// mevcut "her PDF indirme yeni offer" felsefesiyle tutarlı).
+export async function createCustomer(name: string): Promise<{ id: number }> {
+  const response = await api.post('/customers', null, { params: { name } });
+  return response.data;
+}
+
+export async function createOffer(
+  extraction: FullProcessResponse['extraction'] & Record<string, any>,
+  calculation: OfferCalculationPayload,
+  params: {
+    weighted_ptf_tl_per_mwh?: number;
+    yekdem_tl_per_mwh?: number;
+    agreement_multiplier: number;
+    use_reference_prices?: boolean;
+    vat_rate?: number;
+    btv_rate?: number;
+  },
+  customerId?: number
+): Promise<CreateOfferResponse> {
+  const response = await api.post(
+    '/offers',
+    { extraction, calculation, params },
+    { params: customerId ? { customer_id: customerId } : undefined }
+  );
+  return response.data;
+}
+
 export async function healthCheck(): Promise<{ status: string }> {
   const response = await api.get('/health');
   return response.data;
@@ -198,8 +255,19 @@ declare global {
         retry_after?: number;
         statusCode?: number;
       }>;
+      downloadFile: (url: string, fileName: string) => Promise<{
+        ok: boolean;
+        filePath?: string;
+        canceled?: boolean;
+        error?: string;
+        statusCode?: number;
+      }>;
     };
   }
+}
+
+export function isRunningInElectron(): boolean {
+  return !!window.electronAPI?.isElectron;
 }
 
 const isElectron = !!window.electronAPI?.isElectron;
