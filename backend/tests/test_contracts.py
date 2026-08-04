@@ -75,6 +75,24 @@ def client(db, storage_tmp):
     fastapi_app.dependency_overrides.clear()
 
 
+def _make_minimal_pdf_bytes(num_pages: int = 1) -> bytes:
+    """Gerçek, geçerli (pypdfium2 ile açılabilir) minimal PDF bytes üretir.
+
+    b"fake" gibi sahte içerik ARTIK yeterli değil — render_pdf_pages_from_bytes
+    dosyayı gerçekten açmaya çalışıyor (PDF extraction akışı Task #52 ile
+    değişti). Testler gerçek belge bekliyormuş gibi minimal bir PDF kullanmalı.
+    """
+    from reportlab.pdfgen import canvas
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    for i in range(num_pages):
+        c.drawString(100, 750, f"Test sayfa {i + 1}")
+        c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
 def _make_customer(db, name="Algan Orman Ürünleri San. ve Tic. Ltd. Şti."):
     from app.database import Customer
     c = Customer(name=name)
@@ -161,6 +179,14 @@ def _make_candidate(db, run, document, field_name, value, tenant_id="default"):
 def _fake_png_bytes() -> bytes:
     buf = io.BytesIO()
     Image.new("RGB", (10, 10), color=(200, 0, 0)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _unique_png_bytes(seed: int) -> bytes:
+    """_fake_png_bytes() her zaman AYNI byte'ları üretir — sha256-dedup'a
+    takılmadan birden çok farklı dosya yüklemek gereken testler için."""
+    buf = io.BytesIO()
+    Image.new("RGB", (10, 10), color=(seed % 256, 0, 0)).save(buf, format="PNG")
     return buf.getvalue()
 
 
@@ -299,6 +325,150 @@ class TestDocumentUploadAPI:
         assert resp.status_code == 422
         assert resp.json()["detail"]["error"] == "unsupported_file_type"
 
+    # ── Dedup classification (LOCAL UAT FINAL REMEDIATION — HIGH bulgu) ──
+    #
+    # Kök neden: dedup (tenant_id, customer_id, sha256) üzerinden çalışıyordu,
+    # document_type dahil DEĞİLDİ. Kullanıcı bir dosyayı yanlış türle
+    # yükleyip SONRA doğru türle tekrar yüklediğinde, sistem mevcut (yanlış
+    # türdeki) kaydı sessizce döndürüyordu — DB'ye elle müdahale olmadan
+    # düzelemiyordu. Migration dc8343278cfa + service.py güncellemesiyle
+    # document_type artık dedup key'inin parçası.
+
+    def test_upload_same_hash_different_document_type_creates_separate_record(self, client, db):
+        """Aynı dosya + FARKLI belge türü → dedup'a takılmaz, AYRI kayıt oluşur."""
+        payload = b"same-bytes-different-document-type"
+        r1 = client.post(
+            "/api/contracts/documents/upload?document_type=vergi_levhasi",
+            files={"file": ("a.pdf", payload, "application/pdf")},
+        ).json()
+        r2 = client.post(
+            "/api/contracts/documents/upload?document_type=imza_sirkusu",
+            files={"file": ("a.pdf", payload, "application/pdf")},
+        ).json()
+
+        assert r1["is_duplicate"] is False
+        assert r2["is_duplicate"] is False  # farklı tür → dedup DEĞİL, yeni kayıt
+        assert r1["document_id"] != r2["document_id"]
+        assert r1["document_type"] == "vergi_levhasi"
+        assert r2["document_type"] == "imza_sirkusu"
+
+        from app.database import UploadedReferenceDocument
+        assert db.query(UploadedReferenceDocument).filter(
+            UploadedReferenceDocument.sha256 == hashlib.sha256(payload).hexdigest()
+        ).count() == 2
+
+    def test_upload_wrong_then_correct_box_self_heals_without_db_intervention(self, client, db):
+        """
+        KRİTİK senaryo (owner talimatı): kullanıcı önce YANLIŞ kutuya yükler
+        (örn. vergi levhasını 'imza_sirkusu' olarak), sonra AYNI dosyayı
+        DOĞRU kutuya yükler ('vergi_levhasi'). Sistem DB'ye HİÇBİR elle
+        müdahale olmadan kendini düzeltebilmeli: doğru yükleme yeni, doğru
+        türde bir kayıt oluşturmalı; extraction o YENİ kayıt üzerinden doğru
+        çalışmalı. Önceki (yanlış) kayıt ve varsa extraction geçmişi
+        DEĞİŞTİRİLMEDEN kalmalı (audit/veri kaybı yok).
+        """
+        real_document_bytes = _make_minimal_pdf_bytes()  # gerçek, açılabilir PDF (extraction render'ı deniyor)
+
+        # 1) Kullanıcı YANLIŞLIKLA vergi levhasını 'imza_sirkusu' kutusuna yükler
+        wrong = client.post(
+            "/api/contracts/documents/upload?document_type=imza_sirkusu",
+            files={"file": ("levha.pdf", real_document_bytes, "application/pdf")},
+        ).json()
+        assert wrong["document_type"] == "imza_sirkusu"
+        assert wrong["is_duplicate"] is False
+
+        # (opsiyonel) yanlış kutuda extraction denenmiş olabilir — geçmişi bozmuyoruz
+        with patch(
+            "app.contracts.service.extract_signature_circular",
+            return_value=extractors.SignatureCircularExtraction(
+                legal_name=DocumentFieldValue(value=None, confidence=0.0, source_document="imza_sirkusu"),
+                registered_address=DocumentFieldValue(value=None, confidence=0.0, source_document="imza_sirkusu"),
+                representative_full_name=DocumentFieldValue(value=None, confidence=0.0, source_document="imza_sirkusu"),
+                representative_national_id=DocumentFieldValue(value=None, confidence=0.0, source_document="imza_sirkusu"),
+                authority_type=DocumentFieldValue(value=None, confidence=0.0, source_document="imza_sirkusu"),
+                authority_scope=DocumentFieldValue(value=None, confidence=0.0, source_document="imza_sirkusu"),
+                authority_start_date=DocumentFieldValue(value=None, confidence=0.0, source_document="imza_sirkusu"),
+                authority_end_date=DocumentFieldValue(value=None, confidence=0.0, source_document="imza_sirkusu"),
+                is_indefinite=DocumentFieldValue(value=None, confidence=0.0, source_document="imza_sirkusu"),
+                trade_registry_number=DocumentFieldValue(value=None, confidence=0.0, source_document="imza_sirkusu"),
+                mersis_number=DocumentFieldValue(value=None, confidence=0.0, source_document="imza_sirkusu"),
+                tax_office=DocumentFieldValue(value=None, confidence=0.0, source_document="imza_sirkusu"),
+                notary_name=DocumentFieldValue(value=None, confidence=0.0, source_document="imza_sirkusu"),
+                notary_date=DocumentFieldValue(value=None, confidence=0.0, source_document="imza_sirkusu"),
+                notary_document_number=DocumentFieldValue(value=None, confidence=0.0, source_document="imza_sirkusu"),
+            ),
+        ):
+            client.post(f"/api/contracts/documents/{wrong['document_id']}/extract")
+
+        # 2) Kullanıcı fark eder, AYNI dosyayı DOĞRU kutuya (vergi_levhasi) yükler
+        #    — HİÇBİR DB müdahalesi YOK, sadece normal upload API çağrısı.
+        correct = client.post(
+            "/api/contracts/documents/upload?document_type=vergi_levhasi",
+            files={"file": ("levha.pdf", real_document_bytes, "application/pdf")},
+        ).json()
+
+        # Sistem kendini düzeltebildi: yeni, AYRI, doğru türde bir kayıt.
+        assert correct["is_duplicate"] is False
+        assert correct["document_type"] == "vergi_levhasi"
+        assert correct["document_id"] != wrong["document_id"]
+
+        # 3) Extraction artık DOĞRU kayıt (document_id) üzerinden, DOĞRU
+        #    türle (vergi_levhasi extractor'ı) çalışır.
+        fake_result = extractors.TaxCertificateExtraction(
+            legal_name=DocumentFieldValue(value="GERÇEK ŞİRKET", confidence=0.95, source_document="vergi_levhasi"),
+            tax_number=DocumentFieldValue(value="1111111111", confidence=0.95, source_document="vergi_levhasi"),
+            tax_office=DocumentFieldValue(value=None, confidence=0.0, source_document="vergi_levhasi"),
+            facility_address=DocumentFieldValue(value=None, confidence=0.0, source_document="vergi_levhasi"),
+            activity_code=DocumentFieldValue(value=None, confidence=0.0, source_document="vergi_levhasi"),
+            establishment_date=DocumentFieldValue(value=None, confidence=0.0, source_document="vergi_levhasi"),
+        )
+        with patch("app.contracts.service.extract_tax_certificate", return_value=fake_result):
+            extract_resp = client.post(f"/api/contracts/documents/{correct['document_id']}/extract")
+        assert extract_resp.status_code == 200
+
+        result_resp = client.get(f"/api/contracts/documents/{correct['document_id']}/extraction-result")
+        body = result_resp.json()
+        assert body["status"] == "completed"
+        assert all(c["source_document"] == "vergi_levhasi" for c in body["candidates"])
+        legal_name = next(c for c in body["candidates"] if c["field_name"] == "legal_name")
+        assert legal_name["raw_value"] == "GERÇEK ŞİRKET"
+
+        # 4) Önceki (yanlış) kayıt ve extraction geçmişi DEĞİŞTİRİLMEDEN durur
+        #    (audit trail korunuyor — sessizce silinmedi/mutasyona uğramadı).
+        from app.database import UploadedReferenceDocument, DocumentExtractionRun
+        wrong_doc = db.query(UploadedReferenceDocument).filter(
+            UploadedReferenceDocument.id == wrong["document_id"]
+        ).first()
+        assert wrong_doc is not None
+        assert wrong_doc.document_type == "imza_sirkusu"  # mutasyona uğramadı
+        assert db.query(DocumentExtractionRun).filter(
+            DocumentExtractionRun.document_id == wrong["document_id"]
+        ).count() == 1  # o kaydın extraction geçmişi hâlâ orada
+
+    def test_upload_same_hash_different_customer_creates_separate_record(self, client, db):
+        """Aynı dosya + FARKLI müşteri (aynı tenant) → dedup'a takılmaz, ayrı kayıt."""
+        from app.database import Customer
+        cust_a = Customer(name="Müşteri A")
+        cust_b = Customer(name="Müşteri B")
+        db.add_all([cust_a, cust_b])
+        db.commit()
+        db.refresh(cust_a)
+        db.refresh(cust_b)
+
+        payload = b"same-bytes-different-customer"
+        r1 = client.post(
+            f"/api/contracts/documents/upload?document_type=vergi_levhasi&customer_id={cust_a.id}",
+            files={"file": ("a.pdf", payload, "application/pdf")},
+        ).json()
+        r2 = client.post(
+            f"/api/contracts/documents/upload?document_type=vergi_levhasi&customer_id={cust_b.id}",
+            files={"file": ("a.pdf", payload, "application/pdf")},
+        ).json()
+
+        assert r1["is_duplicate"] is False
+        assert r2["is_duplicate"] is False
+        assert r1["document_id"] != r2["document_id"]
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Extraction — parse katmanı (OpenAI çağrısı mock)
@@ -402,7 +572,7 @@ class TestRunExtraction:
     def test_extraction_endpoint_returns_502_on_failure(self, client, db):
         upload_resp = client.post(
             "/api/contracts/documents/upload?document_type=vergi_levhasi",
-            files={"file": ("levha.pdf", b"fake", "application/pdf")},
+            files={"file": ("levha.pdf", _make_minimal_pdf_bytes(), "application/pdf")},
         ).json()
         with patch("app.contracts.service.extract_tax_certificate", side_effect=RuntimeError("boom")):
             resp = client.post(f"/api/contracts/documents/{upload_resp['document_id']}/extract")
@@ -412,7 +582,7 @@ class TestRunExtraction:
     def test_extraction_result_endpoint_returns_source_document(self, client, db):
         upload_resp = client.post(
             "/api/contracts/documents/upload?document_type=vergi_levhasi",
-            files={"file": ("levha.pdf", b"fake", "application/pdf")},
+            files={"file": ("levha.pdf", _make_minimal_pdf_bytes(), "application/pdf")},
         ).json()
         fake_result = extractors.TaxCertificateExtraction(
             legal_name=DocumentFieldValue(value="ALGAN ORMAN LTD", confidence=0.95, source_document="vergi_levhasi"),
@@ -430,6 +600,158 @@ class TestRunExtraction:
         body = resp.json()
         assert body["status"] == "completed"
         assert all(c["source_document"] == "vergi_levhasi" for c in body["candidates"])
+
+    # ── PDF extraction (Task #52/#53: PDF → sayfa görüntüleri → Vision) ──
+
+    def test_multi_page_pdf_preserves_source_page_per_field(self, db):
+        """
+        Çok sayfalı PDF: her sayfa ayrı extract edilir, DOLU alanlar GERÇEK
+        sayfa numarasıyla kaydedilir (sayfa 1'de legal_name, sayfa 2'de
+        tax_number dolu — ikisi de doğru source_page ile DB'ye düşmeli).
+        """
+        pdf_bytes = _make_minimal_pdf_bytes(num_pages=2)
+        doc, _ = service.upload_reference_document(
+            db, tenant_id="default", document_type="vergi_levhasi",
+            file_bytes=pdf_bytes, original_filename="levha.pdf", mime_type="application/pdf",
+        )
+        empty = dict(
+            tax_number=DocumentFieldValue(value=None, confidence=0.0, source_document="vergi_levhasi"),
+            tax_office=DocumentFieldValue(value=None, confidence=0.0, source_document="vergi_levhasi"),
+            facility_address=DocumentFieldValue(value=None, confidence=0.0, source_document="vergi_levhasi"),
+            activity_code=DocumentFieldValue(value=None, confidence=0.0, source_document="vergi_levhasi"),
+            establishment_date=DocumentFieldValue(value=None, confidence=0.0, source_document="vergi_levhasi"),
+        )
+        page1_result = extractors.TaxCertificateExtraction(
+            legal_name=DocumentFieldValue(value="ALGAN ORMAN LTD", confidence=0.95, source_document="vergi_levhasi"),
+            **empty,
+        )
+        page2_result = extractors.TaxCertificateExtraction(
+            legal_name=DocumentFieldValue(value=None, confidence=0.0, source_document="vergi_levhasi"),
+            tax_number=DocumentFieldValue(value="0510740975", confidence=0.9, source_document="vergi_levhasi"),
+            tax_office=DocumentFieldValue(value=None, confidence=0.0, source_document="vergi_levhasi"),
+            facility_address=DocumentFieldValue(value=None, confidence=0.0, source_document="vergi_levhasi"),
+            activity_code=DocumentFieldValue(value=None, confidence=0.0, source_document="vergi_levhasi"),
+            establishment_date=DocumentFieldValue(value=None, confidence=0.0, source_document="vergi_levhasi"),
+        )
+        with patch("app.contracts.service.extract_tax_certificate", side_effect=[page1_result, page2_result]):
+            run = service.run_extraction(db, doc)
+
+        assert run.status == "completed"
+        from app.database import DocumentFieldCandidate
+        candidates = db.query(DocumentFieldCandidate).filter(DocumentFieldCandidate.extraction_run_id == run.id).all()
+
+        legal_name = next(c for c in candidates if c.field_name == "legal_name")
+        assert legal_name.raw_value == "ALGAN ORMAN LTD"
+        assert legal_name.source_page == 1
+
+        tax_number = next(c for c in candidates if c.field_name == "tax_number")
+        assert tax_number.raw_value == "0510740975"
+        assert tax_number.source_page == 2
+
+        # Çok sayfalı PDF'de boş alanlar sayfa başına tekrar tekrar eklenmemeli
+        assert len(candidates) == 2
+
+    def test_pdf_document_routes_through_page_renderer_image_does_not(self, db):
+        """PDF ise render_pdf_pages_from_bytes çağrılır; resimde HİÇ çağrılmaz
+        (mevcut, değişmemesi gereken resim akışı)."""
+        pdf_doc, _ = service.upload_reference_document(
+            db, tenant_id="default", document_type="vergi_levhasi",
+            file_bytes=_make_minimal_pdf_bytes(1), original_filename="levha.pdf", mime_type="application/pdf",
+        )
+        img_doc, _ = service.upload_reference_document(
+            db, tenant_id="default", document_type="vergi_levhasi",
+            file_bytes=_fake_png_bytes(), original_filename="levha.png", mime_type="image/png",
+        )
+        fake_result = extractors.TaxCertificateExtraction(
+            legal_name=DocumentFieldValue(value="X", confidence=0.9, source_document="vergi_levhasi"),
+            tax_number=DocumentFieldValue(value=None, confidence=0.0, source_document="vergi_levhasi"),
+            tax_office=DocumentFieldValue(value=None, confidence=0.0, source_document="vergi_levhasi"),
+            facility_address=DocumentFieldValue(value=None, confidence=0.0, source_document="vergi_levhasi"),
+            activity_code=DocumentFieldValue(value=None, confidence=0.0, source_document="vergi_levhasi"),
+            establishment_date=DocumentFieldValue(value=None, confidence=0.0, source_document="vergi_levhasi"),
+        )
+        with patch("app.contracts.service.extract_tax_certificate", return_value=fake_result), \
+             patch("app.contracts.service.render_pdf_pages_from_bytes", wraps=service.render_pdf_pages_from_bytes) as spy:
+            service.run_extraction(db, pdf_doc)
+            assert spy.call_count == 1
+            spy.reset_mock()
+            service.run_extraction(db, img_doc)
+            assert spy.call_count == 0
+
+    def test_extraction_endpoint_returns_422_on_corrupt_pdf(self, client, db):
+        upload_resp = client.post(
+            "/api/contracts/documents/upload?document_type=vergi_levhasi",
+            files={"file": ("levha.pdf", b"%PDF-1.4\nbozuk-icerik-burada", "application/pdf")},
+        )
+        # upload'un kendisi magic-byte kontrolünden GEÇER (%PDF- ile başlıyor),
+        # ama içerik gerçekte GEÇERSİZ bir PDF — extraction aşamasında patlar.
+        assert upload_resp.status_code == 200
+        doc_id = upload_resp.json()["document_id"]
+        resp = client.post(f"/api/contracts/documents/{doc_id}/extract")
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["error"] == "pdf_corrupt"
+
+    def test_extraction_endpoint_returns_422_on_too_many_pages(self, db, client, monkeypatch):
+        monkeypatch.setattr(service, "MAX_PDF_EXTRACTION_PAGES", 1)
+        upload_resp = client.post(
+            "/api/contracts/documents/upload?document_type=vergi_levhasi",
+            files={"file": ("levha.pdf", _make_minimal_pdf_bytes(num_pages=2), "application/pdf")},
+        )
+        doc_id = upload_resp.json()["document_id"]
+        resp = client.post(f"/api/contracts/documents/{doc_id}/extract")
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["error"] == "pdf_too_many_pages"
+
+    def test_upload_rejects_mime_type_mismatch(self, client):
+        """Beyan edilen content_type ile GERÇEK içerik uyuşmuyorsa reddedilmeli
+        (istemci beyanına körü körüne güvenmemek — gerçek MIME doğrulaması)."""
+        resp = client.post(
+            "/api/contracts/documents/upload?document_type=vergi_levhasi",
+            files={"file": ("sahte.pdf", _fake_png_bytes(), "application/pdf")},  # PNG içerik, PDF diye beyan
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["error"] == "mime_type_mismatch"
+
+    def test_upload_document_type_matches_regardless_of_upload_order(self, client, db):
+        """
+        Dosya-tipi swap kök neden doğrulaması ('reversed'/'correct' upload
+        boxes, owner talimatı): HANGİ SIRAYLA yüklenirse yüklensin, her upload
+        çağrısının document_type'ı O ÇAĞRIDAKİ dosyaya birebir eşleşmeli. Bu,
+        mapping'in KOD SEVİYESİNDE deterministik olduğunu (bir swap bug'ı
+        olmadığını) DB kaydıyla kanıtlar — canlı UAT'ta da aynı şekilde
+        doğrulandı (bkz. kapanış raporu).
+        """
+        from app.database import UploadedReferenceDocument
+
+        # "correct" sıra: vergi_levhası önce, imza sirküleri sonra
+        r1 = client.post(
+            "/api/contracts/documents/upload?document_type=vergi_levhasi",
+            files={"file": ("vergi.png", _unique_png_bytes(1), "image/png")},
+        ).json()
+        r2 = client.post(
+            "/api/contracts/documents/upload?document_type=imza_sirkusu",
+            files={"file": ("imza.png", _unique_png_bytes(2), "image/png")},
+        ).json()
+        # "reversed" sıra: imza sirküleri önce, vergi levhası sonra
+        r3 = client.post(
+            "/api/contracts/documents/upload?document_type=imza_sirkusu",
+            files={"file": ("imza2.png", _unique_png_bytes(3), "image/png")},
+        ).json()
+        r4 = client.post(
+            "/api/contracts/documents/upload?document_type=vergi_levhasi",
+            files={"file": ("vergi2.png", _unique_png_bytes(4), "image/png")},
+        ).json()
+
+        expected = {
+            r1["document_id"]: ("vergi_levhasi", "vergi.png"),
+            r2["document_id"]: ("imza_sirkusu", "imza.png"),
+            r3["document_id"]: ("imza_sirkusu", "imza2.png"),
+            r4["document_id"]: ("vergi_levhasi", "vergi2.png"),
+        }
+        for doc_id, (expected_type, expected_filename) in expected.items():
+            db_doc = db.query(UploadedReferenceDocument).filter(UploadedReferenceDocument.id == doc_id).first()
+            assert db_doc.document_type == expected_type
+            assert db_doc.original_filename == expected_filename
 
 
 # ═══════════════════════════════════════════════════════════════════════════

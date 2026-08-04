@@ -77,11 +77,14 @@ class ValidationResult:
 class NormalizedMarketPriceInput:
     """Normalized and validated market price input."""
     period: str  # YYYY-MM
-    value: Decimal  # TL/MWh, 2 decimal places
+    value: Decimal  # TL/MWh, 2 decimal places (PTF)
     status: str  # provisional | final
     price_type: str = "PTF"
     source_note: Optional[str] = None
     change_reason: Optional[str] = None
+    # YEKDEM aynı (price_type="PTF", period) kaydının yekdem_tl_per_mwh kolonunda
+    # tutulur — ayrı bir price_type DEĞİL. None ise YEKDEM alanına dokunulmaz.
+    yekdem_value: Optional[Decimal] = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -263,6 +266,111 @@ class MarketPriceValidator:
         
         return ValidationResult(is_valid=True, errors=errors, warnings=warnings), parsed_value
     
+    def validate_yekdem_value(self, value: Union[str, float, Decimal, None]) -> Tuple[ValidationResult, Optional[Decimal]]:
+        """
+        YEKDEM birim bedeli validasyonu.
+
+        PTF'ten AYRI, izole bir fonksiyon — mevcut validate_value() (PTF) davranışına
+        dokunulmaz. YEKDEM tipik olarak PTF'ten çok daha düşük (TR piyasasında
+        ~100-800 TL/MWh mertebesinde), bu yüzden PTF'in WARNING_MIN/MAX aralığı
+        (1000-5000) burada uygulanmaz — YEKDEM için ayrı bir "olağandışı" aralığı
+        yok, sadece pozitiflik + üst guardrail kontrol edilir.
+
+        Parsing kuralları PTF ile aynı (nokta ile ondalık, virgül/bilimsel gösterim red).
+        yekdem_value opsiyoneldir: None ise "girilmedi" anlamına gelir (hata değil) —
+        None kontrolü çağıran tarafta (validate_entry) yapılır.
+        """
+        errors: List[ValidationError] = []
+        warnings: List[str] = []
+        parsed_value: Optional[Decimal] = None
+
+        if isinstance(value, str):
+            trimmed = value.strip()
+            if not trimmed:
+                errors.append(ValidationError(
+                    error_code=ErrorCode.VALUE_REQUIRED,
+                    field="yekdem_value",
+                    message="YEKDEM değeri boş olamaz."
+                ))
+                return ValidationResult(is_valid=False, errors=errors, warnings=warnings), None
+            if "," in trimmed:
+                errors.append(ValidationError(
+                    error_code=ErrorCode.DECIMAL_COMMA_NOT_ALLOWED,
+                    field="yekdem_value",
+                    message="Lütfen ondalık ayırıcı olarak nokta (.) kullanın."
+                ))
+                return ValidationResult(is_valid=False, errors=errors, warnings=warnings), None
+            if "e" in trimmed.lower():
+                errors.append(ValidationError(
+                    error_code=ErrorCode.INVALID_DECIMAL_FORMAT,
+                    field="yekdem_value",
+                    message="Bilimsel gösterim (örn: 1e3) desteklenmiyor."
+                ))
+                return ValidationResult(is_valid=False, errors=errors, warnings=warnings), None
+            decimal_regex = re.compile(r"^\d+(\.\d+)?$")
+            if not decimal_regex.match(trimmed):
+                errors.append(ValidationError(
+                    error_code=ErrorCode.INVALID_DECIMAL_FORMAT,
+                    field="yekdem_value",
+                    message="Geçersiz format. 350.00 formatında girin (nokta ile)."
+                ))
+                return ValidationResult(is_valid=False, errors=errors, warnings=warnings), None
+            try:
+                parsed_value = Decimal(trimmed)
+            except (InvalidOperation, ValueError):
+                errors.append(ValidationError(
+                    error_code=ErrorCode.INVALID_DECIMAL_FORMAT,
+                    field="yekdem_value",
+                    message="Geçersiz sayı formatı."
+                ))
+                return ValidationResult(is_valid=False, errors=errors, warnings=warnings), None
+        elif isinstance(value, Decimal):
+            parsed_value = value
+        elif isinstance(value, (int, float)):
+            try:
+                parsed_value = Decimal(str(value))
+            except (InvalidOperation, ValueError):
+                errors.append(ValidationError(
+                    error_code=ErrorCode.INVALID_DECIMAL_FORMAT,
+                    field="yekdem_value",
+                    message="Geçersiz sayı formatı."
+                ))
+                return ValidationResult(is_valid=False, errors=errors, warnings=warnings), None
+        else:
+            errors.append(ValidationError(
+                error_code=ErrorCode.INVALID_DECIMAL_FORMAT,
+                field="yekdem_value",
+                message="Geçersiz değer tipi."
+            ))
+            return ValidationResult(is_valid=False, errors=errors, warnings=warnings), None
+
+        decimal_places = self._get_decimal_places(parsed_value)
+        if decimal_places > MAX_DECIMAL_PLACES:
+            errors.append(ValidationError(
+                error_code=ErrorCode.TOO_MANY_DECIMALS,
+                field="yekdem_value",
+                message=f"En fazla {MAX_DECIMAL_PLACES} ondalık basamak kullanılabilir."
+            ))
+            return ValidationResult(is_valid=False, errors=errors, warnings=warnings), None
+
+        if parsed_value <= 0:
+            errors.append(ValidationError(
+                error_code=ErrorCode.VALUE_OUT_OF_RANGE,
+                field="yekdem_value",
+                message="YEKDEM değeri 0'dan büyük olmalı."
+            ))
+            return ValidationResult(is_valid=False, errors=errors, warnings=warnings), None
+
+        if parsed_value > MAX_VALUE:
+            errors.append(ValidationError(
+                error_code=ErrorCode.VALUE_OUT_OF_RANGE,
+                field="yekdem_value",
+                message=f"YEKDEM değeri {MAX_VALUE} TL/MWh'den büyük olamaz."
+            ))
+            return ValidationResult(is_valid=False, errors=errors, warnings=warnings), None
+
+        return ValidationResult(is_valid=True, errors=errors, warnings=warnings), parsed_value
+
     def _parse_decimal_string(self, value: str, errors: List[ValidationError]) -> Optional[Decimal]:
         """Parse string to Decimal with strict rules."""
         trimmed = value.strip()
@@ -403,52 +511,65 @@ class MarketPriceValidator:
         period: str,
         value: Union[str, float, Decimal, None],
         status: str,
-        price_type: str = "PTF"
+        price_type: str = "PTF",
+        yekdem_value: Union[str, float, Decimal, None] = None,
     ) -> Tuple[ValidationResult, Optional[NormalizedMarketPriceInput]]:
         """
         Validate complete market price entry.
-        
+
+        yekdem_value opsiyoneldir (backward-compatible): None/verilmemişse hiç
+        validate edilmez, normalized.yekdem_value=None kalır ve admin service
+        YEKDEM kolonuna dokunmaz (mevcut PTF-only çağıranlar etkilenmez).
+
         Returns:
             (ValidationResult, NormalizedMarketPriceInput or None)
         """
         all_errors: List[ValidationError] = []
         all_warnings: List[str] = []
-        
+
         # Validate period
         period_result = self.validate_period(period)
         all_errors.extend(period_result.errors)
         all_warnings.extend(period_result.warnings)
-        
+
         # Validate value
         value_result, parsed_value = self.validate_value(value)
         all_errors.extend(value_result.errors)
         all_warnings.extend(value_result.warnings)
-        
+
         # Validate status
         status_result = self.validate_status(status)
         all_errors.extend(status_result.errors)
         all_warnings.extend(status_result.warnings)
-        
+
         # Validate price_type
         price_type_result = self.validate_price_type(price_type)
         all_errors.extend(price_type_result.errors)
         all_warnings.extend(price_type_result.warnings)
-        
+
+        # Validate yekdem_value (opsiyonel — None ise hiç dokunulmaz)
+        parsed_yekdem: Optional[Decimal] = None
+        if yekdem_value is not None:
+            yekdem_result, parsed_yekdem = self.validate_yekdem_value(yekdem_value)
+            all_errors.extend(yekdem_result.errors)
+            all_warnings.extend(yekdem_result.warnings)
+
         # Build result
         is_valid = len(all_errors) == 0
         result = ValidationResult(is_valid=is_valid, errors=all_errors, warnings=all_warnings)
-        
+
         if not is_valid:
             return result, None
-        
+
         # Build normalized input
         normalized = NormalizedMarketPriceInput(
             period=period.strip(),
             value=parsed_value,
             status=status.strip(),
-            price_type=price_type.strip() if price_type else "PTF"
+            price_type=price_type.strip() if price_type else "PTF",
+            yekdem_value=parsed_yekdem,
         )
-        
+
         return result, normalized
 
 

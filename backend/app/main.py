@@ -3806,18 +3806,27 @@ async def upsert_market_price(
         period: Dönem (YYYY-MM format) - zorunlu
         value: PTF değeri (TL/MWh) - zorunlu
         price_type: Fiyat tipi (default: PTF)
-        status: Status (default: provisional)
+        status: Status (default: provisional) — PTF ve YEKDEM İÇİN ORTAK (tek kayıt)
         source_note: Kaynak notu (opsiyonel)
         change_reason: Değişiklik nedeni (opsiyonel, güncelleme için zorunlu)
         force_update: Final kayıt güncelleme izni (default: false)
-    
+        yekdem_value: YEKDEM birim bedeli (TL/MWh) - opsiyonel. Verilmezse YEKDEM
+            kolonuna dokunulmaz (mevcut PTF-only çağıranlar etkilenmez). Aynı
+            (price_type, period) kaydının yekdem_tl_per_mwh kolonuna yazılır —
+            ayrı bir price_type DEĞİLDİR.
+
     Returns:
         {status: "ok", action: "created"|"updated", period: "YYYY-MM", warnings: []}
-    
+
     Error Response:
         {status: "error", error_code: "...", message: "...", field: "...", row_index: null, details: {}}
-    
+
     Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7
+
+    Çağrıldığı yerler:
+    - frontend/src/market-prices/marketPricesApi.ts → useUpsertMarketPrice hook (Admin Panel UI)
+    - (yekdem_value alanı bu genişletme ile eklendi; mevcut frontend formu henüz
+      göndermiyor — YEKDEM girişi şimdilik doğrudan API/script üzerinden yapılıyor)
     """
     from .market_price_admin_service import get_market_price_admin_service
     from .market_price_validator import MarketPriceValidator
@@ -3859,6 +3868,8 @@ async def upsert_market_price(
     source_note = body.get("source_note")
     change_reason = body.get("change_reason")
     force_update = body.get("force_update", False)
+    # Opsiyonel: verilmezse YEKDEM kolonuna dokunulmaz (backward-compatible)
+    yekdem_value = body.get("yekdem_value")
     
     # Required field checks
     if period is None:
@@ -3894,6 +3905,7 @@ async def upsert_market_price(
         value=value,
         status=str(status_val),
         price_type=str(price_type),
+        yekdem_value=yekdem_value,
     )
     
     if not validation_result.is_valid:

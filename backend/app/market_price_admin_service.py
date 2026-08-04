@@ -263,7 +263,9 @@ class MarketPriceAdminService:
                 price_type=normalized.price_type,
                 period=normalized.period,
                 ptf_tl_per_mwh=float(normalized.value),
-                yekdem_tl_per_mwh=0,  # Default, can be extended
+                yekdem_tl_per_mwh=(
+                    float(normalized.yekdem_value) if normalized.yekdem_value is not None else 0
+                ),
                 status=normalized.status,
                 source=source,
                 captured_at=captured_at or now,
@@ -364,7 +366,17 @@ class MarketPriceAdminService:
         new_status = normalized.status
         old_value = Decimal(str(existing.ptf_tl_per_mwh))
         new_value = normalized.value
-        
+        # YEKDEM: aynı kaydın yekdem_tl_per_mwh kolonu. normalized.yekdem_value None
+        # ise YEKDEM'e HİÇ dokunulmaz — existing.yekdem_tl_per_mwh'e de erişilmez
+        # (lazy). Bu, mevcut PTF-only çağıranların davranışını korur VE eski
+        # testlerin (yekdem_tl_per_mwh set etmeyen) mock'larını bozmaz.
+        old_yekdem: Optional[Decimal] = None
+        yekdem_changed = False
+        if normalized.yekdem_value is not None:
+            old_yekdem = Decimal(str(existing.yekdem_tl_per_mwh or 0))
+            yekdem_changed = normalized.yekdem_value != old_yekdem
+        ptf_changed = old_value != new_value
+
         # Status downgrade check (final → provisional)
         if old_status == "final" and new_status == "provisional":
             return UpsertResult(
@@ -377,23 +389,23 @@ class MarketPriceAdminService:
                     message="Final kayıt provisional'a düşürülemez."
                 ),
             )
-        
-        # Final record protection (final → final with different value)
+
+        # Final record protection (final → final with different PTF or YEKDEM value)
         if old_status == "final" and new_status == "final":
-            if old_value != new_value and not force_update:
+            if (ptf_changed or yekdem_changed) and not force_update:
                 return UpsertResult(
                     success=False,
                     created=False,
                     changed=False,
                     error=ServiceError(
                         error_code=ServiceErrorCode.FINAL_RECORD_PROTECTED,
-                        field="value",
+                        field="value" if ptf_changed else "yekdem_value",
                         message="Final kayıt değiştirmek için force_update gerekli."
                     ),
                 )
-        
-        # No-op detection (same value and status)
-        if old_value == new_value and old_status == new_status:
+
+        # No-op detection (same PTF value, same YEKDEM value (or not provided), same status)
+        if not ptf_changed and not yekdem_changed and old_status == new_status:
             logger.debug(
                 f"No-op update for {normalized.price_type}/{normalized.period}: "
                 f"same value ({new_value}) and status ({new_status})"
@@ -405,7 +417,7 @@ class MarketPriceAdminService:
                 record=existing,
                 warnings=warnings,
             )
-        
+
         # change_reason required for actual updates
         if not change_reason:
             return UpsertResult(
@@ -418,27 +430,37 @@ class MarketPriceAdminService:
                     message="Güncelleme için değişiklik nedeni zorunludur."
                 ),
             )
-        
+
         # Perform update
         try:
             existing.ptf_tl_per_mwh = float(new_value)
+            if normalized.yekdem_value is not None:
+                existing.yekdem_tl_per_mwh = float(normalized.yekdem_value)
             existing.status = new_status
             existing.source = source
-            existing.change_reason = change_reason
+            # YEKDEM değişikliği ayrı bir audit alanı olmadığı için change_reason'a
+            # okunabilir bir not olarak ekleniyor (şema değişikliği yok, best-effort).
+            effective_change_reason = change_reason
+            if yekdem_changed:
+                effective_change_reason = (
+                    f"{change_reason} [YEKDEM: {old_yekdem} → {normalized.yekdem_value} TL/MWh]"
+                )
+            existing.change_reason = effective_change_reason
             existing.updated_by = updated_by
             existing.updated_at = datetime.utcnow()
             # captured_at only updated if explicitly provided
             if captured_at:
                 existing.captured_at = captured_at
-            
+
             db.commit()
             db.refresh(existing)
-            
+
             logger.info(
                 f"Updated market price: {normalized.price_type}/{normalized.period} "
                 f"{old_value}→{new_value} TL/MWh ({old_status}→{new_status}) by {updated_by}"
+                + (f", YEKDEM {old_yekdem}→{normalized.yekdem_value}" if yekdem_changed else "")
             )
-            
+
             # Audit history — best-effort write (Requirement 1.2)
             self._write_history(
                 db=db,
@@ -448,7 +470,7 @@ class MarketPriceAdminService:
                 new_value=float(new_value),
                 old_status=old_status,
                 new_status=new_status,
-                change_reason=change_reason,
+                change_reason=effective_change_reason,
                 updated_by=updated_by,
                 source=source,
             )

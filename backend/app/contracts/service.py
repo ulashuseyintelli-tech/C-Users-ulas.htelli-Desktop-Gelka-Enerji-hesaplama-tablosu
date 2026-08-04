@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from .. import database as db_models
 from ..services.storage import get_storage
 from ..services.offer_lifecycle import transition_offer_status
+from ..pdf_render import render_pdf_pages_from_bytes, PdfRenderError
 from .schemas import (
     TaxCertificateExtraction,
     SignatureCircularExtraction,
@@ -30,6 +31,12 @@ from .extractors import extract_tax_certificate, extract_signature_circular, EXT
 from ..core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# PDF extraction guardrail — ilk sürüm için makul bir üst sınır (vergi
+# levhası/imza sirküleri belgeleri normalde 1-2 sayfa). Aşan PDF'ler
+# sessizce kırpılmaz, PdfRenderError(error_code="pdf_too_many_pages") ile
+# reddedilir — bkz. app/pdf_render.py.
+MAX_PDF_EXTRACTION_PAGES = 5
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -45,7 +52,17 @@ def upload_reference_document(
     mime_type: str,
     customer_id: Optional[int] = None,
 ) -> tuple[db_models.UploadedReferenceDocument, bool]:
-    """Belgeyi storage'a yazar, DB kaydı oluşturur. (tenant_id, customer_id, sha256) ile dedup yapar."""
+    """
+    Belgeyi storage'a yazar, DB kaydı oluşturur.
+    (tenant_id, customer_id, sha256, document_type) ile dedup yapar.
+
+    document_type dedup key'inde OLMAK ZORUNDA (LOCAL UAT FINAL REMEDIATION,
+    HIGH bulgu): aksi halde kullanıcı bir dosyayı yanlış türle yükleyip
+    SONRA doğru türle tekrar yüklediğinde, dedup sha256 eşleşmesiyle
+    mevcut (yanlış türdeki) kaydı sessizce döndürür — sistem DB'ye elle
+    müdahale olmadan düzelemez. Şimdi farklı document_type = ayrı kayıt;
+    önceki (yanlış) kayıt ve extraction geçmişi DEĞİŞTİRİLMEDEN kalır.
+    """
     sha256 = hashlib.sha256(file_bytes).hexdigest()
 
     existing = (
@@ -54,6 +71,7 @@ def upload_reference_document(
             db_models.UploadedReferenceDocument.tenant_id == tenant_id,
             db_models.UploadedReferenceDocument.customer_id == customer_id,
             db_models.UploadedReferenceDocument.sha256 == sha256,
+            db_models.UploadedReferenceDocument.document_type == document_type,
         )
         .first()
     )
@@ -96,7 +114,26 @@ _FIELD_SCHEMA_BY_TYPE = {
 
 
 def run_extraction(db: Session, document: db_models.UploadedReferenceDocument) -> db_models.DocumentExtractionRun:
-    """Belge için extraction çalıştırır, ham sonucu document_field_candidates'a normalize eder."""
+    """
+    Belge için extraction çalıştırır, ham sonucu document_field_candidates'a normalize eder.
+
+    PDF belgeler (mime_type=application/pdf) ÖNCE sayfa görüntülerine (PNG)
+    çevrilir — bkz. app/pdf_render.py::render_pdf_pages_from_bytes. Ham PDF
+    bytes'ı Vision API'ye HİÇBİR ZAMAN gönderilmez (image_url olarak kabul
+    edilmiyor, 400 Bad Request ile reddediliyordu — kök neden buydu).
+
+    Tek sayfa (resim veya 1 sayfalı PDF): davranış BİREBİR korunur — tüm
+    alanlar (boş/None dahil) eskisi gibi candidate olarak eklenir.
+
+    Çok sayfalı PDF: her sayfa ayrı extract edilir; yalnız o sayfada DOLU
+    (value != None) alanlar eklenir — aksi halde her boş alan sayfa sayısı
+    kadar tekrar eder ve review ekranı anlamsız boş satırlarla dolar.
+    source_page modelin tahminine değil, bizim gönderdiğimiz gerçek sayfa
+    indeksine dayanır (daha güvenilir). Aynı alan birden çok sayfada farklı
+    değerle çıkarsa mevcut çelişki tespiti (detect_conflicts) bunu zaten
+    yakalar — ayrı bir birleştirme mantığı yazılmadı, mevcut mekanizma
+    yeniden kullanıldı.
+    """
     run = db_models.DocumentExtractionRun(
         tenant_id=document.tenant_id,
         document_id=document.id,
@@ -119,34 +156,56 @@ def run_extraction(db: Session, document: db_models.UploadedReferenceDocument) -
         file_bytes = storage.get_bytes(document.storage_ref)
 
         if document.document_type == "vergi_levhasi":
-            result = extract_tax_certificate(file_bytes, mime_type=document.mime_type)
+            extractor_fn = extract_tax_certificate
         elif document.document_type == "imza_sirkusu":
-            result = extract_signature_circular(file_bytes, mime_type=document.mime_type)
+            extractor_fn = extract_signature_circular
         else:
             raise ValueError(f"Bilinmeyen document_type: {document.document_type}")
 
-        for field_name, field_value in result.model_dump().items():
-            candidate = db_models.DocumentFieldCandidate(
-                tenant_id=document.tenant_id,
-                extraction_run_id=run.id,
-                document_id=document.id,
-                field_name=field_name,
-                raw_value=field_value.get("value"),
-                normalized_value=_normalize_value(field_value.get("value")),
-                confidence=field_value.get("confidence", 0.0),
-                source_page=field_value.get("source_page", 1),
-                source_text=field_value.get("source_text", ""),
-                validation_status="pending",
-                conflict_status="none",
-                created_at=datetime.utcnow(),
-            )
-            db.add(candidate)
+        if document.mime_type == "application/pdf":
+            page_images = render_pdf_pages_from_bytes(file_bytes, max_pages=MAX_PDF_EXTRACTION_PAGES)
+            page_mime = "image/png"
+        else:
+            page_images = [file_bytes]
+            page_mime = document.mime_type
+
+        multi_page = len(page_images) > 1
+        for page_num, page_bytes in enumerate(page_images, start=1):
+            result = extractor_fn(page_bytes, mime_type=page_mime)
+            for field_name, field_value in result.model_dump().items():
+                if multi_page and field_value.get("value") is None:
+                    continue  # bu sayfada boş — çok sayfalı PDF'de tekrar tekrar eklenmesin
+                candidate = db_models.DocumentFieldCandidate(
+                    tenant_id=document.tenant_id,
+                    extraction_run_id=run.id,
+                    document_id=document.id,
+                    field_name=field_name,
+                    raw_value=field_value.get("value"),
+                    normalized_value=_normalize_value(field_value.get("value")),
+                    confidence=field_value.get("confidence", 0.0),
+                    source_page=page_num,
+                    source_text=field_value.get("source_text", ""),
+                    validation_status="pending",
+                    conflict_status="none",
+                    created_at=datetime.utcnow(),
+                )
+                db.add(candidate)
 
         run.status = "completed"
         run.completed_at = datetime.utcnow()
         document.processing_status = "extracted"
         db.commit()
 
+    except PdfRenderError as exc:
+        # Kullanıcı/veri hatası (bozuk, boş veya çok sayfalı PDF) — upstream
+        # (OpenAI) hatası değil. error_code router'da 422'ye map edilir.
+        run.status = "failed"
+        run.error_code = exc.error_code
+        run.completed_at = datetime.utcnow()
+        document.processing_status = "failed"
+        db.commit()
+        logger.error(f"PDF render failed for document {document.id} (run {run.id}): {exc.error_code}")
+        raise
     except Exception as exc:  # noqa: BLE001 - extraction hatasını run kaydına yazıp yeniden fırlatıyoruz
         run.status = "failed"
         run.error_code = type(exc).__name__

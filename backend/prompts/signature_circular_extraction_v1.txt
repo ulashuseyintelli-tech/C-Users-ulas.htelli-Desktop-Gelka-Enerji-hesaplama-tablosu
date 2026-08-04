@@ -28,7 +28,7 @@ Her alan için şu 4 anahtarı doldur:
 }
 
 ÖNEMLİ KURALLAR:
-- T.C. kimlik numarasını (representative_national_id) yalnız belgede AÇIKÇA YAZILI GÖRDÜĞÜN 11 haneli sayı ise çıkar. Kısmen maskeli (ör. "583*******20") ise value'yu maskeli haliyle döndür ve confidence'ı düşük ver (ör. 0.3), UYDURMA veya TAHMİN ETME.
+- T.C. kimlik numarasını (representative_national_id) belgede AÇIKÇA YAZILI GÖRDÜĞÜN 11 haneli sayı olarak çıkar. Aynı kişinin T.C. kimlik numarası belgede BİRDEN FAZLA yerde geçebilir (örn. hem üstteki "YETKİLİ" özet satırında, hem noter onay/tasdik paragrafında, hem de alıntılanan ticaret sicili ilanı/karar metni içinde) — bu durumda TAM (maskesiz) yazılı olanı TERCİH ET ve confidence'ı yüksek ver (ör. 0.9+); source_text alanına hangi satırdan aldığını yaz. Yalnızca belgede TÜM geçtiği yerlerde kısmen maskeliyse (ör. "583*******20") value'yu maskeli haliyle döndür ve confidence'ı düşük ver (ör. 0.3). UYDURMA veya TAHMİN ETME — yalnız belgede gördüğün rakamları yaz.
 - Birden fazla yetkili kişi varsa, YALNIZ İLK/ANA yetkiliyi bu şemaya doldur — source_text alanına "Not: belgede N yetkili tespit edildi" ekle.
 - Belgede bir alan yoksa veya okunamıyorsa value=null, confidence=0.0 yap.
 - is_indefinite alanının value'su yalnız "true" veya "false" string'i olmalı.
