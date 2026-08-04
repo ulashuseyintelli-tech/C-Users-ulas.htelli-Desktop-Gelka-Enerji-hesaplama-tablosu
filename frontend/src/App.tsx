@@ -1,6 +1,7 @@
 ﻿import { useState, useCallback, useMemo, useEffect } from 'react';
-import { Upload, FileText, Zap, TrendingDown, AlertCircle, CheckCircle, Loader2, RefreshCw, Download, Settings } from 'lucide-react';
-import { fullProcess, downloadPdf, FullProcessResponse, pricingAnalyze, pricingGetTemplates, pricingGetPeriods, pricingDownloadPdf, pricingDownloadExcel, PricingAnalyzeResponse, normalizeInvoicePeriod, API_BASE, TemplateItem, getVersion, VersionInfo, PdfMismatchError, PdfMismatchContract } from './api';
+import { Upload, FileText, Zap, TrendingDown, AlertCircle, CheckCircle, Loader2, RefreshCw, Download, Settings, FileSignature } from 'lucide-react';
+import { fullProcess, downloadPdf, FullProcessResponse, pricingAnalyze, pricingGetTemplates, pricingGetPeriods, pricingDownloadPdf, pricingDownloadExcel, PricingAnalyzeResponse, normalizeInvoicePeriod, API_BASE, TemplateItem, getVersion, VersionInfo, PdfMismatchError, PdfMismatchContract, createOffer, createCustomer, OfferCalculationPayload } from './api';
+import { ContractWizardModal } from './contracts/ContractWizardModal';
 import AdminPanel from './AdminPanel';
 import ReconPage from './recon/ReconPage';
 import { generateBayiRaporPdf } from './bayiRapor';
@@ -210,6 +211,13 @@ function App() {
   const [operatorConfirmed, setOperatorConfirmed] = useState(false);
   const [result, setResult] = useState<FullProcessResponse | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  // Owner kararı: Offer artık kalıcı domain nesnesi. PDF İndir anında
+  // (ekrandaki NİHAİ değerlerle) persist edilir; offerId burada tutulur ve
+  // Sözleşme Hazırla bu id'yi kullanır (kendisi offer OLUŞTURMAZ).
+  const [persistedOfferId, setPersistedOfferId] = useState<number | null>(null);
+  const [persistedCustomerId, setPersistedCustomerId] = useState<number | undefined>(undefined);
+  const [offerPersisting, setOfferPersisting] = useState(false);
+  const [contractWizardOpen, setContractWizardOpen] = useState(false);
   
   // Teklif parametreleri
   const [ptfPrice, setPtfPrice] = useState(2974.1);
@@ -770,10 +778,13 @@ function App() {
 
   const handleAnalyze = async () => {
     if (!file) return;
-    
+
     setLoading(true);
     setError(null);
-    
+    setPersistedOfferId(null);  // yeni analiz → önceki offer artık bu ekranla ilgisiz
+    setPersistedCustomerId(undefined);
+    setContractWizardOpen(false);
+
     try {
       const response = await fullProcess(file, {
         weighted_ptf_tl_per_mwh: ptfPrice,
@@ -829,6 +840,9 @@ function App() {
     setFile(null);
     setResult(null);
     setError(null);
+    setPersistedOfferId(null);
+    setPersistedCustomerId(undefined);
+    setContractWizardOpen(false);
     setManualMode(false);
     setConsumptionInput('');
     setCurrentUnitPriceInput('');
@@ -899,42 +913,95 @@ function App() {
       const fileName = companySlug
         ? `teklif_${companySlug}_${offerId}.pdf`
         : `teklif_${offerId}.pdf`;
-      
+
+      // Ortak hesaplama gövdesi — hem persist (POST /offers) hem PDF üretimi
+      // AYNI ekrandaki nihai değerleri kullanır (owner kararı: Offer artık
+      // kalıcı domain nesnesi, "1,01 gibi" katsayı ekranla birebir bağlanır).
+      const calcForPdf = {
+        current_energy_tl: offerDisplayMode === 'combined'
+          ? liveCalculation.current_energy_tl + liveCalculation.current_distribution_tl
+          : liveCalculation.current_energy_tl,
+        current_distribution_tl: offerDisplayMode === 'combined' ? 0 : liveCalculation.current_distribution_tl,
+        current_btv_tl: liveCalculation.current_btv_tl,
+        current_vat_matrah_tl: liveCalculation.current_vat_matrah_tl,
+        current_vat_tl: liveCalculation.current_vat_tl,
+        current_total_with_vat_tl: liveCalculation.current_total_with_vat_tl,
+        offer_energy_tl: offerDisplayMode === 'combined'
+          ? liveCalculation.offer_energy_tl + liveCalculation.offer_distribution_tl
+          : liveCalculation.offer_energy_tl,
+        offer_distribution_tl: offerDisplayMode === 'combined' ? 0 : liveCalculation.offer_distribution_tl,
+        offer_btv_tl: liveCalculation.offer_btv_tl,
+        offer_vat_matrah_tl: liveCalculation.offer_vat_matrah_tl,
+        offer_vat_tl: liveCalculation.offer_vat_tl,
+        offer_total_with_vat_tl: liveCalculation.offer_total_with_vat_tl,
+        difference_excl_vat_tl: liveCalculation.difference_excl_vat_tl,
+        difference_incl_vat_tl: liveCalculation.difference_incl_vat_tl,
+        savings_ratio: liveCalculation.savings_ratio,
+        meta_include_yekdem_in_offer: liveCalculation.include_yekdem,
+        meta_vat_rate: vatRate,
+      };
+      const paramsForOffer = {
+        weighted_ptf_tl_per_mwh: ptfPrice,
+        yekdem_tl_per_mwh: liveCalculation.include_yekdem ? yekdemPrice : 0,
+        agreement_multiplier: multiplier,
+        // R2: ham toplam — manuel YENİ alan, AI extraction; calculation.current_total KULLANILMAZ
+        invoice_total_raw: manualMode
+          ? (manualValues.invoice_total_raw || 0)
+          : ((result?.extraction as any)?.invoice_total_with_vat_tl?.value || 0),
+        operator_confirmed_warnings: operatorConfirmed,
+      };
+
+      // Owner kararı: Offer artık transient değil — PDF üretilmeden ÖNCE
+      // kalıcı kaydedilir (ekrandaki nihai/kullanıcı-ayarlı değerlerle).
+      // Persist başarısız olursa PDF de üretilmez (Offer garantisiz PDF yok).
+      setOfferPersisting(true);
+      try {
+        const kwhForOffer = manualMode
+          ? manualValues.consumption_kwh
+          : (result?.extraction?.consumption_kwh?.value || 0);
+        const ptfKwh = ptfPrice / 1000;
+        const yekdemKwh = yekdemPrice / 1000;
+        const offerCalculation: OfferCalculationPayload = {
+          ...calcForPdf,
+          current_demand_tl: 0,   // mevcut canlı UI demand bedeli izlemiyor (mevcut PDF akışıyla aynı)
+          offer_demand_tl: 0,
+          offer_ptf_tl: kwhForOffer * ptfKwh * multiplier,
+          offer_yekdem_tl: liveCalculation.include_yekdem ? kwhForOffer * yekdemKwh * multiplier : 0,
+          unit_price_savings_ratio: liveCalculation.savings_ratio,
+        };
+        // customer_id doldur — sözleşme akışındaki belge/çelişki scoping'i
+        // customer_id'ye dayanıyor; boş bırakılırsa TÜM null-customer_id
+        // teklifleri aynı "müşteri" sayılıp ilgisiz sözleşmeler arasında
+        // yanlış çelişki tespitine yol açabilir. Dedup yok (bkz. createCustomer).
+        let customerIdForOffer: number | undefined;
+        if (customerInfo.company_name.trim()) {
+          const customer = await createCustomer(customerInfo.company_name.trim());
+          customerIdForOffer = customer.id;
+        }
+
+        const persisted = await createOffer(
+          extraction,
+          offerCalculation,
+          {
+            weighted_ptf_tl_per_mwh: ptfPrice,
+            yekdem_tl_per_mwh: paramsForOffer.yekdem_tl_per_mwh,
+            agreement_multiplier: multiplier,
+            use_reference_prices: useReferencePrices,
+            vat_rate: vatRate,
+            btv_rate: btvRate,
+          },
+          customerIdForOffer
+        );
+        setPersistedOfferId(persisted.id);
+        setPersistedCustomerId(customerIdForOffer);
+      } finally {
+        setOfferPersisting(false);
+      }
+
       await downloadPdf(
         extraction,
-        {
-          current_energy_tl: offerDisplayMode === 'combined' 
-            ? liveCalculation.current_energy_tl + liveCalculation.current_distribution_tl 
-            : liveCalculation.current_energy_tl,
-          current_distribution_tl: offerDisplayMode === 'combined' ? 0 : liveCalculation.current_distribution_tl,
-          current_btv_tl: liveCalculation.current_btv_tl,
-          current_vat_matrah_tl: liveCalculation.current_vat_matrah_tl,
-          current_vat_tl: liveCalculation.current_vat_tl,
-          current_total_with_vat_tl: liveCalculation.current_total_with_vat_tl,
-          offer_energy_tl: offerDisplayMode === 'combined'
-            ? liveCalculation.offer_energy_tl + liveCalculation.offer_distribution_tl
-            : liveCalculation.offer_energy_tl,
-          offer_distribution_tl: offerDisplayMode === 'combined' ? 0 : liveCalculation.offer_distribution_tl,
-          offer_btv_tl: liveCalculation.offer_btv_tl,
-          offer_vat_matrah_tl: liveCalculation.offer_vat_matrah_tl,
-          offer_vat_tl: liveCalculation.offer_vat_tl,
-          offer_total_with_vat_tl: liveCalculation.offer_total_with_vat_tl,
-          difference_excl_vat_tl: liveCalculation.difference_excl_vat_tl,
-          difference_incl_vat_tl: liveCalculation.difference_incl_vat_tl,
-          savings_ratio: liveCalculation.savings_ratio,
-          meta_include_yekdem_in_offer: liveCalculation.include_yekdem,
-          meta_vat_rate: vatRate,
-        },
-        {
-          weighted_ptf_tl_per_mwh: ptfPrice,
-          yekdem_tl_per_mwh: liveCalculation.include_yekdem ? yekdemPrice : 0,
-          agreement_multiplier: multiplier,
-          // R2: ham toplam — manuel YENİ alan, AI extraction; calculation.current_total KULLANILMAZ
-          invoice_total_raw: manualMode
-            ? (manualValues.invoice_total_raw || 0)
-            : ((result?.extraction as any)?.invoice_total_with_vat_tl?.value || 0),
-          operator_confirmed_warnings: operatorConfirmed,
-        },
+        calcForPdf,
+        paramsForOffer,
         fileName,
         customerInfo.company_name || undefined,
         customerInfo.contact_person || undefined,
@@ -2995,13 +3062,13 @@ function App() {
                 <div className="flex gap-2">
                   <button
                     onClick={handleDownloadPdf}
-                    disabled={pdfLoading || !ptfPrice || ptfPrice <= 0 || (!!mismatchInfo?.requires_operator_confirmation && !operatorConfirmed)}
+                    disabled={pdfLoading || offerPersisting || !ptfPrice || ptfPrice <= 0 || (!!mismatchInfo?.requires_operator_confirmation && !operatorConfirmed)}
                     className="btn-primary flex-1 flex items-center justify-center gap-2 py-2 text-sm"
                   >
-                    {pdfLoading ? (
+                    {pdfLoading || offerPersisting ? (
                       <>
                         <Loader2 className="w-5 h-5 animate-spin" />
-                        PDF Hazırlanıyor...
+                        {offerPersisting ? 'Kaydediliyor...' : 'PDF Hazırlanıyor...'}
                       </>
                     ) : (
                       <>
@@ -3010,7 +3077,17 @@ function App() {
                       </>
                     )}
                   </button>
-                  
+
+                  <button
+                    onClick={() => setContractWizardOpen(true)}
+                    disabled={!persistedOfferId}
+                    title={!persistedOfferId ? 'Önce Teklif PDF İndir ile teklifi kaydedin' : undefined}
+                    className="btn-secondary flex-1 flex items-center justify-center gap-2 py-2 text-sm"
+                  >
+                    <FileSignature className="w-5 h-5" />
+                    Sözleşme Hazırla
+                  </button>
+
                   <button
                     onClick={handleReset}
                     className="btn-secondary flex-1 flex items-center justify-center gap-2"
@@ -3090,6 +3167,15 @@ function App() {
           )}
         </div>
       </footer>
+
+      {persistedOfferId && (
+        <ContractWizardModal
+          open={contractWizardOpen}
+          onClose={() => setContractWizardOpen(false)}
+          offerId={persistedOfferId}
+          customerId={persistedCustomerId}
+        />
+      )}
     </div>
   );
 }

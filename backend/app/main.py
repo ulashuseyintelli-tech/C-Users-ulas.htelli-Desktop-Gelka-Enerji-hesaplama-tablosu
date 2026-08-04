@@ -129,6 +129,11 @@ app.include_router(pricing_router)
 from .recon.router import recon_router
 app.include_router(recon_router)
 
+# Sözleşme Oluşturma (Contract Generation V1) — vergi levhası + imza sirküleri
+# OCR + teklif çarpanı bağlama + PDF üretimi
+from .contracts.router import contracts_router
+app.include_router(contracts_router)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Security - API Key Authentication + Rate Limiting
@@ -1775,25 +1780,14 @@ async def update_offer_status(
     from .models import OfferStatus, AuditAction
     from .services.audit import log_action
     from .services.webhook import send_webhook
-    
+    from .services.offer_lifecycle import VALID_OFFER_TRANSITIONS as valid_transitions
+
     offer = db.query(Offer).filter(Offer.id == offer_id).first()
     if not offer:
         raise HTTPException(status_code=404, detail="Teklif bulunamadı")
-    
+
     old_status = offer.status
-    
-    # Validate status transition
-    valid_transitions = {
-        "draft": ["sent", "expired"],
-        "sent": ["viewed", "accepted", "rejected", "expired"],
-        "viewed": ["accepted", "rejected", "expired"],
-        "accepted": ["contracting", "rejected"],
-        "contracting": ["completed", "rejected"],
-        "rejected": [],  # Terminal state
-        "completed": [],  # Terminal state
-        "expired": [],  # Terminal state
-    }
-    
+
     if old_status and status not in valid_transitions.get(old_status, [status]):
         raise HTTPException(
             status_code=400,

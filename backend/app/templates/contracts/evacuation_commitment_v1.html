@@ -1,0 +1,31 @@
+{% include "_base_style.html" %}
+<h1>TAHLİYE VE TESİS KULLANIMINI SONA ERDİRME TAAHHÜTNAMESİ</h1>
+
+<p>İşbu Tahliye ve Tesis Kullanımını Sona Erdirme Taahhütnamesi (“Taahhütname”), Gelka Enerji Yatırım Sanayi ve Ticaret A.Ş. (“Tedarikçi”) ile imzalamış bulunduğum Elektrik Enerjisi Satışına İlişkin İkili Anlaşma ve ekleri kapsamında, aşağıda bilgileri yer alan Abone/Müşteri olarak tarafımca serbest irade ile düzenlenmiş ve imzalanmıştır.</p>
+
+<h3>1. Taahhüt</h3>
+<p>Abone olarak tarafım, elektrik enerjisi tedarik edilen aşağıda adresi belirtilen tesis veya abonelik yerini tahliye edeceğimi ve tesis üzerindeki fiili kullanımımı sona erdireceğimi kabul ve taahhüt ederim. Tahliye edilen tesis üzerinde herhangi bir hak, kullanım veya zilyetlik iddiasında bulunmayacağımı da peşinen kabul ederim.</p>
+
+<h3>2. Tahliyeyi Gerektiren Haller</h3>
+<p>Elektrik satış sözleşmesinin herhangi bir nedenle sona ermesi, feshedilmesi veya Tedarikçi portföyünden çıkarılmam; tarafıma ait vadesi geçmiş borcun bulunması ya da sözleşmede öngörülen teminat yükümlülüğünün yerine getirilmemesi veya teminat eksiği oluşması hallerinden herhangi birinin gerçekleşmesi durumunda, ayrıca ihtar veya süre verilmesine gerek olmaksızın söz konusu tesisi tahliye edeceğimi kabul ve taahhüt ederim.</p>
+
+<h3>3. Tahliye Süresi</h3>
+<p>Yukarıda belirtilen hallerden birinin gerçekleşmesi halinde, en geç üç (3) gün içinde tesisin elektrik kullanımını tamamen sona erdirerek tesisi boş ve kullanılabilir şekilde teslim edeceğimi kabul ve taahhüt ederim.</p>
+
+<h3>4. Uyulmaması Halinde Sonuçlar</h3>
+<p>İşbu Taahhütname hükümlerine aykırı davranmam halinde Tedarikçi’nin EPİAŞ ve ilgili dağıtım şirketi nezdinde gerekli işlemleri yapmaya, doğan zararlarını, mahrum kalınan kârını ve sözleşmeden kaynaklanan cezai şartları talep etmeye yetkili olduğunu kabul ederim. Bu nedenle doğabilecek tüm zarar ve sorumlulukların tarafıma ait olduğunu da kabul ederim.</p>
+
+<h3>5. Delil ve Feragat</h3>
+<p>İşbu Taahhütname kapsamında itiraz, savunma veya geciktirici taleplerde bulunmayacağımı; EPİAŞ kayıtları, dağıtım şirketi verileri ve sayaç kayıtlarının uyuşmazlık halinde kesin delil niteliğinde olduğunu kabul ederim.</p>
+
+<h3>6. Yürürlük</h3>
+<p>İşbu Taahhütname imza tarihinde yürürlüğe girer ve elektrik satış sözleşmesi ile birlikte değerlendirilir. Elektrik satış sözleşmesinin sona ermesi, işbu Taahhütname hükümlerinin uygulanmasına engel teşkil etmez.</p>
+
+<div style="margin-top:30px">
+  <p><strong>ABONE / MÜŞTERİ</strong></p>
+  <p>Ad – Soyad / Unvan: {{ legal_name or '' }}{% if representative_full_name %} ({{ representative_full_name }}){% endif %}<br>
+  T.C. / VKN: {{ representative_national_id or tax_number or '' }}<br>
+  Tesis / Abonelik Adresi: {{ facility_address or registered_address or '' }}<br>
+  İmza / Kaşe: ______________________<br>
+  Tarih: ______________________</p>
+</div>

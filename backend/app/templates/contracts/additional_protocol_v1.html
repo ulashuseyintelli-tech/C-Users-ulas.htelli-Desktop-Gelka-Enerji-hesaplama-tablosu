@@ -1,0 +1,46 @@
+{% include "_base_style.html" %}
+<h1>SÖZLEŞME EK PROTOKOLÜ</h1>
+<p style="text-align:center"><em>(Uygulama Tarihi, Süre, Fesih ve Sözleşmesel Rejim)</em></p>
+
+<p><strong>Uygulamaya Esas Tedarik Başlangıç Tarihi:</strong> {{ start_date or '<span class="missing-field">[BELİRTİLMEDİ]</span>' | safe }}<br>
+<em>(EPİAŞ sistemi üzerinde Abone adına tedarikçi değişikliğinin fiilen gerçekleştiği tarih esas alınır. Mevcut sözleşme, protokol veya taahhütnamenin yenilenmesi halinde dahi fiyatlama ve uygulamaya ilişkin hükümler bu tarih itibarıyla yürürlüğe girer.)</em></p>
+
+<p><strong>Sözleşme Bitiş Tarihi:</strong> Tedarik Başlangıç Tarihinden itibaren {{ duration_months or '<span class="missing-field">[BELİRTİLMEDİ]</span>' | safe }} ay sonrasıdır. Sözleşme süresi içinde doğmuş ve henüz ifa edilmemiş ödeme, tedarik ve diğer sözleşmesel yükümlülükler, süre sonunda da aynen devam eder. Taraflardan biri, sözleşmenin bitiminden en az 3 (üç) ay önce yazılı fesih bildiriminde bulunmadığı takdirde sözleşme birer yıllık sürelerle kendiliğinden uzar. Uzayan dönemlerde uygulanacak ticari şartlar, ana sözleşme ve ek protokol hükümleri çerçevesinde yürürlükteki uygulamaya göre belirlenir.</p>
+
+<h2>ABONE TARİFE GRUBU VE KAPSAM</h2>
+<p><strong>Abone Tarife Grubu:</strong> {{ tariff_group or '<span class="missing-field">[BELİRTİLMEDİ]</span>' | safe }}
+{% if tariff_group_resolution_status == "not_found" %}<br><em style="font-size:9pt;color:#888">(Not: tarife grubu tekliften otomatik çözümlenemedi, elle girilmiştir.)</em>{% endif %}</p>
+<p><strong>Kapsamdaki Abonelikler (Tekil Kodlar):</strong> {{ subscription_codes or '<span class="missing-field">[BELİRTİLMEDİ]</span>' | safe }}</p>
+<p>Abone, işbu sözleşme kapsamında yer alan tüm aboneliklerden doğan enerji bedelleri ve diğer mali yükümlülüklerden müştereken ve müteselsilen sorumlu olduğunu kabul eder. Aboneliklere ilişkin teknik veya sistemsel değişiklikler sözleşmenin uygulanmasını etkilemez.</p>
+
+<h2>ANLAŞMA BEDELİNİN OLUŞUMU VE FİYATLANDIRMA ESASLARI</h2>
+<h3>Sözleşmesel Bağlantı</h3>
+<p>İşbu Ek Protokol, Gelka Enerji Yatırım San. ve Tic. A.Ş. ile Abone arasında imzalanmış Elektrik Satış Sözleşmesi’nin ayrılmaz bir parçasıdır. Abone, aşağıdaki fiyatlandırma seçeneklerinden yalnızca birini kabul ettiğini beyan eder.</p>
+
+<p><strong>Uygulanacak Fiyatlandırma Yöntemi:</strong></p>
+<table class="pricing-table">
+  <tr><th>ANLAŞMA SÜRESİ</th><th>ANLAŞMA FİYATI</th><th>KABUL EDİLEN SEÇENEK</th></tr>
+  <tr>
+    <td>{{ duration_months_label or ((duration_months ~ ' AYLIK') if duration_months else '<span class="missing-field">[BELİRTİLMEDİ]</span>' | safe) }}</td>
+    <td>Faturaya Esas Dönemin Ağırlıklı PTF+YEKDEM Birim Bedeli x {{ agreement_multiplier or '<span class="missing-field">[BELİRTİLMEDİ]</span>' | safe }} (Katsayı)</td>
+    <td>✓</td>
+  </tr>
+</table>
+<p style="text-align:center">(Faturaya Esas Dönemin Ağırlıklı PTF + YEKDEM Birim Bedeli) × {{ agreement_multiplier or '[BELİRTİLMEDİ]' }} (Katsayı)</p>
+
+<h3>AÇIKLAMALAR</h3>
+<p>Faturaya esas döneme ait ağırlıklı piyasa takas fiyatı (PTF), abonenin ilgili fatura dönemindeki saatlik tüketim verileri ile aynı saatlere ait piyasa takas fiyatlarının çarpılması ve toplam tüketim miktarına bölünmesi suretiyle hesaplanır. Aboneye ait saatlik tüketim verilerinin temin edilememesi halinde EPİAŞ tarafından oluşturulan profil verileri esas alınır. Sayaçların saatlik olarak okunamadığı veya gerekli verilerin temin edilemediği durumlarda Tedarikçi, ilgili dönem için aritmetik piyasa takas fiyatı ortalamasını esas alarak geçici faturalama yapma hakkına sahiptir. Saatlik verilerin veya uzlaştırma sonuçlarının daha sonra kesinleşmesi halinde ortaya çıkan profil maliyetleri anlaşma fiyatı katsayısı uygulanarak sonraki faturalara yansıtılabilir. Profil maliyetinin negatif çıkması halinde bu değer sıfır kabul edilir ve faturalamaya konu edilmez. Fatura dönemine ait YEKDEM birim bedelinin faturalama tarihinde EPİAŞ tarafından henüz kesinleşmemiş olması halinde Tedarikçi; EPDK tarafından yayımlanan tahmini değerleri, piyasa verilerine dayalı makul ticari tahminleri veya geçici değerleri esas alarak faturalama yapabilir. EPİAŞ tarafından kesinleşen YEKDEM bedeli ile geçici faturalama arasında oluşan farklar sonraki faturalarda mahsup veya ilave edilerek düzeltilir. Gerçekleşen YEKDEM bedelinin negatif çıkması halinde bu durum Abone lehine herhangi bir indirim, mahsup veya alacak hakkı doğurmaz. Abonenin tüketim profilinden veya piyasa uzlaştırmalarından kaynaklanan maliyetlerin pozitif olması halinde bu maliyetler anlaşma fiyatı katsayısı uygulanarak faturalara yansıtılabilir. Elektrik piyasasında oluşabilecek dengesizlik maliyetleri, finansman maliyetleri, piyasa işletim bedelleri, fark fonu, GDDK, uzlaştırma farkları ve benzeri piyasa kaynaklı mali yükümlülükler fiyatlandırma hesaplamasına dahil edilebilir. Bu maliyetler ilgili piyasa verileri ve uzlaştırma sonuçları esas alınarak hesaplanır ve anlaşma fiyatı kapsamında faturalara yansıtılır. Bu maliyetlerin sonradan kesinleşmesi veya güncellenmesi halinde ortaya çıkan farklar sonraki faturalara yansıtılabilir. Abonenin sözleşme süresi sona ermeden elektrik enerjisi tedarikini sonlandırması, başka bir tedarikçiye geçmesi, kullanım yerini kapatması veya sözleşmenin Abone kaynaklı herhangi bir nedenle sona ermesi halinde; Tedarikçi’nin Abone’ye ilişkin olarak önceden planladığı veya portföyünde bulundurduğu enerji miktarından kaynaklanan maliyetler doğabilir. Bu durumda Tedarikçi, sözleşmenin kalan süresi için planlanan enerji teminine ilişkin portföy maliyetleri ile piyasa fiyatları arasındaki farktan doğan zararını Abone’ye yansıtma hakkına sahiptir. Bu zarar, Tedarikçi’nin portföy yönetim kayıtları, piyasa fiyatları ve ilgili piyasa verileri esas alınarak hesaplanır ve Abone tarafından ayrıca ödenir. Bu kapsamda hesaplanan portföyden çıkış maliyeti, sözleşmede öngörülen cezai şartlar ve diğer mali yükümlülüklerden bağımsız olup bunlara ilave olarak talep edilebilir. Teminat tutarı, abonenin son bir yıl içerisinde düzenlenen faturaları arasındaki en yüksek toplam fatura tutarının iki katından az olmamak üzere belirlenir. Teminat nakit veya kesin ve süresiz banka teminat mektubu olarak verilebilir. Abonenin tüketim miktarında, risk profilinde veya piyasa koşullarında değişiklik olması halinde Tedarikçi teminat tutarını güncelleme hakkına sahiptir.</p>
+
+<h2>TOPLAM SATIŞ BEDELİ VE FATURALANDIRILMASI</h2>
+<p>Toplam Satış Bedeli, ilgili fatura dönemine ait fiili enerji tüketimi esas alınarak hesaplanır. Hesaplama yapılırken abonenin tüketim miktarına trafo kaybı ilave edilir ve elde edilen toplam enerji miktarı, işbu sözleşme kapsamında belirlenen anlaşma fiyatı, profil maliyeti ve elektrik satışından kaynaklanan piyasa bedellerinin toplamı ile çarpılır. Buna göre Toplam Satış Bedeli formül olarak; <strong>Toplam Satış Bedeli = (Tüketim Miktarı + Trafo Kaybı) × (Anlaşma Fiyatı + Profil Maliyeti + Elektrik Satışından Kaynaklanan Piyasa Bedelleri)</strong> şeklinde hesaplanır.</p>
+<p>Hesaplanan enerji bedeline ayrıca yürürlükteki elektrik piyasası mevzuatı kapsamında uygulanması gereken dağıtım bedeli, kayıp bedeli, iletim bedeli, perakende satış hizmet bedeli, kesme-bağlama ve sayaç okuma bedelleri, reaktif enerji bedelleri, güç veya güç aşım bedelleri ile ilgili mevzuat çerçevesinde uygulanabilecek diğer sistem kullanım bedelleri ilave edilir. Elektrik piyasasında oluşabilecek piyasa işletim bedelleri, uzlaştırma farkları, dengesizlik maliyetleri, finansman maliyetleri ve benzeri piyasa kaynaklı mali yükümlülükler de toplam satış bedeline dahil edilerek faturalandırılabilir.</p>
+<p>Toplam satış bedeline ayrıca yürürlükteki mevzuat uyarınca uygulanması gereken fonlar ve vergiler, katma değer vergisi dâhil olmak üzere ilave edilir. Toplam Satış Bedeli, sayaç okumaları ve tüketim verilerinin dağıtım şirketi, EPİAŞ veya ilgili piyasa işletim sistemlerinden temin edilmesini takiben Tedarikçi tarafından Abone’ye faturalandırılır.</p>
+<p>Abonenin özel vergi, fon, teşvik veya benzeri bir uygulama kapsamında bulunması halinde bu durumun Tedarikçi’ye yazılı olarak bildirilmesi Abonenin sorumluluğundadır. Abone tarafından yazılı bildirim yapılmadığı takdirde sistem kullanım bedelleri, fonlar ve vergiler abonenin tarife grubuna göre uygulanır ve bu nedenle Abone herhangi bir geri ödeme veya tazminat talebinde bulunmayacağını kabul eder.</p>
+
+<h2>YÜRÜRLÜK VE UYGULANABİLİRLİK REJİMİ</h2>
+<p>İşbu Ek Protokol, taraflarca imzalandığı tarih itibarıyla yürürlüğe girer ve Gelka Enerji Yatırım San. ve Tic. A.Ş. ile Abone arasında akdedilmiş Elektrik Satış Sözleşmesi’nin ayrılmaz bir parçası olarak uygulanır. Ek Protokol hükümleri, yürürlük tarihinden itibaren sözleşmesel ilişkiye doğrudan etki eder ve taraflar arasında aksi açıkça kararlaştırılmadıkça, Elektrik Satış Sözleşmesi ile birlikte ve onunla uyumlu şekilde hüküm ve sonuç doğurur.</p>
+
+<div class="signature-block">
+  <div class="signature-col"><p><strong>GELKA ENERJİ YATIRIM SAN. VE TİC. A.Ş.</strong><br>Unvan – Yetkili İmza / Kaşe</p></div>
+  <div class="signature-col"><p><strong>ABONE</strong><br>Unvan – Yetkili İmza / Kaşe: {{ legal_name or '' }}</p></div>
+</div>

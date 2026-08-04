@@ -175,7 +175,7 @@ const ALLOWED_DOWNLOAD_ORIGINS = [
   `http://localhost:${BACKEND_PORT}`,
 ];
 // İzin verilen path prefix'leri (sadece PDF endpoint'leri)
-const ALLOWED_PATH_PREFIXES = ['/generate-pdf'];
+const ALLOWED_PATH_PREFIXES = ['/generate-pdf', '/api/contracts'];
 const MAX_PDF_SIZE = 50 * 1024 * 1024; // 50MB hard limit
 
 /**
@@ -386,6 +386,119 @@ ipcMain.handle('download:pdf', async (event, { url, formData, fileName }) => {
     });
 
     request.write(bodyBuffer);
+    request.end();
+  });
+});
+
+// ── IPC: Basit GET tabanlı dosya indirme (sözleşme PDF'i — download:pdf'in
+// POST+multipart body'sine ihtiyacı yok, tek fark budur; doğrulama/kaydetme
+// akışı birebir aynı) ──────────────────────────────────────────────────────
+
+ipcMain.handle('download:file', async (event, { url, fileName }) => {
+  let normalizedUrl = url;
+  try {
+    const u = new URL(url);
+    if (u.hostname === 'localhost') {
+      u.hostname = '127.0.0.1';
+      normalizedUrl = u.toString();
+    }
+  } catch { /* validateDownloadUrl yakalayacak */ }
+
+  const urlCheck = validateDownloadUrl(normalizedUrl);
+  if (!urlCheck.ok) {
+    console.error(`[download:file] URL reddedildi: ${urlCheck.error} (url=${normalizedUrl})`);
+    return { ok: false, error: urlCheck.error };
+  }
+
+  const safeName = (fileName || 'dosya.pdf')
+    .replace(/[/\\:*?"<>|]/g, '_')
+    .replace(/\.\./g, '_');
+
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win) return { ok: false, error: 'Pencere bulunamadı.' };
+
+  const { canceled, filePath } = await dialog.showSaveDialog(win, {
+    defaultPath: path.join(app.getPath('desktop'), safeName),
+    filters: [{ name: 'PDF Dosyası', extensions: ['pdf'] }],
+  });
+  if (canceled || !filePath) return { ok: false, canceled: true };
+
+  return new Promise((resolve) => {
+    const parsedUrl = new URL(normalizedUrl);
+    const options = {
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port,
+      path: parsedUrl.pathname + parsedUrl.search,
+      method: 'GET',
+    };
+
+    const request = http.request(options, (response) => {
+      const statusCode = response.statusCode;
+      const responseContentType = (response.headers['content-type'] || '').toString();
+
+      const chunks = [];
+      let totalBytes = 0;
+
+      response.on('data', (chunk) => {
+        totalBytes += chunk.length;
+        if (totalBytes > MAX_PDF_SIZE) {
+          request.destroy();
+          resolve({ ok: false, error: `Dosya boyutu limiti aşıldı (>${MAX_PDF_SIZE / 1024 / 1024}MB).` });
+          return;
+        }
+        chunks.push(chunk);
+      });
+
+      response.on('end', () => {
+        const buffer = Buffer.concat(chunks);
+
+        if (statusCode !== 200) {
+          let errorResult = { ok: false, statusCode, error: `Sunucu hatası (${statusCode})` };
+          if (responseContentType.includes('application/json')) {
+            try {
+              const parsed = JSON.parse(buffer.toString('utf-8'));
+              const errObj = parsed.detail || parsed;
+              errorResult.error = errObj.message || errObj.detail || errorResult.error;
+            } catch {
+              errorResult.error = buffer.toString('utf-8').slice(0, 500);
+            }
+          }
+          console.error(`[download:file] Sunucu hatası (${statusCode}): ${errorResult.error}`);
+          resolve(errorResult);
+          return;
+        }
+
+        if (buffer.length === 0) {
+          resolve({ ok: false, error: 'Sunucudan boş yanıt alındı.' });
+          return;
+        }
+
+        if (buffer.length >= 5 && buffer.toString('ascii', 0, 5) !== '%PDF-') {
+          console.error('[download:file] Dosya PDF formatında değil (magic bytes uyumsuz).');
+          resolve({ ok: false, error: 'İndirilen dosya geçerli bir PDF değil.' });
+          return;
+        }
+
+        fs.writeFile(filePath, buffer, (err) => {
+          if (err) {
+            console.error(`[download:file] Dosya yazma hatası: ${err.message}`);
+            resolve({ ok: false, error: `Dosya kaydedilemedi: ${err.message}` });
+          } else {
+            console.log(`[download:file] Dosya kaydedildi: ${filePath} (${buffer.length} bytes)`);
+            shell.openPath(filePath).then((openErr) => {
+              if (openErr) console.warn(`[download:file] Dosya otomatik açılamadı: ${openErr}`);
+            });
+            resolve({ ok: true, filePath });
+          }
+        });
+      });
+    });
+
+    request.on('error', (err) => {
+      console.error(`[download:file] İstek hatası: ${err.message}`);
+      resolve({ ok: false, error: `Bağlantı hatası: ${err.message}` });
+    });
+
     request.end();
   });
 });
