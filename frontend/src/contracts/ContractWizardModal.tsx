@@ -358,8 +358,18 @@ export const ContractWizardModal: React.FC<ContractWizardModalProps> = ({ open, 
         {step === 'upload' && (
           <div className="space-y-4">
             <p className="text-sm text-gray-600">Sözleşme taraflarını ve Ek Protokol bilgilerini otomatik doldurmak için vergi levhası ve imza sirküleri belgelerini yükleyin.</p>
-            <FileField label="Vergi Levhası" file={taxCertFile} onChange={setTaxCertFile} />
-            <FileField label="İmza Sirküleri" file={signatureCircularFile} onChange={setSignatureCircularFile} />
+            <FileField
+              label="Vergi Levhası"
+              hint="Şirket unvanı, vergi no, vergi dairesi ve adres bilgisi içeren belge"
+              file={taxCertFile}
+              onChange={setTaxCertFile}
+            />
+            <FileField
+              label="İmza Sirküleri"
+              hint="Yetkili kişi adı ve temsil yetkisi bilgisi içeren belge"
+              file={signatureCircularFile}
+              onChange={setSignatureCircularFile}
+            />
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" onClick={onClose} className="btn-secondary">Vazgeç</button>
               <button
@@ -492,17 +502,28 @@ export const ContractWizardModal: React.FC<ContractWizardModalProps> = ({ open, 
 // Alt bileşenler
 // =============================================================================
 
-function FileField({ label, file, onChange }: { label: string; file: File | null; onChange: (f: File | null) => void }) {
+function FileField({
+  label, hint, file, onChange,
+}: { label: string; hint?: string; file: File | null; onChange: (f: File | null) => void }) {
   return (
     <div>
       <label className="label">{label}</label>
+      {hint && <p className="mb-1 text-xs text-gray-400">{hint}</p>}
       <input
         type="file"
         accept=".pdf,.png,.jpg,.jpeg"
         onChange={(e) => onChange(e.target.files?.[0] || null)}
         className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm file:mr-3 file:rounded file:border-0 file:bg-primary-50 file:px-3 file:py-1 file:text-sm file:font-medium file:text-primary-700 hover:file:bg-primary-100"
       />
-      {file && <p className="mt-1 text-xs text-gray-500">{file.name}</p>}
+      {/* Kullanıcının hangi dosyayı hangi alana seçtiğini net görebilmesi için:
+          etiket + dosya adı aynı cümlede, belirgin biçimde. Yanlış kutuya
+          yanlış dosya seçimi (karışıklık) burada fark edilebilir olsun. */}
+      {file && (
+        <p className="mt-1.5 flex items-center gap-1.5 text-xs font-medium text-green-700">
+          <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+          <span className="truncate">{label} olarak seçildi: {file.name}</span>
+        </p>
+      )}
     </div>
   );
 }
