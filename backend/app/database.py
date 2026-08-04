@@ -629,7 +629,11 @@ class UploadedReferenceDocument(Base):
     uploaded_at = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (
-        UniqueConstraint("tenant_id", "customer_id", "sha256", name="uq_reference_doc_dedup"),
+        # document_type dahil: aynı dosya (sha256) farklı belge türüyle
+        # yüklenirse dedup'a takılmaz, ayrı kayıt olur (bkz. migration
+        # dc8343278cfa — LOCAL UAT FINAL REMEDIATION, dedup yanlış
+        # document_type'ı kalıcılaştırıyordu).
+        UniqueConstraint("tenant_id", "customer_id", "sha256", "document_type", name="uq_reference_doc_dedup"),
     )
 
 

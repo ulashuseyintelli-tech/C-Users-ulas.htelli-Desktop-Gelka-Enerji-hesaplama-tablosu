@@ -20,6 +20,7 @@ from .. import database as db_models
 from ..database import get_db
 from ..services.tenant import get_tenant_id
 from ..core.config import settings
+from ..pdf_render import PdfRenderError
 from . import service
 from .schemas import (
     ConflictDetectionRequest,
@@ -44,6 +45,24 @@ logger = logging.getLogger(__name__)
 
 _ALLOWED_DOCUMENT_MIME_TYPES = {"application/pdf", "image/jpeg", "image/png"}
 _MAX_DOCUMENT_SIZE_BYTES = 10 * 1024 * 1024  # mevcut validate_uploaded_file ile aynı sınır
+
+# Magic-byte imzaları — istemcinin BEYAN ettiği content_type (sahte/yanlış
+# olabilir, güvenilmez) yerine dosyanın GERÇEK içeriğini doğrular. Yalnız
+# _ALLOWED_DOCUMENT_MIME_TYPES'taki 3 format için (kapsam bilerek dar
+# tutuldu — genel bir magic-byte kütüphanesi eklemek yerine).
+_MAGIC_BYTES_BY_MIME = {
+    "application/pdf": (b"%PDF-",),
+    "image/jpeg": (b"\xff\xd8\xff",),
+    "image/png": (b"\x89PNG\r\n\x1a\n",),
+}
+
+
+def _sniff_real_mime_type(file_bytes: bytes) -> Optional[str]:
+    """Dosyanın magic byte'larına göre gerçek tipini döndürür; tanınmıyorsa None."""
+    for mime, signatures in _MAGIC_BYTES_BY_MIME.items():
+        if any(file_bytes.startswith(sig) for sig in signatures):
+            return mime
+    return None
 
 
 def _require_default_tenant_boundary(tenant_id: str = Depends(get_tenant_id)) -> str:
@@ -139,6 +158,21 @@ async def upload_document(
     if file.content_type not in _ALLOWED_DOCUMENT_MIME_TYPES:
         raise HTTPException(status_code=422, detail={"error": "unsupported_file_type", "message": f"Desteklenmeyen dosya tipi: {file.content_type}"})
 
+    # Gerçek MIME doğrulaması: istemcinin content_type beyanı güvenilmez
+    # (uzantı/başlık yeniden adlandırılabilir). Dosyanın GERÇEK içeriği
+    # (magic bytes) beyan edilenle uyuşmuyorsa reddet — extraction'ın PDF/
+    # resim dalını yanlış seçmesini (ve OpenAI'a hatalı format göndermeyi)
+    # burada, kaynağında engeller.
+    sniffed = _sniff_real_mime_type(file_bytes)
+    if sniffed is not None and sniffed != file.content_type:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "mime_type_mismatch",
+                "message": f"Dosya içeriği beyan edilen tiple ({file.content_type}) uyuşmuyor.",
+            },
+        )
+
     doc, is_duplicate = service.upload_reference_document(
         db=db,
         tenant_id=tenant_id,
@@ -172,8 +206,20 @@ def start_extraction(
     if not document:
         raise HTTPException(status_code=404, detail={"error": "document_not_found", "message": "Belge bulunamadı"})
 
+    _PDF_ERROR_MESSAGES = {
+        "pdf_corrupt": "PDF dosyası açılamadı veya bozuk. Lütfen dosyayı kontrol edip tekrar yükleyin.",
+        "pdf_empty": "PDF dosyası boş (sayfa içermiyor). Lütfen geçerli bir belge yükleyin.",
+        "pdf_too_many_pages": "PDF çok fazla sayfa içeriyor. Lütfen ilgili sayfaları içeren daha kısa bir belge yükleyin.",
+    }
     try:
         run = service.run_extraction(db, document)
+    except PdfRenderError as exc:
+        # Kullanıcı/veri hatası (bozuk, boş veya çok sayfalı PDF) — upstream
+        # (OpenAI) çağrısı hiç yapılmadı, bu yüzden 502 değil 422 (client error).
+        raise HTTPException(
+            status_code=422,
+            detail={"error": exc.error_code, "message": _PDF_ERROR_MESSAGES.get(exc.error_code, str(exc))},
+        ) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail={"error": "extraction_failed", "message": "Belge işlenemedi, lütfen tekrar deneyin"}) from exc
 
