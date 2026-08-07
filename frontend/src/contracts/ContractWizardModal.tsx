@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Upload, CheckCircle2, AlertTriangle, Download } from 'lucide-react';
 import {
   FieldCandidate,
+  DocumentUploadResponse,
   uploadContractDocument,
   startContractExtraction,
   getContractExtractionResult,
@@ -27,6 +28,13 @@ export interface ContractWizardModalProps {
 }
 
 type WizardStep = 'upload' | 'processing' | 'review' | 'complete_fields' | 'preview' | 'done';
+
+// Review adımında gösterilecek bir satır: belgeden gelen bir aday grubu
+// (mevcut Kabul Et/Düzelt akışı) ya da hiçbir belgede bulunamayan zorunlu
+// bir alan için elle giriş satırı.
+type ReviewRow =
+  | { kind: 'group'; name: string; group: FieldCandidate[] }
+  | { kind: 'manual'; name: string };
 
 const STEP_LABELS: Record<WizardStep, string> = {
   upload: '1. Belgeler',
@@ -69,6 +77,20 @@ function StepIndicator({ current }: { current: WizardStep }) {
 const LEGAL_PROFILE_FIELDS = ['legal_name', 'tax_number', 'tax_office', 'mersis_number', 'trade_registry_number', 'registered_address', 'facility_address'];
 const REPRESENTATIVE_FIELDS = ['representative_full_name', 'representative_national_id', 'authority_type', 'authority_scope', 'authority_start_date', 'authority_end_date', 'is_indefinite'];
 const INFO_ONLY_FIELDS = ['activity_code', 'establishment_date', 'notary_name', 'notary_date', 'notary_document_number'];
+
+// Backend şemasıyla bire bir aynı olmalı (LegalProfileSaveRequest / RepresentativeSaveRequest
+// içindeki zorunlu — Optional OLMAYAN — alanlar). Burada listelenmeyen her şey opsiyoneldir.
+const REQUIRED_FIELD_NAMES = ['legal_name', 'tax_number', 'tax_office', 'registered_address', 'representative_full_name', 'representative_national_id'];
+
+// "Kayıtlı Adres" ve "Tesis Adresi" farklı belgelerden gelen, kasıtlı olarak
+// AYRI tutulan iki kavramdır (bkz. backend _CROSS_DOCUMENT_FIELD_ALIASES —
+// bunlar birbiriyle eşleştirilmez). Kullanıcı ikisini karıştırıp yalnız
+// birini onaylayabildiği için, hangisinin hangi belgeden geldiğini burada
+// açıkça belirtiyoruz.
+const FIELD_HINTS: Record<string, string> = {
+  registered_address: 'İmza sirkülerindeki şirket merkez adresi',
+  facility_address: 'Vergi levhasındaki tesis/işyeri adresi',
+};
 
 const FIELD_LABELS: Record<string, string> = {
   legal_name: 'Unvan',
@@ -115,6 +137,9 @@ export const ContractWizardModal: React.FC<ContractWizardModalProps> = ({ open, 
   // review
   const [candidates, setCandidates] = useState<FieldCandidate[]>([]);
   const [resolvingId, setResolvingId] = useState<number | null>(null);
+  // Yalnız tek belge yüklendiğinde (diğer belgede olması gereken zorunlu bir
+  // alan hiç candidate olarak gelmediğinde) kullanıcının elle girdiği değerler.
+  const [manualOverrides, setManualOverrides] = useState<Record<string, string>>({});
 
   // draft/contract
   const [contractId, setContractId] = useState<number | null>(null);
@@ -142,6 +167,7 @@ export const ContractWizardModal: React.FC<ContractWizardModalProps> = ({ open, 
       setStep('upload'); setError(null); setLoading(false);
       setTaxCertFile(null); setSignatureCircularFile(null);
       setCandidates([]);
+      setManualOverrides({});
       setContractId(null);
       setStartDate(''); setDurationMonths(12); setTariffGroup(''); setSubscriptionCodes('');
       setPreviewSections(null); setFinalizeResult(null);
@@ -159,30 +185,69 @@ export const ContractWizardModal: React.FC<ContractWizardModalProps> = ({ open, 
     return groups;
   }, [candidates]);
 
-  const requiredFieldsReady = useMemo(() => {
-    const requiredForLegal = ['legal_name', 'tax_number', 'tax_office', 'registered_address'];
-    const requiredForRep = ['representative_full_name', 'representative_national_id'];
-    return [...requiredForLegal, ...requiredForRep].every(name => {
-      const group = fieldGroups.get(name) || [];
-      return group.some(c => effectiveValue(c) !== null);
-    });
+  // Bir alanın "hazır" değerini döndürür: önce elle girilmiş override'a,
+  // yoksa belgeden kabul edilmiş/düzeltilmiş candidate'a bakar. İkisi de
+  // yoksa null (henüz hazır değil).
+  const getFieldValue = useCallback((name: string): string | null => {
+    const manual = manualOverrides[name];
+    if (manual) return manual;
+    const group = fieldGroups.get(name) || [];
+    const found = group.map(effectiveValue).find(v => v !== null);
+    return found ?? null;
+  }, [fieldGroups, manualOverrides]);
+
+  const missingRequiredFieldNames = useMemo(
+    () => REQUIRED_FIELD_NAMES.filter(name => getFieldValue(name) === null),
+    [getFieldValue],
+  );
+
+  const requiredFieldsReady = missingRequiredFieldNames.length === 0;
+
+  // Review adımında gösterilecek satırlar: bilinen alan sırasını (LEGAL +
+  // REPRESENTATIVE) izler. Belgeden candidate geldiyse mevcut onay grubu
+  // gösterilir; hiç gelmediyse VE alan zorunluysa elle giriş satırı eklenir
+  // (tek belge yüklendiğinde diğer belgeye özgü zorunlu alanlar için).
+  // Opsiyonel bir alan hiç candidate üretmediyse hiç gösterilmez (eskiden de
+  // böyleydi — gereksiz boş satırlarla ekranı doldurmuyoruz).
+  const reviewRows = useMemo<ReviewRow[]>(() => {
+    const order = [...LEGAL_PROFILE_FIELDS, ...REPRESENTATIVE_FIELDS];
+    const rows: ReviewRow[] = [];
+    for (const name of order) {
+      const group = fieldGroups.get(name);
+      if (group && group.length > 0) {
+        rows.push({ kind: 'group', name, group });
+      } else if (REQUIRED_FIELD_NAMES.includes(name)) {
+        rows.push({ kind: 'manual', name });
+      }
+    }
+    // Güvenlik ağı: bilinen sıralamada olmayan ama INFO_ONLY da olmayan bir
+    // alan gelirse (şema ileride genişlerse) eski davranış gibi yine göster.
+    for (const [name, group] of fieldGroups.entries()) {
+      if (!order.includes(name) && !INFO_ONLY_FIELDS.includes(name)) {
+        rows.push({ kind: 'group', name, group });
+      }
+    }
+    return rows;
   }, [fieldGroups]);
 
   // ── Adım 1 → 2: yükle + extraction + conflict detection ──
+  // En az bir belge yeterlidir. Yalnız bir belge yüklendiğinde, diğer
+  // belgeye özgü zorunlu alanlar (örn. yalnız imza sirkülerinde bulunan T.C.
+  // no) review adımında elle giriş satırı olarak sunulur (bkz. reviewRows).
   const handleUploadAndProcess = useCallback(async () => {
-    if (!taxCertFile || !signatureCircularFile) {
-      setError('Vergi levhası ve imza sirküleri belgelerinin ikisi de yüklenmelidir.');
+    if (!taxCertFile && !signatureCircularFile) {
+      setError('En az bir belge (vergi levhası veya imza sirküleri) yüklenmelidir.');
       return;
     }
     setError(null);
     setStep('processing');
     setLoading(true);
     try {
-      const [taxUpload, sigUpload] = await Promise.all([
-        uploadContractDocument('vergi_levhasi', taxCertFile, customerId),
-        uploadContractDocument('imza_sirkusu', signatureCircularFile, customerId),
-      ]);
-      const ids = [taxUpload.document_id, sigUpload.document_id];
+      const uploads: Array<Promise<DocumentUploadResponse>> = [];
+      if (taxCertFile) uploads.push(uploadContractDocument('vergi_levhasi', taxCertFile, customerId));
+      if (signatureCircularFile) uploads.push(uploadContractDocument('imza_sirkusu', signatureCircularFile, customerId));
+      const uploadResults = await Promise.all(uploads);
+      const ids = uploadResults.map(r => r.document_id);
 
       await Promise.all(ids.map(id => startContractExtraction(id)));
       const results = await Promise.all(ids.map(id => getContractExtractionResult(id)));
@@ -192,7 +257,10 @@ export const ContractWizardModal: React.FC<ContractWizardModalProps> = ({ open, 
         throw new Error(`Belge işlenemedi (${failed.document_type}). Lütfen görseli/PDF'i kontrol edip tekrar deneyin.`);
       }
 
-      await detectContractConflicts(ids);
+      // Çelişki tespiti yalnız birden fazla belge arasında anlamlıdır.
+      if (ids.length > 1) {
+        await detectContractConflicts(ids);
+      }
       const refreshed = await Promise.all(ids.map(id => getContractExtractionResult(id)));
       setCandidates(refreshed.flatMap(r => r.candidates));
       setStep('review');
@@ -230,16 +298,17 @@ export const ContractWizardModal: React.FC<ContractWizardModalProps> = ({ open, 
     }
   }, []);
 
+  // ── Review: hiçbir belgede bulunamayan zorunlu bir alanı elle kaydet ──
+  const handleManualFieldSave = useCallback((name: string, value: string) => {
+    setManualOverrides(prev => ({ ...prev, [name]: value }));
+  }, []);
+
   // ── Adım 3 → 4: legal profile + representative + draft oluştur ──
   const handleConfirmReview = useCallback(async () => {
     setError(null);
     setLoading(true);
     try {
-      const get = (name: string): string => {
-        const group = fieldGroups.get(name) || [];
-        const found = group.map(effectiveValue).find(v => v !== null);
-        return found || '';
-      };
+      const get = (name: string): string => getFieldValue(name) || '';
 
       const profile = await saveLegalProfile({
         customer_id: customerId,
@@ -270,7 +339,7 @@ export const ContractWizardModal: React.FC<ContractWizardModalProps> = ({ open, 
     } finally {
       setLoading(false);
     }
-  }, [fieldGroups, customerId, offerId]);
+  }, [getFieldValue, customerId, offerId]);
 
   // ── Adım 4 → 5: önizleme ──
   const handlePreview = useCallback(async () => {
@@ -357,7 +426,8 @@ export const ContractWizardModal: React.FC<ContractWizardModalProps> = ({ open, 
 
         {step === 'upload' && (
           <div className="space-y-4">
-            <p className="text-sm text-gray-600">Sözleşme taraflarını ve Ek Protokol bilgilerini otomatik doldurmak için vergi levhası ve imza sirküleri belgelerini yükleyin.</p>
+            <p className="text-sm text-gray-600">Sözleşme taraflarını ve Ek Protokol bilgilerini otomatik doldurmak için vergi levhası ve/veya imza sirküleri belgesini yükleyin.</p>
+            <p className="text-xs text-gray-400 -mt-2">Tek belge ile de devam edebilirsiniz — yüklemediğiniz belgeye ait zorunlu bilgileri bir sonraki adımda elle girebilirsiniz.</p>
             <FileField
               label="Vergi Levhası"
               hint="Şirket unvanı, vergi no, vergi dairesi ve adres bilgisi içeren belge"
@@ -375,7 +445,7 @@ export const ContractWizardModal: React.FC<ContractWizardModalProps> = ({ open, 
               <button
                 type="button"
                 onClick={handleUploadAndProcess}
-                disabled={!taxCertFile || !signatureCircularFile || loading}
+                disabled={(!taxCertFile && !signatureCircularFile) || loading}
                 className="btn-primary flex items-center gap-2"
               >
                 <Upload className="w-4 h-4" /> Yükle ve Devam Et
@@ -399,22 +469,36 @@ export const ContractWizardModal: React.FC<ContractWizardModalProps> = ({ open, 
                 <span>Belgeler arasında çelişki tespit edildi. Devam etmeden önce her çelişkili alan için doğru değeri seçin.</span>
               </div>
             )}
+            {!hasUnresolvedConflicts && (
+              <div className={`rounded-md border p-3 text-sm ${requiredFieldsReady ? 'border-green-200 bg-green-50 text-green-800' : 'border-gray-200 bg-gray-50 text-gray-700'}`}>
+                <span className="font-medium">
+                  Zorunlu alanlar: {REQUIRED_FIELD_NAMES.length - missingRequiredFieldNames.length}/{REQUIRED_FIELD_NAMES.length} onaylandı
+                </span>
+                {missingRequiredFieldNames.length > 0 && (
+                  <span> — eksik: {missingRequiredFieldNames.map(n => FIELD_LABELS[n] || n).join(', ')}</span>
+                )}
+              </div>
+            )}
             <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-1">
-              {[...fieldGroups.entries()]
-                .filter(([name]) => !INFO_ONLY_FIELDS.includes(name))
-                .sort(([a], [b]) => {
-                  const order = [...LEGAL_PROFILE_FIELDS, ...REPRESENTATIVE_FIELDS];
-                  return order.indexOf(a) - order.indexOf(b);
-                })
-                .map(([name, group]) => (
-                  <FieldReviewGroup
-                    key={name}
-                    label={FIELD_LABELS[name] || name}
-                    candidates={group}
-                    resolvingId={resolvingId}
-                    onResolve={handleResolve}
-                  />
-                ))}
+              {reviewRows.map(row => row.kind === 'group' ? (
+                <FieldReviewGroup
+                  key={row.name}
+                  label={FIELD_LABELS[row.name] || row.name}
+                  hint={FIELD_HINTS[row.name]}
+                  required={REQUIRED_FIELD_NAMES.includes(row.name)}
+                  candidates={row.group}
+                  resolvingId={resolvingId}
+                  onResolve={handleResolve}
+                />
+              ) : (
+                <ManualFieldInput
+                  key={row.name}
+                  label={FIELD_LABELS[row.name] || row.name}
+                  hint={FIELD_HINTS[row.name]}
+                  value={manualOverrides[row.name] || ''}
+                  onSave={(v) => handleManualFieldSave(row.name, v)}
+                />
+              ))}
             </div>
             <div className="flex justify-between pt-2">
               <button type="button" onClick={() => setStep('upload')} className="btn-secondary">Geri</button>
@@ -427,9 +511,6 @@ export const ContractWizardModal: React.FC<ContractWizardModalProps> = ({ open, 
                 {loading && <Loader2 className="w-4 h-4 animate-spin" />} Devam Et
               </button>
             </div>
-            {!hasUnresolvedConflicts && !requiredFieldsReady && (
-              <p className="text-xs text-gray-500">Devam etmek için zorunlu alanları (unvan, vergi no, vergi dairesi, adres, yetkili ad-soyad, T.C. no) onaylayın.</p>
-            )}
           </div>
         )}
 
@@ -528,10 +609,20 @@ function FileField({
   );
 }
 
+function RequiredBadge({ required }: { required: boolean }) {
+  return required ? (
+    <span className="text-xs font-medium text-orange-700 bg-orange-100 rounded-full px-2 py-0.5">Zorunlu</span>
+  ) : (
+    <span className="text-xs font-medium text-gray-400 bg-gray-100 rounded-full px-2 py-0.5">Opsiyonel</span>
+  );
+}
+
 function FieldReviewGroup({
-  label, candidates, resolvingId, onResolve,
+  label, hint, required, candidates, resolvingId, onResolve,
 }: {
   label: string;
+  hint?: string;
+  required: boolean;
   candidates: FieldCandidate[];
   resolvingId: number | null;
   onResolve: (c: FieldCandidate, decision: 'accepted' | 'corrected', correctedValue?: string) => void;
@@ -543,8 +634,10 @@ function FieldReviewGroup({
     <div className={`rounded-md border p-3 ${isConflict ? 'border-amber-300 bg-amber-50/50' : 'border-gray-200'}`}>
       <div className="flex items-center gap-2 mb-2">
         <span className="text-sm font-medium text-gray-700">{label}</span>
+        <RequiredBadge required={required} />
         {isConflict && <span className="text-xs font-medium text-amber-700 bg-amber-100 rounded-full px-2 py-0.5">Çelişki</span>}
       </div>
+      {hint && <p className="-mt-1 mb-2 text-xs text-gray-400">{hint}</p>}
       <div className="space-y-2">
         {candidates.map(c => {
           const resolved = c.user_decision === 'accepted' || c.user_decision === 'corrected';
@@ -589,6 +682,49 @@ function FieldReviewGroup({
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// Hiçbir yüklenen belgede bulunamayan (çünkü o belgeyi kullanıcı yüklemedi)
+// ama backend şemasında zorunlu olan bir alan için elle giriş satırı.
+function ManualFieldInput({
+  label, hint, value, onSave,
+}: {
+  label: string;
+  hint?: string;
+  value: string;
+  onSave: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const saved = value.trim().length > 0;
+
+  return (
+    <div className="rounded-md border border-dashed border-gray-300 bg-gray-50/60 p-3">
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-sm font-medium text-gray-700">{label}</span>
+        <RequiredBadge required />
+        <span className="text-[10px] text-gray-400">belgede bulunamadı — elle girin</span>
+      </div>
+      {hint && <p className="mb-2 text-xs text-gray-400">{hint}</p>}
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          placeholder={`${label} girin…`}
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          className="flex-1 rounded border border-gray-300 px-2 py-1 text-sm"
+        />
+        <button
+          type="button"
+          disabled={!draft.trim() || draft.trim() === value}
+          onClick={() => onSave(draft.trim())}
+          className="text-xs text-primary-700 hover:underline disabled:text-gray-300 disabled:no-underline"
+        >
+          Kaydet
+        </button>
+        {saved && <CheckCircle2 className="w-4 h-4 text-green-600 flex-shrink-0" />}
       </div>
     </div>
   );
