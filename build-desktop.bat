@@ -4,19 +4,29 @@ echo   Gelka Enerji - Masaustu Uygulama Build
 echo ============================================
 echo.
 
-:: 0. Build metadata (commit/branch/date) - /version endpoint icin
-echo [0/4] Build metadata olusturuluyor...
+:: 0. Versiyon numarasini artir (patch: 1.0.0 -> 1.0.1 -> ...)
+:: Boylece her build'in uygulama icinde (footer/Hakkinda) FARKLI bir
+:: numarasi olur ve hangi iyilestirmelerin dahil oldugu takip edilebilir.
+echo [0/5] Versiyon numarasi artiriliyor...
+cd electron
+call npm version patch --no-git-tag-version --allow-same-version >nul
+for /f "delims=" %%i in ('node -p "require('./package.json').version"') do set APP_VERSION=%%i
+cd ..
+echo   Yeni versiyon: %APP_VERSION%
+
+:: 1. Build metadata (commit/branch/date/version) - /version endpoint icin
+echo [1/5] Build metadata olusturuluyor...
 cd backend
 for /f "delims=" %%i in ('git rev-parse HEAD') do set GIT_COMMIT=%%i
 for /f "delims=" %%i in ('git rev-parse --short HEAD') do set GIT_SHORT=%%i
 for /f "delims=" %%i in ('git rev-parse --abbrev-ref HEAD') do set GIT_BRANCH=%%i
 for /f "delims=" %%i in ('powershell -NoProfile -Command "Get-Date -Format o"') do set BUILD_DATE=%%i
->build-info.json echo {"commit":"%GIT_COMMIT%","commit_short":"%GIT_SHORT%","branch":"%GIT_BRANCH%","build_date":"%BUILD_DATE%","app_version":"1.0.0"}
-echo   build-info.json: %GIT_SHORT% (%GIT_BRANCH%) %BUILD_DATE%
+>build-info.json echo {"commit":"%GIT_COMMIT%","commit_short":"%GIT_SHORT%","branch":"%GIT_BRANCH%","build_date":"%BUILD_DATE%","app_version":"%APP_VERSION%"}
+echo   build-info.json: v%APP_VERSION% - %GIT_SHORT% (%GIT_BRANCH%) %BUILD_DATE%
 cd ..
 
-:: 1. Frontend build
-echo [1/4] Frontend build ediliyor...
+:: 2. Frontend build
+echo [2/5] Frontend build ediliyor...
 cd frontend
 call npm run build
 if %ERRORLEVEL% neq 0 (
@@ -26,8 +36,8 @@ if %ERRORLEVEL% neq 0 (
 )
 cd ..
 
-:: 2. Backend PyInstaller build
-echo [2/4] Backend paketleniyor (PyInstaller)...
+:: 3. Backend PyInstaller build
+echo [3/5] Backend paketleniyor (PyInstaller)...
 cd backend
 pip install pyinstaller >nul 2>&1
 pyinstaller --onefile --name gelka-backend ^
@@ -82,14 +92,18 @@ if %ERRORLEVEL% neq 0 (
 )
 cd ..
 
-:: 3. Electron dependencies
-echo [3/4] Electron bagimliliklari yukleniyor...
+:: 4. Electron dependencies
+echo [4/5] Electron bagimliliklari yukleniyor...
 cd electron
 call npm install
 cd ..
 
-:: 4. Electron build
-echo [4/4] Masaustu uygulamasi olusturuluyor...
+:: 5. Electron build
+:: NOT: electron/package.json'daki nsis.artifactName SABIT bir isim
+:: (Gelka-Enerji-Setup.exe) belirtir - versiyon numarasi DOSYA ADINDA
+:: DEGIL, uygulama icinde (footer) gosterilir. Boylece her build AYNI
+:: dosyanin USTUNE yazar, eskisini elle silmeye gerek kalmaz.
+echo [5/5] Masaustu uygulamasi olusturuluyor...
 echo winCodeSign cache hazirlaniyor (symlink sorunu icin)...
 if exist "%LOCALAPPDATA%\electron-builder\Cache\winCodeSign" rmdir /s /q "%LOCALAPPDATA%\electron-builder\Cache\winCodeSign"
 cd electron
@@ -106,7 +120,7 @@ cd ..
 
 echo.
 echo ============================================
-echo   Build tamamlandi!
-echo   Installer: electron/release/
+echo   Build tamamlandi! Versiyon: v%APP_VERSION%
+echo   Installer: electron\release\Gelka-Enerji-Setup.exe
 echo ============================================
 pause
