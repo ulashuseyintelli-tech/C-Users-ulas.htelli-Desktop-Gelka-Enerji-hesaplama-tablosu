@@ -3174,6 +3174,15 @@ function App() {
           onClose={() => setContractWizardOpen(false)}
           offerId={persistedOfferId}
           customerId={persistedCustomerId}
+          // Faturadan (varsa) zaten çıkarılmış unvan/vergi no/tesis adresini
+          // review ekranına ön-doldurma önerisi olarak aktar — kullanıcı
+          // aynı bilgiyi vergi levhası yükleyerek tekrar OCR'a çıkarmasın.
+          // Manuel modda (fatura yüklenmediğinde) consumer hiç olmaz, undefined kalır.
+          invoiceSeed={result?.extraction?.consumer ? {
+            legal_name: result.extraction.consumer.title || undefined,
+            tax_number: result.extraction.consumer.vkn || undefined,
+            facility_address: result.extraction.consumer.facility_address || undefined,
+          } : undefined}
         />
       )}
     </div>

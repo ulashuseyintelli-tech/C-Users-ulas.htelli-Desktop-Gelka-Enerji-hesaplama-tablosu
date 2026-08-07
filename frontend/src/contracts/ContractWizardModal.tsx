@@ -20,21 +20,32 @@ import {
 // Props / step tanımı
 // =============================================================================
 
+// Faturadan (OCR) zaten çıkarılmış, sözleşme alanlarıyla aynı isimlendirmeye
+// eşlenmiş öneri değerleri. Yalnız ön-doldurma amaçlıdır — kullanıcı yine de
+// "Kaydet" ile bilinçli onaylamadan hiçbir alan hazır sayılmaz.
+export interface ContractInvoiceSeed {
+  legal_name?: string;
+  tax_number?: string;
+  facility_address?: string;
+}
+
 export interface ContractWizardModalProps {
   open: boolean;
   onClose: () => void;
   offerId: number;
   customerId?: number;
+  invoiceSeed?: ContractInvoiceSeed;
 }
 
 type WizardStep = 'upload' | 'processing' | 'review' | 'complete_fields' | 'preview' | 'done';
 
 // Review adımında gösterilecek bir satır: belgeden gelen bir aday grubu
-// (mevcut Kabul Et/Düzelt akışı) ya da hiçbir belgede bulunamayan zorunlu
-// bir alan için elle giriş satırı.
+// (mevcut Kabul Et/Düzelt akışı) ya da hiçbir belgede bulunamayan bir alan
+// için elle giriş satırı (zorunluysa her zaman, opsiyonelse yalnız faturadan
+// bir öneri değeri varsa gösterilir — bkz. reviewRows).
 type ReviewRow =
   | { kind: 'group'; name: string; group: FieldCandidate[] }
-  | { kind: 'manual'; name: string };
+  | { kind: 'manual'; name: string; seedValue?: string };
 
 const STEP_LABELS: Record<WizardStep, string> = {
   upload: '1. Belgeler',
@@ -124,7 +135,7 @@ function effectiveValue(candidate: FieldCandidate): string | null {
 // Component
 // =============================================================================
 
-export const ContractWizardModal: React.FC<ContractWizardModalProps> = ({ open, onClose, offerId, customerId }) => {
+export const ContractWizardModal: React.FC<ContractWizardModalProps> = ({ open, onClose, offerId, customerId, invoiceSeed }) => {
   const backdropRef = useRef<HTMLDivElement>(null);
   const [step, setStep] = useState<WizardStep>('upload');
   const [error, setError] = useState<string | null>(null);
@@ -205,19 +216,22 @@ export const ContractWizardModal: React.FC<ContractWizardModalProps> = ({ open, 
 
   // Review adımında gösterilecek satırlar: bilinen alan sırasını (LEGAL +
   // REPRESENTATIVE) izler. Belgeden candidate geldiyse mevcut onay grubu
-  // gösterilir; hiç gelmediyse VE alan zorunluysa elle giriş satırı eklenir
-  // (tek belge yüklendiğinde diğer belgeye özgü zorunlu alanlar için).
-  // Opsiyonel bir alan hiç candidate üretmediyse hiç gösterilmez (eskiden de
-  // böyleydi — gereksiz boş satırlarla ekranı doldurmuyoruz).
+  // gösterilir; hiç gelmediyse VE (alan zorunluysa YA DA faturadan bir öneri
+  // değeri varsa) elle giriş satırı eklenir. Öneri değeri varsa input o
+  // değerle ön-doldurulur (bkz. ManualFieldInput seedValue) — kullanıcı yine
+  // de "Kaydet" ile bilinçli onaylamalı, sessizce otomatik kabul edilmez.
+  // Ne zorunlu ne faturadan önerisi olan opsiyonel bir alan hiç candidate
+  // üretmediyse hiç gösterilmez (gereksiz boş satırlarla ekranı doldurmuyoruz).
   const reviewRows = useMemo<ReviewRow[]>(() => {
     const order = [...LEGAL_PROFILE_FIELDS, ...REPRESENTATIVE_FIELDS];
     const rows: ReviewRow[] = [];
     for (const name of order) {
       const group = fieldGroups.get(name);
+      const seedValue = (invoiceSeed as Record<string, string | undefined> | undefined)?.[name];
       if (group && group.length > 0) {
         rows.push({ kind: 'group', name, group });
-      } else if (REQUIRED_FIELD_NAMES.includes(name)) {
-        rows.push({ kind: 'manual', name });
+      } else if (REQUIRED_FIELD_NAMES.includes(name) || seedValue) {
+        rows.push({ kind: 'manual', name, seedValue });
       }
     }
     // Güvenlik ağı: bilinen sıralamada olmayan ama INFO_ONLY da olmayan bir
@@ -228,7 +242,7 @@ export const ContractWizardModal: React.FC<ContractWizardModalProps> = ({ open, 
       }
     }
     return rows;
-  }, [fieldGroups]);
+  }, [fieldGroups, invoiceSeed]);
 
   // ── Adım 1 → 2: yükle + extraction + conflict detection ──
   // En az bir belge yeterlidir. Yalnız bir belge yüklendiğinde, diğer
@@ -428,6 +442,12 @@ export const ContractWizardModal: React.FC<ContractWizardModalProps> = ({ open, 
           <div className="space-y-4">
             <p className="text-sm text-gray-600">Sözleşme taraflarını ve Ek Protokol bilgilerini otomatik doldurmak için vergi levhası ve/veya imza sirküleri belgesini yükleyin.</p>
             <p className="text-xs text-gray-400 -mt-2">Tek belge ile de devam edebilirsiniz — yüklemediğiniz belgeye ait zorunlu bilgileri bir sonraki adımda elle girebilirsiniz.</p>
+            {(invoiceSeed?.legal_name || invoiceSeed?.tax_number || invoiceSeed?.facility_address) && (
+              <div className="flex items-start gap-2 rounded-md bg-blue-50 border border-blue-200 p-3 text-xs text-blue-800">
+                <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                <span>Yüklediğiniz faturadan unvan, vergi no ve/veya tesis adresi zaten alındı — vergi levhası yüklemeseniz de bu bilgiler bir sonraki adımda hazır gelecek, siz sadece onaylayacaksınız.</span>
+              </div>
+            )}
             <FileField
               label="Vergi Levhası"
               hint="Şirket unvanı, vergi no, vergi dairesi ve adres bilgisi içeren belge"
@@ -495,7 +515,9 @@ export const ContractWizardModal: React.FC<ContractWizardModalProps> = ({ open, 
                   key={row.name}
                   label={FIELD_LABELS[row.name] || row.name}
                   hint={FIELD_HINTS[row.name]}
+                  required={REQUIRED_FIELD_NAMES.includes(row.name)}
                   value={manualOverrides[row.name] || ''}
+                  seedValue={row.seedValue}
                   onSave={(v) => handleManualFieldSave(row.name, v)}
                 />
               ))}
@@ -687,25 +709,37 @@ function FieldReviewGroup({
   );
 }
 
-// Hiçbir yüklenen belgede bulunamayan (çünkü o belgeyi kullanıcı yüklemedi)
-// ama backend şemasında zorunlu olan bir alan için elle giriş satırı.
+// Hiçbir yüklenen belgede bulunamayan bir alan için elle giriş satırı.
+// Zorunlu alanlarda her zaman gösterilir; opsiyonel alanlarda yalnız
+// faturadan bir öneri değeri (seedValue) varsa gösterilir — o durumda input
+// bu değerle ön-doldurulur ama kullanıcı yine de "Kaydet" ile onaylamalı.
 function ManualFieldInput({
-  label, hint, value, onSave,
+  label, hint, required, value, seedValue, onSave,
 }: {
   label: string;
   hint?: string;
+  required: boolean;
   value: string;
+  seedValue?: string;
   onSave: (value: string) => void;
 }) {
-  const [draft, setDraft] = useState(value);
+  const [draft, setDraft] = useState(value || seedValue || '');
   const saved = value.trim().length > 0;
+  // seedValue yalnız HENÜZ kaydedilmemişken (value boşken) "faturadan geldi"
+  // olarak gösterilir — kullanıcı bir kez onayladıktan sonra normal onaylı
+  // alan gibi davranır, ikinci bir kaynağa referans vermeye gerek kalmaz.
+  const fromInvoice = !value && !!seedValue;
 
   return (
     <div className="rounded-md border border-dashed border-gray-300 bg-gray-50/60 p-3">
       <div className="flex items-center gap-2 mb-1">
         <span className="text-sm font-medium text-gray-700">{label}</span>
-        <RequiredBadge required />
-        <span className="text-[10px] text-gray-400">belgede bulunamadı — elle girin</span>
+        <RequiredBadge required={required} />
+        {fromInvoice ? (
+          <span className="text-xs font-medium text-blue-700 bg-blue-100 rounded-full px-2 py-0.5">Faturadan alındı</span>
+        ) : (
+          <span className="text-[10px] text-gray-400">belgede bulunamadı — elle girin</span>
+        )}
       </div>
       {hint && <p className="mb-2 text-xs text-gray-400">{hint}</p>}
       <div className="flex items-center gap-2">
