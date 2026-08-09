@@ -1,6 +1,6 @@
 {
   "name": "gelka-enerji",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Gelka Enerji - Fatura Analiz ve Teklif Sistemi",
   "main": "main.js",
   "author": "Gelka Enerji",
@@ -40,10 +40,6 @@
       {
         "from": "../backend/dist/gelka-backend.exe",
         "to": "backend/gelka-backend.exe"
-      },
-      {
-        "from": "../backend/gelka_enerji.db",
-        "to": "backend/gelka_enerji.db"
       },
       {
         "from": "../backend/.env.production",
