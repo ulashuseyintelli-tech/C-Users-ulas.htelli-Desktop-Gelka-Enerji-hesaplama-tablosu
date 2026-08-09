@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2, AlertCircle, Download } from 'lucide-react';
 import { listContracts, downloadContractPdf, ContractOut } from '../contracts/contractsApi';
+import { QuickCrmActions } from './QuickCrmActions';
 
 const STATUS_LABELS: Record<string, string> = {
   DRAFT: 'Taslak',
@@ -96,6 +97,7 @@ export function ContractsScreen() {
                 <th className="px-4 py-2 font-medium">Durum</th>
                 <th className="px-4 py-2 font-medium">Katsayı</th>
                 <th className="px-4 py-2 font-medium">PDF</th>
+                <th className="px-4 py-2 font-medium">CRM</th>
               </tr>
             </thead>
             <tbody>
@@ -130,6 +132,9 @@ export function ContractsScreen() {
                     ) : (
                       <span className="text-gray-400 text-xs">—</span>
                     )}
+                  </td>
+                  <td className="px-4 py-2">
+                    <QuickCrmActions subject={{ contract_id: c.id }} />
                   </td>
                 </tr>
               ))}
