@@ -135,6 +135,11 @@ app.include_router(recon_router)
 from .contracts.router import contracts_router
 app.include_router(contracts_router)
 
+# S2 — Activity & Task Engine: müşteri/teklif/sözleşme için not/arama/e-posta/
+# toplantı geçmişi + takip görevleri + Bugün projeksiyonu
+from .crm.router import crm_router
+app.include_router(crm_router)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Security - API Key Authentication + Rate Limiting

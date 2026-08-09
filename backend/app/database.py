@@ -731,6 +731,125 @@ class Contract(Base):
     customer = relationship("Customer")
 
 
+class Activity(Base):
+    """
+    Geçmişte gerçekleşmiş olay kaydı (S2 — Activity & Task Engine).
+
+    Owner kararı: Activity ≠ Task. Activity geçmişi temsil eder (NOTE/CALL/
+    EMAIL/MEETING/TASK_COMPLETED), Task geleceği (yapılacak aksiyon). Bir
+    Task tamamlanınca TASK_COMPLETED tipinde bir Activity üretilebilir
+    (idempotent, tek seferlik — bkz. app/services/task_service.py).
+
+    Subject modeli: typed nullable FK (customer_id/offer_id/contract_id) —
+    S2 preflight'ta mevcut mimarinin HİÇBİR yerde polymorphic subject_type+
+    subject_id kullanmadığı doğrulandı (Contract/CustomerLegalProfile/
+    UploadedReferenceDocument hep typed FK), bu yüzden mevcut desene
+    uyuldu. Tam olarak biri dolu olmalı — service katmanında fail-closed
+    kontrol edilir (bkz. app/services/activity_service.py), DB seviyesinde
+    CHECK constraint YOK (mevcut projede hiçbir yerde CHECK kullanılmıyor,
+    yeni bir konvansiyon icat edilmedi).
+
+    Offer status geçişleri BURAYA duplicate yazılmaz — onlar zaten
+    audit_logs'ta (AuditAction.OFFER_STATUS_CHANGED) organik olarak var;
+    Offer timeline'ı sunulurken audit_logs + bu tablo birlikte projection
+    olarak birleştirilir (bkz. app/services/activity_service.py
+    get_offer_timeline()). Contract/Customer için audit_logs'ta hiçbir
+    olay yok (S2 preflight'ta doğrulandı) — onların timeline'ı yalnız bu
+    tablodan gelir.
+
+    created_by alanı BİLİNÇLİ OLARAK yok — S2 preflight'ta canonical bir
+    User/Identity modelinin projede mevcut olmadığı doğrulandı (owner
+    kararı, madde 5: SINGLE OPERATOR — yeni auth sistemi icat edilmedi).
+
+    Silme: hard-delete edilmez (audit niteliğinde); mevcut projede henüz
+    bir soft-delete/archive konvansiyonu yok, S2 de yeni bir framework
+    icat etmedi — bu tablo için hiç DELETE endpoint'i eklenmedi.
+
+    FK'lerde ondelete BİLİNÇLİ OLARAK belirtilmedi — S2 preflight'ta
+    Customer/Offer/Contract graph'ındaki TÜM FK'lerin (main.py delete_
+    customer dahil) hiçbirinde ondelete kullanılmadığı, SQLite'ta zaten
+    FK enforcement kapalı olduğu doğrulandı. Subject hard-delete edilirse
+    bu satırlar orphan kalır — mevcut projenin HER YERİNDEKİ (Offer.
+    customer_id, Contract.customer_id vb.) davranışıyla tutarlı, CASCADE
+    KULLANILMADI (owner kararı: "Audit Activity'nin subject silinmesiyle
+    sessizce yok olması tercih edilmez"). Bu, S2'nin kapsamı dışında,
+    pre-existing bir mimari risktir — S2 onu genişletmez, düzeltmez.
+
+    Çağrıldığı yerler:
+    - app/services/activity_service.py (create/list/timeline) [S2-WB2]
+    """
+    __tablename__ = "activities"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(String(64), nullable=False, default="default", index=True)
+
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    offer_id = Column(Integer, ForeignKey("offers.id"), nullable=True, index=True)
+    contract_id = Column(Integer, ForeignKey("contracts.id"), nullable=True, index=True)
+
+    activity_type = Column(String(30), nullable=False, index=True)
+    # NOTE | CALL | EMAIL | MEETING | TASK_COMPLETED
+
+    title = Column(String(255), nullable=True)
+    body = Column(Text, nullable=True)
+
+    # Olayın GERÇEKLEŞTİĞİ an (kullanıcı geçmişe dönük bir arama/toplantı
+    # kaydı girebilir — created_at ile occurred_at farklı olabilir).
+    occurred_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    customer = relationship("Customer")
+    offer = relationship("Offer")
+    contract = relationship("Contract")
+
+
+class Task(Base):
+    """
+    Gelecekte yapılacak aksiyon kaydı (S2 — Activity & Task Engine).
+
+    Bkz. Activity docstring'i — subject modeli, created_by/assignee
+    yokluğu, silme politikası ve FK/ondelete gerekçesi AYNI nedenlerle
+    burada da geçerli (assignee için ayrıca: owner kararı, madde 5 —
+    canonical User yok, SINGLE OPERATOR, multi-user assignment S2 kapsamı
+    dışı bırakıldı).
+
+    completed_at: yalnız İLK completion'da set edilir (idempotent — tekrar
+    complete çağrısı no-op döner, ikinci bir TASK_COMPLETED Activity
+    ÜRETMEZ; bkz. app/services/task_service.py complete_task()).
+
+    Priority alanı BİLİNÇLİ OLARAK eklenmedi (owner: "Priority ancak
+    gerçek UI ihtiyacı varsa" — S2 kapsamındaki hiçbir ekran bunu talep
+    etmiyor, YAGNI).
+
+    Çağrıldığı yerler:
+    - app/services/task_service.py (create/list/complete/cancel) [S2-WB3]
+    """
+    __tablename__ = "tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(String(64), nullable=False, default="default", index=True)
+
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    offer_id = Column(Integer, ForeignKey("offers.id"), nullable=True, index=True)
+    contract_id = Column(Integer, ForeignKey("contracts.id"), nullable=True, index=True)
+
+    title = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+
+    due_at = Column(DateTime, nullable=True, index=True)
+    status = Column(String(20), nullable=False, default="OPEN", index=True)
+    # OPEN | COMPLETED | CANCELLED
+
+    completed_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    customer = relationship("Customer")
+    offer = relationship("Offer")
+    contract = relationship("Contract")
+
+
 def init_db():
     """
     Veritabanı tablolarını oluştur.

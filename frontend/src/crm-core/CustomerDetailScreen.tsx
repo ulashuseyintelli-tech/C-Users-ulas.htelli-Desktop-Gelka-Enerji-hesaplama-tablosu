@@ -8,8 +8,10 @@ import { useEffect, useState } from 'react';
 import { ArrowLeft, Loader2, AlertCircle } from 'lucide-react';
 import { getCustomer, CustomerDetail } from '../api';
 import { listContracts, ContractOut } from '../contracts/contractsApi';
+import { ActivityTimeline } from './ActivityTimeline';
+import { TaskList } from './TaskList';
 
-type DetailTab = 'general' | 'offers' | 'contracts';
+type DetailTab = 'general' | 'offers' | 'contracts' | 'activities' | 'tasks';
 
 interface CustomerDetailScreenProps {
   customerId: number;
@@ -119,6 +121,8 @@ export function CustomerDetailScreen({ customerId, onBack }: CustomerDetailScree
               ['general', 'Genel Bilgiler'],
               ['offers', `Teklifler (${customer.offers.length})`],
               ['contracts', 'Sözleşmeler'],
+              ['activities', 'Aktiviteler'],
+              ['tasks', 'Görevler'],
             ] as [DetailTab, string][]
           ).map(([key, label]) => (
             <button
@@ -218,6 +222,9 @@ export function CustomerDetailScreen({ customerId, onBack }: CustomerDetailScree
           )}
         </div>
       )}
+
+      {tab === 'activities' && <ActivityTimeline subject={{ customer_id: customerId }} />}
+      {tab === 'tasks' && <TaskList subject={{ customer_id: customerId }} />}
     </div>
   );
 }

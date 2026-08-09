@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { listOffers, updateOfferStatus, OfferListItem } from '../api';
+import { QuickCrmActions } from './QuickCrmActions';
 
 const STATUS_LABELS: Record<string, string> = {
   draft: 'Taslak',
@@ -152,6 +153,7 @@ export function OffersScreen() {
                 <th className="px-4 py-2 font-medium">Durum</th>
                 <th className="px-4 py-2 font-medium">Sözleşmeye Dönüştü mü?</th>
                 <th className="px-4 py-2 font-medium">Aksiyon</th>
+                <th className="px-4 py-2 font-medium">CRM</th>
               </tr>
             </thead>
             <tbody>
@@ -194,6 +196,9 @@ export function OffersScreen() {
                         ))
                       )}
                     </div>
+                  </td>
+                  <td className="px-4 py-2">
+                    <QuickCrmActions subject={{ offer_id: o.id }} />
                   </td>
                 </tr>
               ))}

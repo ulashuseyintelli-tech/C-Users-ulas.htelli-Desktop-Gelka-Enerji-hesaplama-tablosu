@@ -17,6 +17,7 @@ import { TodayScreen } from './TodayScreen';
 import { CustomersScreen } from './CustomersScreen';
 import { OffersScreen } from './OffersScreen';
 import { ContractsScreen } from './ContractsScreen';
+import type { Subject } from './crmApi';
 
 type CrmTab = 'today' | 'customers' | 'offers' | 'contracts';
 
@@ -30,6 +31,22 @@ export default function CrmCorePage({ onBack }: CrmCorePageProps) {
   // sekmesine geçiş de customer_id ile filtrelenmiş liste göstermek için
   // aynı mekanizmayı (state, yeni route değil) kullanır.
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
+
+  // Today ekranındaki "Kaydı Aç" quick action'ı — Customer'a deep-link
+  // (detay sayfası açılır); Offer/Contract'ın kendi detay sayfası S1'de
+  // hiç eklenmediği için (yalnız liste), en yakın karşılığı ilgili
+  // sekmeye geçmek (owner talimatı bunu S2'nin scope'unu genişletmeden
+  // karşılayan minimal davranış).
+  const handleOpenSubject = (subject: Subject) => {
+    if (subject.customer_id !== undefined) {
+      setActiveTab('customers');
+      setSelectedCustomerId(subject.customer_id);
+    } else if (subject.offer_id !== undefined) {
+      setActiveTab('offers');
+    } else if (subject.contract_id !== undefined) {
+      setActiveTab('contracts');
+    }
+  };
 
   const tabs: Array<{ key: CrmTab; label: string; icon: typeof LayoutDashboard }> = [
     { key: 'today', label: 'Bugün', icon: LayoutDashboard },
@@ -85,7 +102,7 @@ export default function CrmCorePage({ onBack }: CrmCorePageProps) {
 
       {/* Content */}
       <main className="max-w-7xl mx-auto px-6 py-6">
-        {activeTab === 'today' && <TodayScreen />}
+        {activeTab === 'today' && <TodayScreen onOpenSubject={handleOpenSubject} />}
         {activeTab === 'customers' && (
           <CustomersScreen
             selectedCustomerId={selectedCustomerId}
