@@ -31,6 +31,39 @@ function logBackend(msg) {
   }
 }
 
+// ── Machine-local external config (secret'lar için) ──────────────────────────
+// GÜVENLİK: OPENAI_API_KEY gibi secret'lar ne git'e commit edilir, ne
+// installer artifact'ına (backend/.env.production → resources/backend/.env)
+// gömülür — o dosya her kurulum/güncellemede ÜSTÜNE YAZILIR ve installer'ın
+// kendisi paylaşılabilir bir dosyadır. Bunun yerine, kullanıcının kendi
+// makinesinde userData altında duran (kurulum/güncellemeden ETKİLENMEYEN) bu
+// dosyadan okunur ve backend process'inin env'ine merge edilir. Backend
+// (pydantic-settings BaseSettings) gerçek ortam değişkenlerini .env dosyasından
+// HER ZAMAN önceliklendirir, o yüzden Python tarafında hiçbir değişiklik
+// gerekmiyor — mevcut `env: {...process.env}` spawn deseni genişletiliyor.
+function loadMachineLocalEnv() {
+  const envPath = path.join(app.getPath('userData'), 'machine-local.env');
+  const extra = {};
+  try {
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, 'utf-8');
+      for (const rawLine of content.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith('#')) continue;
+        const eqIdx = line.indexOf('=');
+        if (eqIdx === -1) continue;
+        const key = line.slice(0, eqIdx).trim();
+        const value = line.slice(eqIdx + 1).trim();
+        if (key) extra[key] = value;
+      }
+      logBackend(`Machine-local config yüklendi: ${Object.keys(extra).length} değişken (${envPath})`);
+    }
+  } catch (e) {
+    logBackend(`Machine-local config okunamadı (${envPath}): ${e.message}`);
+  }
+  return extra;
+}
+
 // ── Backend lifecycle ────────────────────────────────────────────────────────
 
 function waitForBackend(retries = 60) {
@@ -68,11 +101,13 @@ function startBackend() {
     console.error('Log dosyası açılamadı:', e);
   }
 
+  const machineLocalEnv = loadMachineLocalEnv();
+
   if (isDev) {
     const pythonPath = process.platform === 'win32' ? 'python' : 'python3';
     backendProcess = spawn(pythonPath,
       ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(BACKEND_PORT)],
-      { cwd: path.join(__dirname, '..', 'backend'), env: { ...process.env }, stdio: ['pipe', 'pipe', 'pipe'] }
+      { cwd: path.join(__dirname, '..', 'backend'), env: { ...process.env, ...machineLocalEnv }, stdio: ['pipe', 'pipe', 'pipe'] }
     );
   } else {
     const backendDir = path.join(process.resourcesPath, 'backend');
@@ -82,7 +117,16 @@ function startBackend() {
     logBackend(`Exe exists: ${fs.existsSync(backendExe)}`);
     backendProcess = spawn(backendExe,
       ['--host', '127.0.0.1', '--port', String(BACKEND_PORT)],
-      { cwd: backendDir, env: { ...process.env }, stdio: ['pipe', 'pipe', 'pipe'] }
+      {
+        cwd: backendDir,
+        // PLAYWRIGHT_BROWSERS_PATH=0: yalnız packaged'da — Chromium'u kullanıcı
+        // cache'inden (%LOCALAPPDATA%\ms-playwright) DEĞİL, PyInstaller build'inin
+        // exe içine gömdüğü paket-göreli konumdan (playwright/driver/package/
+        // .local-browsers) kullan. Dev branch'ine BİLEREK eklenmedi — dev ortamı
+        // hâlâ kullanıcı cache'ini kullanmaya devam eder (regresyon yok).
+        env: { ...process.env, ...machineLocalEnv, PLAYWRIGHT_BROWSERS_PATH: '0' },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }
     );
   }
 

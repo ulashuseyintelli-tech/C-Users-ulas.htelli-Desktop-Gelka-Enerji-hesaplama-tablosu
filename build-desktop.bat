@@ -39,12 +39,55 @@ cd ..
 :: 3. Backend PyInstaller build
 echo [3/5] Backend paketleniyor (PyInstaller)...
 cd backend
-pip install pyinstaller >nul 2>&1
-pyinstaller --onefile --name gelka-backend ^
+
+:: NOT: pip/pyinstaller/python komutlarini DOGRUDAN cagirmiyoruz — bunlar
+:: calistiran shell'in PATH durumuna gore SISTEM Python'una (venv disinda)
+:: dusebilir ve build'i deterministik olmaktan cikarir. Bunun yerine .venv'in
+:: kendi python.exe'sini ACIKCA kullaniyoruz (clean-machine / tekrarlanabilir
+:: build gereksinimi).
+set VENV_PY=.venv\Scripts\python.exe
+if not exist "%VENV_PY%" (
+    echo HATA: %VENV_PY% bulunamadi. Once backend\.venv olusturulmali.
+    pause
+    exit /b 1
+)
+%VENV_PY% -m pip install pyinstaller >nul 2>&1
+
+:: 3a. Playwright Chromium — PAKET-GORELI konuma kur (kullanicinin
+:: %LOCALAPPDATA%\ms-playwright cache'ine DEGIL). PLAYWRIGHT_BROWSERS_PATH=0
+:: playwright'in kendi kaynak kodunda ( driver/package/lib/server/registry/
+:: index.js ) dogrulanmis resmi davranistir: chromium'u
+:: .venv\Lib\site-packages\playwright\driver\package\.local-browsers\ altina
+:: indirir. Bu, node.exe'nin zaten arandigi (playwright/_impl/_driver.py:
+:: compute_driver_executable, paket-goreli) konumla AYNI agac altinda oldugu
+:: icin PyInstaller'in tek bir --add-data ile ikisini birden tasimasini saglar.
+:: Yalniz Chromium (Firefox/WebKit YOK).
+echo   Playwright Chromium kuruluyor (paket-goreli, PLAYWRIGHT_BROWSERS_PATH=0)...
+set PLAYWRIGHT_BROWSERS_PATH=0
+%VENV_PY% -m playwright install chromium
+if %ERRORLEVEL% neq 0 (
+    echo HATA: Playwright chromium kurulumu basarisiz!
+    pause
+    exit /b 1
+)
+
+:: "playwright install chromium" chromium ile birlikte headless-shell ve
+:: ffmpeg'i de indirir (playwright'in kendi varsayilan davranisi).
+:: DUZELTME (canli testle dogrulandi): headless-shell SILINEMEZ — Playwright
+:: 1.49'da p.chromium.launch() (channel verilmeden, varsayilan headless mod)
+:: GERCEKTE chromium_headless_shell binary'sini ariyor, normal chrome.exe'yi
+:: DEGIL. Bu Firefox/WebKit degil, Chromium ekosisteminin resmi bir parcasi
+:: (ayni chromium projesinin headless-only build'i) — "yalniz Chromium"
+:: kisitlamasina aykiri degil. Yalniz ffmpeg siliniyor (video/screencast,
+:: PDF uretiminde hic kullanilmiyor).
+for /d %%D in (".venv\Lib\site-packages\playwright\driver\package\.local-browsers\ffmpeg-*") do rmdir /s /q "%%D"
+
+%VENV_PY% -m PyInstaller --onefile --name gelka-backend ^
     --paths . ^
     --add-data "app;app" ^
     --add-data "prompts;prompts" ^
     --add-data "app/templates;app/templates" ^
+    --add-data ".venv\Lib\site-packages\playwright\driver;playwright/driver" ^
     --collect-submodules app ^
     --collect-submodules app.core ^
     --collect-submodules app.guards ^
@@ -58,6 +101,7 @@ pyinstaller --onefile --name gelka-backend ^
     --collect-submodules pydantic ^
     --collect-submodules uvicorn ^
     --collect-submodules sqlalchemy ^
+    --collect-submodules playwright ^
     --hidden-import pydantic_settings ^
     --hidden-import dotenv ^
     --hidden-import multipart ^
