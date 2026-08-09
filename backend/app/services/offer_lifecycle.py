@@ -35,6 +35,18 @@ VALID_OFFER_TRANSITIONS: dict[str, list[str]] = {
     "expired": [],  # Terminal state
 }
 
+# S1 CRM Core — "açık teklif" tanımı: VALID_OFFER_TRANSITIONS'tan TÜRETİLİR
+# (terminal olmayan, yani en az bir geçişe izin verilen durumlar), elle
+# yazılmış ayrı bir liste DEĞİLDİR. Böylece transition kuralları ileride
+# değişirse "açık" semantiği otomatik senkron kalır, iki yerde ayrı ayrı
+# bakım gerekmez.
+#
+# Çağrıldığı yerler:
+# - app/main.py list_customers() → open_offer_count aggregate filtresi
+OPEN_OFFER_STATUSES: list[str] = [
+    status for status, transitions in VALID_OFFER_TRANSITIONS.items() if transitions
+]
+
 
 def transition_offer_status(
     db: Session,

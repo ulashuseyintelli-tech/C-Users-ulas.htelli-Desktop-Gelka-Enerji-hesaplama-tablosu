@@ -247,8 +247,168 @@ export async function createOffer(
   return response.data;
 }
 
+export interface StatsResponse {
+  total_customers: number;
+  total_offers: number;
+  total_savings_accepted: number;
+  offers_by_status: Record<string, number>;
+  total_open_offers: number;
+  total_finalized_contracts: number;
+}
+
+/**
+ * Çağrıldığı yerler:
+ * - CrmCore/TodayScreen.tsx → S1 Bugün ekranı [WB-8] (yalnız mevcut
+ *   veriden türetilmiş basit özet — ayrı bir "today" tablosu yok)
+ */
+export async function getStats(): Promise<StatsResponse> {
+  const response = await api.get('/stats');
+  return response.data;
+}
+
 export async function healthCheck(): Promise<{ status: string }> {
   const response = await api.get('/health');
+  return response.data;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// S1 CRM Core — mevcut Customer/Offer sorgu yüzeylerini reuse eden client
+// fonksiyonları. Backend endpoint'leri zaten vardı (app/main.py); burada
+// yalnız eksik olan frontend çağrıları ekleniyor, yeni endpoint yazılmıyor.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface CustomerListItem {
+  id: number;
+  name: string;
+  company: string | null;
+  email: string | null;
+  phone: string | null;
+  open_offer_count: number;
+  last_offer_at: string | null;
+  created_at: string;
+}
+
+/**
+ * Çağrıldığı yerler:
+ * - CrmCore/CustomersScreen.tsx → S1 Müşteriler listesi [WB-5]
+ */
+export async function listCustomers(params?: {
+  search?: string;
+  skip?: number;
+  limit?: number;
+}): Promise<CustomerListItem[]> {
+  const response = await api.get('/customers', { params });
+  return response.data;
+}
+
+export interface CustomerOfferSummary {
+  id: number;
+  invoice_period: string | null;
+  savings_amount: number;
+  savings_ratio: number;
+  status: string;
+  created_at: string;
+}
+
+export interface CustomerDetail {
+  id: number;
+  name: string;
+  company: string | null;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  offers: CustomerOfferSummary[];
+}
+
+/**
+ * Çağrıldığı yerler:
+ * - CrmCore/CustomerDetailScreen.tsx → S1 Müşteri Detay > Genel Bilgiler [WB-5]
+ */
+export async function getCustomer(customerId: number): Promise<CustomerDetail> {
+  const response = await api.get(`/customers/${customerId}`);
+  return response.data;
+}
+
+export interface OfferListItem {
+  id: number;
+  customer_id: number | null;
+  customer_name: string | null;
+  vendor: string | null;
+  invoice_period: string | null;
+  consumption_kwh: number;
+  agreement_multiplier: number;
+  current_total: number;
+  offer_total: number;
+  savings_amount: number;
+  savings_ratio: number;
+  status: string;
+  // Backend'in offer_lifecycle.VALID_OFFER_TRANSITIONS'undan ürettiği
+  // izin verilen hedef durumlar — UI bunun DIŞINDA bir status'e geçiş
+  // BUTONU göstermez (owner kararı: serbest enum dropdown yok).
+  allowed_transitions: string[];
+  // Owner kararı: "sözleşmeye dönüştü mü" sorusunun otoritesi Contract
+  // tablosudur (backend'de tek sorguda hesaplanır), status alanı DEĞİL.
+  has_contract: boolean;
+  created_at: string;
+}
+
+/**
+ * Çağrıldığı yerler:
+ * - CrmCore/OffersScreen.tsx → S1 Teklifler listesi [WB-6]
+ * - CrmCore/CustomerDetailScreen.tsx → S1 Müşteri Detay > Teklifler [WB-5]
+ */
+export async function listOffers(params?: {
+  customer_id?: number;
+  status?: string;
+  skip?: number;
+  limit?: number;
+}): Promise<OfferListItem[]> {
+  const response = await api.get('/offers', { params });
+  return response.data;
+}
+
+export interface OfferDetail extends Omit<OfferListItem, 'customer_name'> {
+  customer: { id: number; name: string; company: string | null } | null;
+  current_unit_price: number;
+  distribution_unit_price: number | null;
+  demand_qty: number | null;
+  demand_unit_price: number | null;
+  weighted_ptf: number;
+  yekdem: number;
+  agreement_multiplier: number;
+  pdf_ref: string | null;
+}
+
+/**
+ * Çağrıldığı yerler:
+ * - CrmCore/OffersScreen.tsx → S1 Teklif detayı [WB-6]
+ */
+export async function getOffer(offerId: number): Promise<OfferDetail> {
+  const response = await api.get(`/offers/${offerId}`);
+  return response.data;
+}
+
+/**
+ * Yalnız backend'in VALID_OFFER_TRANSITIONS'ının izin verdiği bir hedef
+ * status ile çağrılmalı — UI serbest enum dropdown göstermez, yalnız
+ * allowed_transitions'tan üretilen aksiyon butonlarını gösterir (S1 owner
+ * kararı). Backend zaten aynı kuralı sunucu tarafında da zorluyor (400
+ * invalid_transition), bu fonksiyon yalnız ince bir HTTP sarmalayıcıdır.
+ *
+ * Çağrıldığı yerler:
+ * - CrmCore/OffersScreen.tsx transition butonları → S1 Teklifler ekranı [WB-6]
+ */
+export async function updateOfferStatus(
+  offerId: number,
+  status: string,
+  notes?: string
+): Promise<{ id: number; status: string }> {
+  const response = await api.put(`/offers/${offerId}/status`, null, {
+    params: { status, notes },
+  });
   return response.data;
 }
 

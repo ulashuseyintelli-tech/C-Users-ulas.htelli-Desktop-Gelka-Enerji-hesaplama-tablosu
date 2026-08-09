@@ -10,7 +10,7 @@ header-key kontrolü. Tenant izolasyonu: app/services/tenant.get_tenant_id
 import logging
 import os
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
@@ -548,6 +548,78 @@ def finalize_contract(
     )
 
 
+@contracts_router.get("", response_model=List[ContractOut])
+def list_contracts(
+    customer_id: Optional[int] = Query(default=None),
+    offer_id: Optional[int] = Query(default=None),
+    status: Optional[str] = Query(default=None),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    tenant_id: str = Depends(get_tenant_id),
+    _key: Optional[str] = Depends(_require_contracts_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Sözleşme listesi — S1 CRM Core canonical sorgu yüzeyi.
+
+    Owner kararı (S1 preflight): genel "Sözleşmeler" ekranı VE müşteri
+    detayındaki "Sözleşmeler" alt-sekmesi AYNI endpoint'i kullanır
+    (customer_id filtresiyle) — ayrı bir GET /customers/{id}/contracts
+    yazılmadı, tek sorgu implementasyonu (kod tekrarından kaçınma).
+
+    customer_id/offer_id NULL olan (sahipsiz) sözleşmeler filtre
+    verilmediğinde listede kalır — S1 owner kararı: "Müşterisiz" olarak
+    gösterilecek, bu endpoint'te gizlenmez (frontend WB-7'de ele alınır).
+
+    Çağrıldığı yerler:
+    - frontend/src/contracts/contractsApi.ts listContracts() → S1 CRM Core
+      Sözleşmeler ekranı (genel liste) [WB-3'te eklenecek]
+    - frontend/src/contracts/contractsApi.ts listContracts({customer_id}) →
+      S1 CRM Core Müşteri Detay > Sözleşmeler alt-sekmesi [WB-3'te eklenecek]
+    """
+    query = db.query(db_models.Contract).filter(db_models.Contract.tenant_id == tenant_id)
+
+    if customer_id is not None:
+        query = query.filter(db_models.Contract.customer_id == customer_id)
+    if offer_id is not None:
+        query = query.filter(db_models.Contract.offer_id == offer_id)
+    if status is not None:
+        query = query.filter(db_models.Contract.status == status)
+
+    contracts = query.order_by(db_models.Contract.created_at.desc()).offset(skip).limit(limit).all()
+
+    if not contracts:
+        return []
+
+    # N+1'siz: TÜM customer_name/agreement_multiplier'ı iki toplu sorguda
+    # topla (owner kararı, WB-1/WB-6'daki aynı prensip — customer.offers
+    # lazy-load gibi satır-başı sorgu üretme).
+    customer_ids = {c.customer_id for c in contracts if c.customer_id is not None}
+    offer_ids = {c.offer_id for c in contracts}
+
+    customer_names = {
+        row.id: row.name
+        for row in db.query(db_models.Customer.id, db_models.Customer.name)
+        .filter(db_models.Customer.id.in_(customer_ids)).all()
+    } if customer_ids else {}
+    offer_multipliers = {
+        row.id: row.agreement_multiplier
+        for row in db.query(db_models.Offer.id, db_models.Offer.agreement_multiplier)
+        .filter(db_models.Offer.id.in_(offer_ids)).all()
+    } if offer_ids else {}
+
+    return [
+        ContractOut(
+            id=c.id, customer_id=c.customer_id, offer_id=c.offer_id, contract_number=c.contract_number,
+            status=c.status, start_date=c.start_date.isoformat() if c.start_date else None,
+            end_date=c.end_date.isoformat() if c.end_date else None, created_at=c.created_at.isoformat(),
+            customer_name=customer_names.get(c.customer_id) if c.customer_id is not None else None,
+            agreement_multiplier=offer_multipliers.get(c.offer_id),
+        )
+        for c in contracts
+    ]
+
+
 @contracts_router.get("/{contract_id}", response_model=ContractOut)
 def get_contract(
     contract_id: int,
@@ -558,10 +630,13 @@ def get_contract(
     contract = db.query(db_models.Contract).filter(db_models.Contract.id == contract_id, db_models.Contract.tenant_id == tenant_id).first()
     if not contract:
         raise HTTPException(status_code=404, detail={"error": "contract_not_found", "message": "Sözleşme bulunamadı"})
+    offer = db.query(db_models.Offer.agreement_multiplier).filter(db_models.Offer.id == contract.offer_id).first()
     return ContractOut(
         id=contract.id, customer_id=contract.customer_id, offer_id=contract.offer_id, contract_number=contract.contract_number,
         status=contract.status, start_date=contract.start_date.isoformat() if contract.start_date else None,
         end_date=contract.end_date.isoformat() if contract.end_date else None, created_at=contract.created_at.isoformat(),
+        customer_name=contract.customer.name if contract.customer else None,
+        agreement_multiplier=offer.agreement_multiplier if offer else None,
     )
 
 

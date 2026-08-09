@@ -231,3 +231,8 @@ class ContractOut(BaseModel):
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     created_at: str
+    # S1 CRM Core Sözleşmeler ekranı için (Firma/Katsayı kolonları) —
+    # PII değil (customer_name zaten GET /customers'da genel, agreement_
+    # multiplier fiyatlandırma bilgisi). Opsiyonel: eski çağıranları bozmaz.
+    customer_name: Optional[str] = None
+    agreement_multiplier: Optional[float] = None
