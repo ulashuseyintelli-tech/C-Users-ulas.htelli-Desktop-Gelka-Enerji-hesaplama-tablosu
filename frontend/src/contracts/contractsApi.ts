@@ -59,6 +59,10 @@ export interface ContractOut {
   start_date: string | null;
   end_date: string | null;
   created_at: string;
+  // S1 CRM Core Sözleşmeler ekranı için (bkz. backend schemas.py) — PII
+  // değil, opsiyonel (customer_id NULL ise customer_name de null olur).
+  customer_name: string | null;
+  agreement_multiplier: number | null;
 }
 
 export interface ContractPreviewResponse {
@@ -183,6 +187,38 @@ export async function previewContract(contractId: number, fields: ContractComple
 
 export async function finalizeContract(contractId: number): Promise<ContractFinalizeResponse> {
   const response = await api.post(`/api/contracts/${contractId}/finalize`);
+  return response.data;
+}
+
+/**
+ * S1 CRM Core canonical sözleşme sorgusu — genel "Sözleşmeler" ekranı VE
+ * müşteri detayındaki "Sözleşmeler" alt-sekmesi (customer_id filtresiyle)
+ * AYNI fonksiyonu/endpoint'i kullanır (owner kararı: tek sorgu
+ * implementasyonu, ayrı bir "customer contracts" fonksiyonu yok).
+ *
+ * Çağrıldığı yerler:
+ * - CrmCore/ContractsScreen.tsx → S1 Sözleşmeler listesi (genel) [WB-7]
+ * - CrmCore/CustomerDetailScreen.tsx → S1 Müşteri Detay > Sözleşmeler [WB-5]
+ */
+export async function listContracts(params?: {
+  customer_id?: number;
+  offer_id?: number;
+  status?: string;
+  skip?: number;
+  limit?: number;
+}): Promise<ContractOut[]> {
+  const response = await api.get('/api/contracts', { params });
+  return response.data;
+}
+
+/**
+ * Çağrıldığı yerler:
+ * - (şu an S1'de doğrudan kullanılmıyor; ContractWizardModal kendi state'ini
+ *   tutuyor — reuse matrix'te "backend hazır, frontend eksik" olarak
+ *   işaretlenmişti, tamlık için eklendi)
+ */
+export async function getContract(contractId: number): Promise<ContractOut> {
+  const response = await api.get(`/api/contracts/${contractId}`);
   return response.data;
 }
 

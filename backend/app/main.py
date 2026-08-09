@@ -10,6 +10,7 @@ from typing import Optional, List
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Query, Header, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response, JSONResponse
+from sqlalchemy import func, case
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
@@ -1532,9 +1533,23 @@ async def list_customers(
     limit: int = 50,
     db: Session = Depends(get_db)
 ):
-    """Müşteri listesi"""
+    """
+    Müşteri listesi.
+
+    open_offer_count / last_offer_at: S1 CRM Core Müşteriler ekranı için
+    eklendi (tek SQL aggregate sorgusu, customer.offers lazy-load ile N+1
+    ÜRETMEZ). "Açık teklif" tanımı offer_lifecycle.OPEN_OFFER_STATUSES'tan
+    gelir (VALID_OFFER_TRANSITIONS'tan türetilmiş — burada ayrıca hard-code
+    edilmedi).
+
+    Çağrıldığı yerler:
+    - frontend/src/api.ts listCustomers() → GET /customers (S1 CRM Core
+      Müşteriler ekranı) [WB-3'te eklenecek]
+    """
+    from .services.offer_lifecycle import OPEN_OFFER_STATUSES
+
     query = db.query(Customer)
-    
+
     if search:
         search_term = f"%{search}%"
         query = query.filter(
@@ -1542,21 +1557,39 @@ async def list_customers(
             (Customer.company.ilike(search_term)) |
             (Customer.email.ilike(search_term))
         )
-    
+
     customers = query.order_by(Customer.created_at.desc()).offset(skip).limit(limit).all()
-    
-    return [
-        {
+
+    if not customers:
+        return []
+
+    customer_ids = [c.id for c in customers]
+    agg_rows = (
+        db.query(
+            Offer.customer_id.label("customer_id"),
+            func.sum(case((Offer.status.in_(OPEN_OFFER_STATUSES), 1), else_=0)).label("open_offer_count"),
+            func.max(Offer.created_at).label("last_offer_at"),
+        )
+        .filter(Offer.customer_id.in_(customer_ids))
+        .group_by(Offer.customer_id)
+        .all()
+    )
+    agg_by_customer_id = {row.customer_id: row for row in agg_rows}
+
+    result = []
+    for c in customers:
+        agg = agg_by_customer_id.get(c.id)
+        result.append({
             "id": c.id,
             "name": c.name,
             "company": c.company,
             "email": c.email,
             "phone": c.phone,
-            "offer_count": len(c.offers),
+            "open_offer_count": int(agg.open_offer_count) if agg else 0,
+            "last_offer_at": agg.last_offer_at.isoformat() if agg and agg.last_offer_at else None,
             "created_at": c.created_at.isoformat()
-        }
-        for c in customers
-    ]
+        })
+    return result
 
 
 @app.get("/customers/{customer_id}", response_model=dict)
@@ -1693,16 +1726,41 @@ async def list_offers(
     limit: int = 50,
     db: Session = Depends(get_db)
 ):
-    """Teklif listesi"""
+    """
+    Teklif listesi.
+
+    agreement_multiplier / allowed_transitions / has_contract: S1 CRM Core
+    Teklifler ekranı için eklendi.
+    - allowed_transitions: offer_lifecycle.VALID_OFFER_TRANSITIONS'tan
+      (tek doğruluk kaynağı) — frontend'e KOPYALANMADI, owner kararı.
+    - has_contract: Contract tablosundan (tek sorgu, N+1 YOK). Owner kararı:
+      "sözleşmeye dönüştü mü" sorusunun otoritesi Contract tablosudur,
+      Offer.status TEK BAŞINA güvenilir değildir (best-effort senkron).
+
+    Çağrıldığı yerler:
+    - frontend/src/api.ts listOffers() → GET /offers (S1 CRM Core
+      Teklifler ekranı + Müşteri Detay > Teklifler) [WB-6]
+    """
+    from .services.offer_lifecycle import VALID_OFFER_TRANSITIONS
+    from .database import Contract
+
     query = db.query(Offer)
-    
+
     if customer_id:
         query = query.filter(Offer.customer_id == customer_id)
     if status:
         query = query.filter(Offer.status == status)
-    
+
     offers = query.order_by(Offer.created_at.desc()).offset(skip).limit(limit).all()
-    
+
+    if not offers:
+        return []
+
+    offer_ids = [o.id for o in offers]
+    contract_offer_ids = {
+        row[0] for row in db.query(Contract.offer_id).filter(Contract.offer_id.in_(offer_ids)).all()
+    }
+
     return [
         {
             "id": o.id,
@@ -1711,11 +1769,14 @@ async def list_offers(
             "vendor": o.vendor,
             "invoice_period": o.invoice_period,
             "consumption_kwh": o.consumption_kwh,
+            "agreement_multiplier": o.agreement_multiplier,
             "current_total": o.current_total,
             "offer_total": o.offer_total,
             "savings_amount": o.savings_amount,
             "savings_ratio": o.savings_ratio,
             "status": o.status,
+            "allowed_transitions": VALID_OFFER_TRANSITIONS.get(o.status, []),
+            "has_contract": o.id in contract_offer_ids,
             "created_at": o.created_at.isoformat()
         }
         for o in offers
@@ -1724,11 +1785,25 @@ async def list_offers(
 
 @app.get("/offers/{offer_id}", response_model=dict)
 async def get_offer(offer_id: int, db: Session = Depends(get_db)):
-    """Teklif detayı"""
+    """
+    Teklif detayı.
+
+    allowed_transitions / has_contract: bkz. list_offers() docstring'i (aynı
+    kaynak, aynı gerekçe).
+
+    Çağrıldığı yerler:
+    - frontend/src/api.ts getOffer() → GET /offers/{id} [WB-6, şu an
+      doğrudan kullanılmıyor; tamlık için eklendi]
+    """
+    from .services.offer_lifecycle import VALID_OFFER_TRANSITIONS
+    from .database import Contract
+
     offer = db.query(Offer).filter(Offer.id == offer_id).first()
     if not offer:
         raise HTTPException(status_code=404, detail="Teklif bulunamadı")
-    
+
+    has_contract = db.query(Contract.id).filter(Contract.offer_id == offer.id).first() is not None
+
     return {
         "id": offer.id,
         "customer_id": offer.customer_id,
@@ -1754,6 +1829,8 @@ async def get_offer(offer_id: int, db: Session = Depends(get_db)):
         "calculation_result": offer.calculation_result,
         "extraction_result": offer.extraction_result,
         "status": offer.status,
+        "allowed_transitions": VALID_OFFER_TRANSITIONS.get(offer.status, []),
+        "has_contract": has_contract,
         "pdf_ref": offer.pdf_ref,
         "created_at": offer.created_at.isoformat()
     }
@@ -2413,26 +2490,53 @@ async def generate_html_direct(
 
 @app.get("/stats")
 async def get_statistics(db: Session = Depends(get_db)):
-    """Genel istatistikler"""
+    """
+    Genel istatistikler.
+
+    total_finalized_contracts / total_open_offers: S1 CRM Core "Bugün"
+    ekranı için eklendi (owner kararı: Bugün ayrı bir tablo değil, mevcut
+    verilerden türetilen basit bir projeksiyon).
+    - total_open_offers: offer_lifecycle.OPEN_OFFER_STATUSES'tan (tek
+      doğruluk kaynağı) hesaplanır — frontend'e lifecycle mantığı
+      KOPYALANMADI (owner kararı, WB-1 ile aynı prensip).
+    - total_finalized_contracts: Contract.status == "FINALIZED" (gerçek
+      kullanılan değer, bkz. app/database.py).
+
+    Çağrıldığı yerler:
+    - frontend/src/api.ts getStats() → GET /stats (S1 CRM Core Bugün
+      ekranı) [WB-8]
+    """
     from sqlalchemy import func
-    
+    from .database import Contract
+    from .services.offer_lifecycle import OPEN_OFFER_STATUSES
+
     total_customers = db.query(func.count(Customer.id)).scalar()
     total_offers = db.query(func.count(Offer.id)).scalar()
-    
+
     total_savings = db.query(func.sum(Offer.savings_amount)).filter(
         Offer.status == "accepted"
     ).scalar() or 0
-    
+
     offers_by_status = db.query(
         Offer.status,
         func.count(Offer.id)
     ).group_by(Offer.status).all()
-    
+
+    total_open_offers = db.query(func.count(Offer.id)).filter(
+        Offer.status.in_(OPEN_OFFER_STATUSES)
+    ).scalar()
+
+    total_finalized_contracts = db.query(func.count(Contract.id)).filter(
+        Contract.status == "FINALIZED"
+    ).scalar()
+
     return {
         "total_customers": total_customers,
         "total_offers": total_offers,
         "total_savings_accepted": round(total_savings, 2),
-        "offers_by_status": {status: count for status, count in offers_by_status}
+        "offers_by_status": {status: count for status, count in offers_by_status},
+        "total_open_offers": total_open_offers,
+        "total_finalized_contracts": total_finalized_contracts,
     }
 
 

@@ -1,9 +1,10 @@
 ﻿import { useState, useCallback, useMemo, useEffect } from 'react';
-import { Upload, FileText, Zap, TrendingDown, AlertCircle, CheckCircle, Loader2, RefreshCw, Download, Settings, FileSignature } from 'lucide-react';
+import { Upload, FileText, Zap, TrendingDown, AlertCircle, CheckCircle, Loader2, RefreshCw, Download, Settings, FileSignature, Users } from 'lucide-react';
 import { fullProcess, downloadPdf, FullProcessResponse, pricingAnalyze, pricingGetTemplates, pricingGetPeriods, pricingDownloadPdf, pricingDownloadExcel, PricingAnalyzeResponse, normalizeInvoicePeriod, API_BASE, TemplateItem, getVersion, VersionInfo, PdfMismatchError, PdfMismatchContract, createOffer, createCustomer, OfferCalculationPayload } from './api';
 import { ContractWizardModal } from './contracts/ContractWizardModal';
 import AdminPanel from './AdminPanel';
 import ReconPage from './recon/ReconPage';
+import CrmCorePage from './crm-core/CrmCorePage';
 import { generateBayiRaporPdf } from './bayiRapor';
 
 // EPDK Dağıtım Tarifeleri — Backend API'den çekilir
@@ -198,6 +199,7 @@ function App() {
   // Admin panel state
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [showReconPage, setShowReconPage] = useState(false);
+  const [showCrmCore, setShowCrmCore] = useState(false); // S1 CRM Core (Bugün/Müşteriler/Teklifler/Sözleşmeler)
   
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1057,6 +1059,11 @@ function App() {
     return <ReconPage onBack={() => setShowReconPage(false)} />;
   }
 
+  // S1 CRM Core sayfası göster
+  if (showCrmCore) {
+    return <CrmCorePage onBack={() => setShowCrmCore(false)} />;
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex flex-col overflow-auto">
       {/* Header */}
@@ -1080,6 +1087,14 @@ function App() {
                 aria-label="Fatura Mutabakat"
               >
                 <FileText className="w-5 h-5 text-gray-500" />
+              </button>
+              <button
+                onClick={() => setShowCrmCore(true)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                title="CRM Core"
+                aria-label="CRM Core"
+              >
+                <Users className="w-5 h-5 text-gray-500" />
               </button>
               <button
                 onClick={() => setShowAdminPanel(true)}
