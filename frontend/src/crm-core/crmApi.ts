@@ -173,3 +173,66 @@ export async function getToday(): Promise<TodayResponse> {
   const response = await api.get('/crm/today');
   return response.data;
 }
+
+// =============================================================================
+// S3 — Sales Pipeline — /crm/pipeline API client.
+//
+// Yeni tablo/kolon YOK (owner kararı) — backend her çağrıda Offer/Contract/
+// Activity/Task'ten anlık hesaplar. Bkz. backend/app/crm/schemas.py
+// PipelineCardOut için tam alan sözleşmesi.
+// =============================================================================
+
+// Canonical UI kolonları (owner kararı, S3 GO madde 2). "İletişimde" ve
+// "Görüşme/Takip" burada YOK — bunlar stage değil, kartta last_activity/
+// next_open_task olarak gösterilen CONTEXT'tir.
+export type PipelineStage = 'DRAFT' | 'SENT' | 'ACCEPTED' | 'CONTRACT' | 'COMPLETED' | 'LOST';
+
+export type PipelineWarning =
+  | 'CONTRACT_STATUS_WITHOUT_CONTRACT'
+  | 'COMPLETED_WITHOUT_CONTRACT'
+  | 'MISSING_CUSTOMER'
+  | 'UNKNOWN_OFFER_STATUS';
+
+export interface PipelineCardOut {
+  offer_id: number;
+  customer_id: number | null;
+  customer_name: string | null; // null → "Müşterisiz" göster (S1 konvansiyonu)
+  offer_date: string;
+  offer_total: number;
+  agreement_multiplier: number;
+  offer_status: string; // ham OfferStatus — VALID_OFFER_TRANSITIONS burada KOPYALANMAZ (owner madde 8)
+  pipeline_stage: PipelineStage;
+  pipeline_warning: PipelineWarning | null;
+  has_contract: boolean;
+  contract_id: number | null;
+  contract_status: string | null;
+  last_activity: ActivityOut | null;
+  next_open_task: TaskOut | null;
+  overdue_task_count: number;
+  // Kanban drag/drop bunun DIŞINDAKİ hiçbir hedefe drop izni vermez
+  // (owner madde 8) — updateOfferStatus (frontend/src/api.ts) ile aynı
+  // backend kaynağından gelir.
+  allowed_transitions: string[];
+}
+
+export interface PipelineResponse {
+  cards: PipelineCardOut[];
+  total: number;
+}
+
+/**
+ * Çağrıldığı yerler:
+ * - CrmCore/PipelineScreen.tsx → S3 Kanban görünümü [WB-4]
+ */
+export async function getPipeline(params?: {
+  customer_search?: string;
+  stage?: PipelineStage;
+  offer_status?: string;
+  has_contract?: boolean;
+  overdue_only?: boolean;
+  skip?: number;
+  limit?: number;
+}): Promise<PipelineResponse> {
+  const response = await api.get('/crm/pipeline', { params });
+  return response.data;
+}
