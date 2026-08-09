@@ -113,3 +113,56 @@ class TodayResponse(BaseModel):
     total_open_offers: int
     total_accepted_offers: int
     total_finalized_contracts: int
+
+
+# =============================================================================
+# S3 — Sales Pipeline — derived projection şemaları.
+#
+# Yeni tablo/kolon YOK (owner kararı, S3 GO madde 1) — bu şemalar Offer/
+# Contract/Activity/Task'in mevcut alanlarından anlık hesaplanan bir
+# GÖRÜNÜMÜ temsil eder, DB'ye hiçbir şey yazmaz.
+# =============================================================================
+
+# Canonical UI kolonları (owner kararı, S3 GO madde 2). "İletişimde" ve
+# "Görüşme/Takip" burada YOK — bunlar pipeline_stage değil, kart üzerinde
+# last_activity/next_open_task olarak ayrıca gösterilen CONTEXT'tir.
+PipelineStage = Literal["DRAFT", "SENT", "ACCEPTED", "CONTRACT", "COMPLETED", "LOST"]
+
+# Owner'ın 3 örneği (madde 3 precedence + madde 13) + defensive fallback.
+# UNKNOWN_OFFER_STATUS pratikte hiç tetiklenmemeli (offer_lifecycle.py'de
+# sabit 8 durum var, S3 yeni bir OfferStatus icat etmiyor) — yalnız "hiçbir
+# kayıt sessizce kaybolmayacak" ilkesini kod seviyesinde garanti eder.
+PipelineWarning = Literal[
+    "CONTRACT_STATUS_WITHOUT_CONTRACT",
+    "COMPLETED_WITHOUT_CONTRACT",
+    "MISSING_CUSTOMER",
+    "UNKNOWN_OFFER_STATUS",
+]
+
+
+class PipelineCardOut(BaseModel):
+    offer_id: int
+    customer_id: Optional[int] = None
+    customer_name: Optional[str] = None  # None → frontend "Müşterisiz" gösterir (S1 konvansiyonu, ContractsScreen.tsx ile aynı)
+    offer_date: str  # Offer.created_at (ISO, naive UTC)
+    offer_total: float
+    agreement_multiplier: float
+    offer_status: str  # ham OfferStatus — frontend VALID_OFFER_TRANSITIONS kopyalamaz (owner madde 8)
+    pipeline_stage: PipelineStage
+    # Tekil alan (owner'ın verdiği isimle uyumlu): precedence-kaynaklı
+    # tutarsızlık (CONTRACT_STATUS_WITHOUT_CONTRACT/COMPLETED_WITHOUT_CONTRACT)
+    # MISSING_CUSTOMER'dan öncelikli — ikisi birden oluşursa precedence
+    # warning'i gösterilir (bkz. service.py _compute_pipeline_stage).
+    pipeline_warning: Optional[PipelineWarning] = None
+    has_contract: bool
+    contract_id: Optional[int] = None
+    contract_status: Optional[str] = None
+    last_activity: Optional[ActivityOut] = None
+    next_open_task: Optional[TaskOut] = None
+    overdue_task_count: int
+    allowed_transitions: list[str]
+
+
+class PipelineResponse(BaseModel):
+    cards: list[PipelineCardOut]
+    total: int  # filtre sonrası toplam kayıt sayısı (frontend pagination)

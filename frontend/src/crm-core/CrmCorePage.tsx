@@ -1,25 +1,30 @@
 // =============================================================================
-// S1 — CRM Core shell/navigation.
+// CRM Core shell/navigation.
 // =============================================================================
 //
 // Mevcut App.tsx boolean-state "sayfa" deseninin (showAdminPanel/showReconPage
 // → AdminPanel/ReconPage, onBack prop'lu) ÜÇÜNCÜ örneği. React Router
-// eklenmedi (owner kararı, S1 preflight) — kendi içindeki 4 sekme de
-// AdminPanel.tsx'teki activeTab + border-b-2 deseninin birebir taklididir.
+// eklenmedi (owner kararı, S1 preflight — S3'te de korunuyor, owner madde 14)
+// — kendi içindeki sekmeler de AdminPanel.tsx'teki activeTab + border-b-2
+// deseninin birebir taklididir.
 //
-// Kapsam (S1 kilitli tanım): Bugün / Müşteriler / Teklifler / Sözleşmeler.
-// Activity/Task/Prospect/Outreach/Pipeline/Opportunity/Notification YOK.
+// Kapsam: Bugün / Müşteriler / Teklifler / Pipeline (S3) / Sözleşmeler.
+// Activity/Task S2'de eklendi (Müşteri Detay alt-sekmeleri + Bugün).
+// Pipeline S3'te eklendi — yeni domain model DEĞİL, mevcut Offer/Contract/
+// Activity/Task'in derived projeksiyonu (owner kararı, S3 GO madde 1).
+// Prospect/Outreach/Opportunity/Notification hâlâ YOK.
 // =============================================================================
 
 import { useState } from 'react';
-import { ArrowLeft, LayoutDashboard, Users, FileText, FileCheck } from 'lucide-react';
+import { ArrowLeft, LayoutDashboard, Users, FileText, FileCheck, Trello } from 'lucide-react';
 import { TodayScreen } from './TodayScreen';
 import { CustomersScreen } from './CustomersScreen';
 import { OffersScreen } from './OffersScreen';
 import { ContractsScreen } from './ContractsScreen';
+import { PipelineScreen } from './PipelineScreen';
 import type { Subject } from './crmApi';
 
-type CrmTab = 'today' | 'customers' | 'offers' | 'contracts';
+type CrmTab = 'today' | 'customers' | 'offers' | 'pipeline' | 'contracts';
 
 interface CrmCorePageProps {
   onBack: () => void;
@@ -52,6 +57,7 @@ export default function CrmCorePage({ onBack }: CrmCorePageProps) {
     { key: 'today', label: 'Bugün', icon: LayoutDashboard },
     { key: 'customers', label: 'Müşteriler', icon: Users },
     { key: 'offers', label: 'Teklifler', icon: FileText },
+    { key: 'pipeline', label: 'Pipeline', icon: Trello },
     { key: 'contracts', label: 'Sözleşmeler', icon: FileCheck },
   ];
 
@@ -111,6 +117,7 @@ export default function CrmCorePage({ onBack }: CrmCorePageProps) {
           />
         )}
         {activeTab === 'offers' && <OffersScreen />}
+        {activeTab === 'pipeline' && <PipelineScreen onOpenSubject={handleOpenSubject} />}
         {activeTab === 'contracts' && <ContractsScreen />}
       </main>
     </div>
