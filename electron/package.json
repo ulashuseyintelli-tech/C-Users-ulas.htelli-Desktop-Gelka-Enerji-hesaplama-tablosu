@@ -1,6 +1,6 @@
 {
   "name": "gelka-enerji",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "description": "Gelka Enerji - Fatura Analiz ve Teklif Sistemi",
   "main": "main.js",
   "author": "Gelka Enerji",
@@ -33,7 +33,9 @@
       {
         "from": "../frontend/dist",
         "to": "frontend/dist",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "../backend/dist/gelka-backend.exe",
@@ -54,7 +56,9 @@
     ],
     "forceCodeSigning": false,
     "win": {
-      "target": ["nsis"],
+      "target": [
+        "nsis"
+      ],
       "signAndEditExecutable": false,
       "verifyUpdateCodeSignature": false,
       "signDlls": false,
@@ -67,7 +71,8 @@
       "createStartMenuShortcut": true,
       "shortcutName": "Gelka Enerji",
       "deleteAppDataOnUninstall": false,
-      "menuCategory": "Gelka Enerji"
+      "menuCategory": "Gelka Enerji",
+      "artifactName": "Gelka-Enerji-Setup.${ext}"
     }
   }
 }

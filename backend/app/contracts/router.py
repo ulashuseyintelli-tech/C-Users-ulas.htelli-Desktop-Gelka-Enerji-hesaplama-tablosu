@@ -531,7 +531,9 @@ def finalize_contract(
             db, contract_id, tenant_id, contract.extraction_snapshot_json
         )
     except Exception as exc:  # noqa: BLE001 — service katmanı zaten revert+cleanup yaptı, burada yalnız 500'e çevir
-        logger.error(f"Contract {contract_id} finalize başarısız: {type(exc).__name__}")
+        # NOT: tam exception mesajı + traceback loglanır (PII değil, sistem/altyapı
+        # hatası — packaging/renderer teşhisini hızlandırmak için genişletildi).
+        logger.exception(f"Contract {contract_id} finalize başarısız: {type(exc).__name__}: {exc}")
         raise HTTPException(
             status_code=500, detail={"error": "finalize_failed", "message": "Sözleşme finalize edilemedi, lütfen tekrar deneyin"}
         ) from exc

@@ -38,6 +38,18 @@ export interface AnalyzeResponse {
     current_active_unit_price_tl_per_kwh: { value: number; confidence: number };
     distribution_unit_price_tl_per_kwh: { value: number; confidence: number };
     invoice_total_with_vat_tl: { value: number; confidence: number };
+    // Backend (InvoiceExtraction.consumer) bunu zaten üretiyor; Sözleşme
+    // Hazırla akışında unvan/vergi no/tesis adresini faturadan ön-doldurmak
+    // için kullanılıyor (bkz. App.tsx invoiceSeed).
+    consumer?: {
+      title?: string | null;
+      vkn?: string | null;
+      tckn?: string | null;
+      facility_address?: string | null;
+      eic_code?: string | null;
+      contract_no?: string | null;
+      meter_no?: string | null;
+    };
   };
   validation: {
     is_ready_for_pricing: boolean;
