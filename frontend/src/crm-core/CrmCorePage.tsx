@@ -8,23 +8,27 @@
 // — kendi içindeki sekmeler de AdminPanel.tsx'teki activeTab + border-b-2
 // deseninin birebir taklididir.
 //
-// Kapsam: Bugün / Müşteriler / Teklifler / Pipeline (S3) / Sözleşmeler.
-// Activity/Task S2'de eklendi (Müşteri Detay alt-sekmeleri + Bugün).
-// Pipeline S3'te eklendi — yeni domain model DEĞİL, mevcut Offer/Contract/
-// Activity/Task'in derived projeksiyonu (owner kararı, S3 GO madde 1).
-// Prospect/Outreach/Opportunity/Notification hâlâ YOK.
+// Kapsam: Bugün / Müşteriler / Teklifler / Pipeline (S3) / Sözleşmeler /
+// Prospectler (S4). Activity/Task S2'de eklendi (Müşteri Detay alt-
+// sekmeleri + Bugün). Pipeline S3'te eklendi — yeni domain model DEĞİL,
+// mevcut Offer/Contract/Activity/Task'in derived projeksiyonu (owner
+// kararı, S3 GO madde 1). Prospectler S4'te eklendi — PROSPECT ≠ CUSTOMER
+// (owner kararı, S4 GO madde 1), kendi bağımsız domain'i (ProspectCompany/
+// Contact/Source), Customer'a yalnız explicit "Müşteriye Dönüştür"
+// aksiyonuyla bağlanır. Outreach/Opportunity/Notification hâlâ YOK.
 // =============================================================================
 
 import { useState } from 'react';
-import { ArrowLeft, LayoutDashboard, Users, FileText, FileCheck, Trello } from 'lucide-react';
+import { ArrowLeft, LayoutDashboard, Users, FileText, FileCheck, Trello, Radar } from 'lucide-react';
 import { TodayScreen } from './TodayScreen';
 import { CustomersScreen } from './CustomersScreen';
 import { OffersScreen } from './OffersScreen';
 import { ContractsScreen } from './ContractsScreen';
 import { PipelineScreen } from './PipelineScreen';
+import { ProspectingScreen } from './ProspectingScreen';
 import type { Subject } from './crmApi';
 
-type CrmTab = 'today' | 'customers' | 'offers' | 'pipeline' | 'contracts';
+type CrmTab = 'today' | 'customers' | 'offers' | 'pipeline' | 'contracts' | 'prospecting';
 
 interface CrmCorePageProps {
   onBack: () => void;
@@ -59,6 +63,7 @@ export default function CrmCorePage({ onBack }: CrmCorePageProps) {
     { key: 'offers', label: 'Teklifler', icon: FileText },
     { key: 'pipeline', label: 'Pipeline', icon: Trello },
     { key: 'contracts', label: 'Sözleşmeler', icon: FileCheck },
+    { key: 'prospecting', label: 'Prospectler', icon: Radar },
   ];
 
   return (
@@ -119,6 +124,7 @@ export default function CrmCorePage({ onBack }: CrmCorePageProps) {
         {activeTab === 'offers' && <OffersScreen />}
         {activeTab === 'pipeline' && <PipelineScreen onOpenSubject={handleOpenSubject} />}
         {activeTab === 'contracts' && <ContractsScreen />}
+        {activeTab === 'prospecting' && <ProspectingScreen onOpenSubject={handleOpenSubject} />}
       </main>
     </div>
   );
