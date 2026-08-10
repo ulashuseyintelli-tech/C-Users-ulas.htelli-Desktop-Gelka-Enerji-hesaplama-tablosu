@@ -850,6 +850,188 @@ class Task(Base):
     contract = relationship("Contract")
 
 
+# =============================================================================
+# S4 — Prospecting.
+#
+# PROSPECT ≠ CUSTOMER (owner kararı, madde 1): bu üç tablo Customer'dan
+# TAMAMEN ayrı bir keşif/qualification alanı temsil eder. Customer'a geçiş
+# YALNIZ explicit "Müşteriye Dönüştür" aksiyonuyla olur (bkz.
+# app/prospecting/service.py convert_to_customer()) — discovery/enrichment
+# hiçbir aşamada Customer tablosuna doğrudan yazmaz.
+#
+# tenant_id: mevcut CRM pattern'iyle (Activity/Task) birebir aynı
+# (String(64), default="default") — SINGLE GELKA TENANT devam ediyor
+# (owner madde 7), yeni bir Customer tenant migration'ı AÇILMADI.
+#
+# FK'lerde ondelete BİLİNÇLİ OLARAK yok — mevcut projenin HİÇBİR yerinde
+# kullanılmıyor (bkz. Activity/Task docstring'i), o konvansiyon burada da
+# korundu. ProspectContact/ProspectSource → ProspectCompany ilişkisinde
+# yalnız ORM-seviyeli cascade var (ham SQL DELETE'i etkilemez); S4 API'sinde
+# zaten hiçbir DELETE endpoint'i yok (owner'ın backend API listesinde yok).
+# =============================================================================
+
+
+class ProspectCompany(Base):
+    """
+    Keşfedilen aday şirket kaydı (S4 — Prospecting).
+
+    status TEK alan (owner notu: "status/qualification aynı kavramı
+    duplicate etmesin, mevcut proje konvansiyonu destekliyorsa tek alana
+    indir") — hem discovery lifecycle hem qualification sonucunu taşır:
+    DISCOVERED → VERIFIED → QUALIFIED/DISQUALIFIED → CONVERTED. Emsal:
+    Offer.status aynı şekilde tek alanda lifecycle+outcome taşıyor.
+
+    Dedup (owner: "silent merge YOK"): duplicate_of_id, olası bir
+    duplicate'e rağmen kullanıcı "yine de ayrı kayıt" derse izi kaybetmemek
+    için tutulur (self-referential FK, ilişki tanımlanmadı — yalnız ID
+    yeterli, owner'ın "gereksiz tablo/karmaşıklık artırma" ilkesi). Otomatik
+    BİRLEŞTİRME asla yapılmaz. Gerçek dedup kararı app/prospecting/dedup.py.
+
+    Çağrıldığı yerler:
+    - app/prospecting/service.py (create/list/verify/qualify/disqualify/
+      convert) [S4-WB2]
+    - app/prospecting/dedup.py (duplicate tespiti, aynı tablo üzerinde
+      arama) [S4-WB3]
+    """
+    __tablename__ = "prospect_companies"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(String(64), nullable=False, default="default", index=True)
+
+    legal_name = Column(String(255), nullable=True)
+    trade_name = Column(String(255), nullable=True)
+    normalized_name = Column(String(255), nullable=True, index=True)  # dedup sinyali #3
+
+    website = Column(String(500), nullable=True)  # ham, kullanıcı/kaynak girişi — kaybedilmez
+    normalized_domain = Column(String(255), nullable=True, index=True)  # dedup sinyali #1 (en güçlü)
+
+    sector = Column(String(255), nullable=True)
+    city = Column(String(100), nullable=True, index=True)
+    district = Column(String(100), nullable=True)
+    industrial_zone = Column(String(255), nullable=True)
+    address = Column(Text, nullable=True)
+    phone = Column(String(50), nullable=True)  # dedup sinyali #4 (ham gösterim değeri)
+
+    status = Column(String(20), nullable=False, default="DISCOVERED", index=True)
+    # DISCOVERED | VERIFIED | QUALIFIED | DISQUALIFIED | CONVERTED
+
+    qualification_reason = Column(String(50), nullable=True)
+    # sector_fit | location_fit | has_corporate_contact | energy_intensive_signal
+    # | too_small_unsuitable | duplicate | other
+    qualification_note = Column(Text, nullable=True)
+
+    duplicate_of_id = Column(Integer, ForeignKey("prospect_companies.id"), nullable=True)
+
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+
+    discovered_at = Column(DateTime, default=datetime.utcnow)
+    last_verified_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    customer = relationship("Customer", foreign_keys=[customer_id])
+    contacts = relationship("ProspectContact", back_populates="company", cascade="all, delete-orphan")
+    sources = relationship("ProspectSource", back_populates="company", cascade="all, delete-orphan")
+
+
+class ProspectContact(Base):
+    """
+    Keşfedilen şirkete bağlı iletişim kişisi/kanalı (S4 — Prospecting).
+
+    COMPANY ≠ CONTACT (owner madde 2): şirket adres/telefon alanları
+    BURAYA kopyalanmaz — yalnız contact'a özgü alanlar tutulur.
+
+    contact_type (owner — E-MAIL DISCOVERY): GENERAL_CORPORATE (info@,
+    contact@) | DEPARTMENT (satis@, purchasing@ vb.) |
+    NAMED_CORPORATE_PERSON (ad.soyad@sirket.tld) | PERSONAL_OR_FREE_MAIL
+    (gmail/outlook/yahoo vb.) | OTHER.
+
+    verification_status V1'de yalnız sözdizimi/domain seviyesi (owner:
+    "SMTP mailbox probing / intrusive verification YAPMA").
+
+    source_id: bu contact'ın HANGİ ProspectSource'tan geldiği — "Bu
+    bilgiyi nereden bulduk?" (owner: SOURCE EVIDENCE MANDATORY) her zaman
+    yanıtlanabilir olmalı.
+
+    Çağrıldığı yerler:
+    - app/prospecting/service.py (contact create/list) [S4-WB2]
+    - app/prospecting/enrichment.py (website'ten otomatik extraction) [S4-WB4]
+    """
+    __tablename__ = "prospect_contacts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(String(64), nullable=False, default="default", index=True)
+
+    prospect_company_id = Column(Integer, ForeignKey("prospect_companies.id"), nullable=False, index=True)
+
+    full_name = Column(String(255), nullable=True)
+    job_title = Column(String(255), nullable=True)
+    email = Column(String(255), nullable=True, index=True)
+    phone = Column(String(50), nullable=True)
+
+    contact_type = Column(String(30), nullable=False, default="OTHER")
+    # GENERAL_CORPORATE | DEPARTMENT | NAMED_CORPORATE_PERSON | PERSONAL_OR_FREE_MAIL | OTHER
+
+    verification_status = Column(String(30), nullable=False, default="UNVERIFIED")
+    # UNVERIFIED | SYNTAX_VALID | DOMAIN_VALID (V1'de SMTP probing YOK)
+
+    source_id = Column(Integer, ForeignKey("prospect_sources.id"), nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    company = relationship("ProspectCompany", back_populates="contacts", foreign_keys=[prospect_company_id])
+    source = relationship("ProspectSource", foreign_keys=[source_id])
+
+
+class ProspectSource(Base):
+    """
+    Bir prospect verisinin kaynak kanıtı (S4 — Prospecting).
+
+    SOURCE EVIDENCE MANDATORY (owner kararı) — her keşfedilen veri bu
+    tablo üzerinden "nereden bulundu" sorusuna yanıtlanabilir olmalı.
+    evidence_text SANITIZE edilmiş kısa bir alıntıdır — ham HTML/script
+    İÇERMEZ (bkz. app/prospecting/enrichment.py _sanitize_excerpt();
+    owner'ın HIGH PRIORITY güvenlik listesi, "sanitize evidence excerpt").
+
+    content_hash: app/pricing/pricing_cache.py'deki SHA256-tabanlı cache
+    desenine benzer (aynı URL'i gereksiz yere tekrar çekmemek için) — TTL
+    burada YOK (V1 basit tutuldu, owner: "erken normalization uğruna
+    karmaşıklık artırma"), yalnız "bu içerik daha önce görüldü mü" için.
+
+    fetch_status: SSRF reddi/timeout/boyut/content-type dahil HER fetch
+    denemesinin sonucu buraya yazılır — S3'ten taşınan "hiçbir kayıt
+    sessizce kaybolmayacak" ilkesi burada da geçerli: başarısız bir fetch
+    de bir satır olarak görünür kalır, sessizce yutulmaz.
+
+    Çağrıldığı yerler:
+    - app/prospecting/enrichment.py (her sayfa fetch'i bir satır üretir) [S4-WB4]
+    - app/prospecting/service.py (GET /prospects/{id}/sources) [S4-WB2]
+    """
+    __tablename__ = "prospect_sources"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(String(64), nullable=False, default="default", index=True)
+
+    prospect_company_id = Column(Integer, ForeignKey("prospect_companies.id"), nullable=False, index=True)
+
+    source_url = Column(String(1000), nullable=False)
+    source_type = Column(String(30), nullable=False, default="WEBSITE")
+    # WEBSITE | SEARCH_RESULT | DIRECTORY | MANUAL
+
+    source_title = Column(String(500), nullable=True)
+    evidence_text = Column(Text, nullable=True)  # sanitize edilmiş kısa alıntı
+    content_hash = Column(String(64), nullable=True, index=True)  # SHA256
+
+    fetch_status = Column(String(30), nullable=False, default="PENDING")
+    # PENDING | OK | FAILED | BLOCKED_SSRF | TIMEOUT | TOO_LARGE | UNSUPPORTED_CONTENT_TYPE
+
+    discovered_at = Column(DateTime, default=datetime.utcnow)
+    last_checked_at = Column(DateTime, nullable=True)
+
+    company = relationship("ProspectCompany", back_populates="sources", foreign_keys=[prospect_company_id])
+
+
 def init_db():
     """
     Veritabanı tablolarını oluştur.

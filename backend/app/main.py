@@ -140,6 +140,12 @@ app.include_router(contracts_router)
 from .crm.router import crm_router
 app.include_router(crm_router)
 
+# S4 — Prospecting: internet üzerinden aday şirket keşfi + doğrulama +
+# qualification + kontrollü Customer'a dönüştürme. PROSPECT ≠ CUSTOMER —
+# bkz. app/prospecting/service.py modül docstring'i.
+from .prospecting.router import prospecting_router
+app.include_router(prospecting_router)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Security - API Key Authentication + Rate Limiting
