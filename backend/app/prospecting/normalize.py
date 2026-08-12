@@ -17,6 +17,8 @@ YAZMAZ.
   alanlarını doldurma) [S4-WB2]
 - app/prospecting/enrichment.py (contact_type sınıflandırması için
   FREE_MAIL_DOMAINS) [S4-WB4]
+- app/outreach/compliance.py (e-posta sözdizimi geçidi —
+  is_valid_email_syntax) [S5-WB3]
 """
 from __future__ import annotations
 
@@ -146,3 +148,28 @@ def email_domain(email: Optional[str]) -> Optional[str]:
 
 def is_free_mail_domain(domain: Optional[str]) -> bool:
     return bool(domain) and domain.lower() in FREE_MAIL_DOMAINS
+
+
+# S5 — Outreach ihtiyacı: normalize_email() kasıtlı olarak yalnız trim+
+# lowercase yapar, sözdizimi doğrulamaz (yukarıdaki docstring). Ayrı bir
+# GEÇERLİLİK kontrolüne compliance gate'inde ihtiyaç var — burada, TEK
+# paylaşılan yerde tanımlanır (app/prospecting/enrichment.py'nin kendi
+# _EMAIL_PATTERN'i serbest metinden email ÇIKARMAK için, farklı bir amaç
+# için var — burada onu KOPYALAMIYORUZ, yeni/ayrı bir amaca hizmet eden
+# küçük bir fonksiyon ekliyoruz).
+_EMAIL_SYNTAX_PATTERN = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
+
+
+def is_valid_email_syntax(email: Optional[str]) -> bool:
+    """
+    Basit sözdizimi kontrolü (RFC 5322'nin tam bir uygulaması DEĞİL) —
+    yalnız "bariz şekilde geçersiz" girdileri elemek içindir. SMTP mailbox
+    doğrulaması YAPMAZ (owner — ProspectContact.verification_status
+    docstring'i: "intrusive verification YAPMA" ilkesiyle aynı sınır).
+
+    Çağrıldığı yerler:
+    - app/outreach/compliance.py (evaluate_email_send_eligibility, adım 1:
+      e-posta sözdizimi geçidi) [S5-WB3]
+    """
+    normalized = normalize_email(email)
+    return bool(normalized) and bool(_EMAIL_SYNTAX_PATTERN.match(normalized))

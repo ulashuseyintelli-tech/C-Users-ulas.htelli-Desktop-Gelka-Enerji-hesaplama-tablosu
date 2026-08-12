@@ -920,6 +920,19 @@ class ProspectCompany(Base):
     # | too_small_unsuitable | duplicate | other
     qualification_note = Column(Text, nullable=True)
 
+    # S5 — Outreach ihtiyacı (owner'ın 10.08 düzeltme talimatı): hukuki
+    # statü (tacir/esnaf/bireysel) contact_type/e-posta örüntüsünden ASLA
+    # otomatik ÇIKARILMAZ (bkz. app/outreach/compliance.py modül
+    # docstring'i — "Sessiz inference yapma"). Bu alan yalnız bir insan
+    # tarafından, güvenilir bir kaynaktan (örn. Ticaret Sicili Gazetesi/
+    # MERSİS sorgusu) DOĞRULANDIKTAN SONRA elle işaretlenir. NULL =
+    # henüz doğrulanmadı → compliance engine UNKNOWN sayar, gerçek
+    # prospect gönderimini fail-closed bloke eder.
+    verified_legal_type = Column(String(20), nullable=True)
+    # TACIR | ESNAF | BIREYSEL | NULL (doğrulanmadı)
+    verified_legal_type_note = Column(Text, nullable=True)  # doğrulama kaynağı/gerekçesi
+    verified_legal_type_set_at = Column(DateTime, nullable=True)
+
     duplicate_of_id = Column(Integer, ForeignKey("prospect_companies.id"), nullable=True)
 
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
@@ -1030,6 +1043,180 @@ class ProspectSource(Base):
     last_checked_at = Column(DateTime, nullable=True)
 
     company = relationship("ProspectCompany", back_populates="sources", foreign_keys=[prospect_company_id])
+
+
+# =============================================================================
+# S5 — Outreach.
+#
+# İlk kez sistem dışarıya (üçüncü kişi şirketlere) gerçek ticari e-posta
+# gönderiyor — bu yüzden owner kararı: hiçbir gönderim insan onayı
+# (Approve → Send, ayrı aksiyonlar) olmadan olamaz; compliance kararı
+# backend'de zorunlu (evaluate_email_send_eligibility, app/outreach/
+# compliance.py), frontend'in can_send=true beyanına asla güvenilmez.
+#
+# tenant_id: mevcut CRM/Prospecting pattern'iyle birebir aynı (String(64),
+# default="default") — SINGLE GELKA TENANT devam ediyor.
+# =============================================================================
+
+
+class OutreachMessage(Base):
+    """
+    Tekil, insan-onaylı tanışma e-postası kaydı (S5 — Outreach).
+
+    recipient_email_snapshot: contact_id dolu olsa BİLE gönderim ANINDAKİ
+    email adresi burada AYRICA donar (immutable send snapshot, owner
+    madde 9) — contact kaydı sonradan güncellenirse/silinirse geçmiş
+    gönderimin "kime gittiği" bilgisi kaybolmaz. contact_id NULLABLE'dır
+    çünkü owner'ın modelinde bazı senaryolarda hedef doğrudan
+    Customer.email olabilir (S4'ün ayrı bir ProspectContact kaydı
+    üretmediği durum) — bu durumda contact_id boş kalır, snapshot yine de
+    doludur.
+
+    recipient_category (owner'ın 10.08 ek talimatı — SMTP kararı
+    sırasında eklendi): PROSPECT_RECIPIENT | TEST_RECIPIENT. TEST_RECIPIENT
+    YALNIZ config'teki owner-onaylı test-adres whitelist'inden türetilir
+    (bkz. app/outreach/compliance.py) — asla kullanıcı girdisinden veya
+    request body'sinden gelmez. İYS/policy netleşene kadar
+    PROSPECT_RECIPIENT gönderimi hard-blocked kalır (owner: "real prospect
+    send remains hard-blocked"); TEST_RECIPIENT owner-controlled UAT için
+    ayrı bir compliance yoluna sahiptir.
+
+    status akışı (owner madde 4): DRAFT → READY_FOR_REVIEW → APPROVED →
+    SENDING → SENT | FAILED | BOUNCED; ayrıca REPLIED, SUPPRESSED,
+    CANCELLED. SENDING durumu, aynı mesajın iki kez gönderilmesini önleyen
+    atomic claim için kullanılır (owner: "double-click / retry idempotent
+    ... local atomic SENDING claim").
+
+    Çağrıldığı yerler:
+    - app/outreach/service.py (draft/approve/send/status update) [S5-WB2+]
+    """
+    __tablename__ = "outreach_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(String(64), nullable=False, default="default", index=True)
+
+    prospect_company_id = Column(Integer, ForeignKey("prospect_companies.id"), nullable=True, index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True, index=True)
+    contact_id = Column(Integer, ForeignKey("prospect_contacts.id"), nullable=True, index=True)
+
+    recipient_email_snapshot = Column(String(255), nullable=False, index=True)
+    recipient_legal_type = Column(String(20), nullable=True)
+    # TACIR | ESNAF | BIREYSEL | UNKNOWN — hukuki statü (opt-out vs opt-in
+    # rejimi). Owner'ın 10.08 düzeltmesi: contact_type (info@/satis@ vb.
+    # e-posta ÖRÜNTÜSÜ) İLE bu alan (alıcının HUKUKİ statüsü) BAĞIMSIZ
+    # eksenlerdir — biri diğerinden ASLA otomatik türetilmez. Yalnız
+    # ProspectCompany.verified_legal_type doğrulanmışsa TACIR/ESNAF/BIREYSEL
+    # olur; aksi halde UNKNOWN (fail-closed, gerçek prospect gönderimi
+    # bloke). Bkz. app/outreach/compliance.py.
+
+    recipient_category = Column(String(30), nullable=False, default="PROSPECT_RECIPIENT")
+    # PROSPECT_RECIPIENT | TEST_RECIPIENT
+
+    channel = Column(String(20), nullable=False, default="EMAIL")
+
+    subject = Column(String(500), nullable=False)
+
+    # Owner'ın 10.08 ek talimatı: AI/editable ile SYSTEM/immutable AYRI
+    # KOLONLARDA tutulur — yalnız kod disipliniyle DEĞİL, VERİ KATMANINDA
+    # da garanti edilsin diye ("AI prompt değişse bile hukuki footer'ın
+    # bozulmasını engeller"). body_snapshot YALNIZ editable (selamlama/
+    # tanıtım/neden/görüşme talebi) kısmı tutar; system_footer_snapshot
+    # YALNIZ app/outreach/sender_profile.py::render_mandatory_footer()
+    # çıktısını tutar ve draft oluşturulduktan sonra HİÇBİR endpoint
+    # tarafından değiştirilmez (bkz. app/outreach/service.py
+    # finalize_draft_message() — yalnız body_snapshot'a yazar).
+    body_snapshot = Column(Text, nullable=False)  # EDİTABLE blok
+    system_footer_snapshot = Column(Text, nullable=False)  # SYSTEM/immutable blok
+
+    status = Column(String(30), nullable=False, default="DRAFT", index=True)
+    # DRAFT | READY_FOR_REVIEW | APPROVED | SENDING | SENT | FAILED | BOUNCED
+    # | REPLIED | SUPPRESSED | CANCELLED
+
+    provider = Column(String(30), nullable=True)
+    provider_message_id = Column(String(255), nullable=True, index=True)
+
+    approved_at = Column(DateTime, nullable=True)
+    sent_at = Column(DateTime, nullable=True)
+    delivered_at = Column(DateTime, nullable=True)
+    replied_at = Column(DateTime, nullable=True)
+    bounced_at = Column(DateTime, nullable=True)
+    failed_at = Column(DateTime, nullable=True)
+    failure_code = Column(String(100), nullable=True)
+
+    source_snapshot_json = Column(JSON, nullable=True)
+    compliance_snapshot_json = Column(JSON, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    prospect_company = relationship("ProspectCompany", foreign_keys=[prospect_company_id])
+    customer = relationship("Customer", foreign_keys=[customer_id])
+    contact = relationship("ProspectContact", foreign_keys=[contact_id])
+
+
+class SuppressionEntry(Base):
+    """
+    Kalıcı gönderim engeli kaydı (S5 — Outreach).
+
+    Owner madde D (HARD GATE): bir adres ret verdiyse / do-not-contact
+    işaretliyse / permanent bounce aldıysa / hukuki olarak bloklandıysa,
+    HİÇBİR normal send endpoint'i bunu bypass edemez. Bu tablo, o
+    kontrolün TEK doğruluk kaynağıdır — compliance engine her zaman bu
+    tabloya (email_normalized üzerinden) bakar.
+
+    Aynı email için BİRDEN FAZLA suppression kaydı olabilir (örn. önce
+    PERMANENT_BOUNCE sonra ayrıca USER_REJECTED) — bilinçli olarak UNIQUE
+    constraint YOK, her kayıt tarihsel bir iz olarak kalır ("hiçbir kayıt
+    sessizce kaybolmayacak" ilkesi, S3'ten taşınan genel ilke); can_send
+    kontrolü "bu email için EN AZ BİR suppression kaydı var mı" sorusuna
+    bakar.
+
+    Çağrıldığı yerler:
+    - app/outreach/compliance.py (evaluate_email_send_eligibility) [S5-WB3]
+    """
+    __tablename__ = "suppression_entries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(String(64), nullable=False, default="default", index=True)
+
+    email_normalized = Column(String(255), nullable=False, index=True)
+    reason = Column(String(30), nullable=False)
+    # USER_REJECTED | DO_NOT_CONTACT | PERMANENT_BOUNCE | LEGAL_BLOCK | MANUAL_BLOCK
+
+    source = Column(String(255), nullable=True)  # nereden geldi: "user" | "provider_bounce" | "manual" vb.
+    note = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    effective_at = Column(DateTime, default=datetime.utcnow)
+
+
+class OutreachTemplate(Base):
+    """
+    E-posta taslak şablonu (S5 — Outreach).
+
+    Owner: "İlk sürümde template sayısını küçük tut." V1'de tek bir aktif
+    "tanışma e-postası" şablonu yeterli — version alanı, şablon
+    güncellendiğinde geçmiş gönderimlerin hangi versiyonla gittiğini geri
+    dönük izlemek için (body_snapshot zaten immutable olduğu için asıl
+    izlenebilirlik OutreachMessage'da, bu alan yalnız şablon tarafı için
+    ek bir referans).
+
+    Çağrıldığı yerler:
+    - app/outreach/drafting.py (aktif template'i okuma) [S5-WB4]
+    """
+    __tablename__ = "outreach_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tenant_id = Column(String(64), nullable=False, default="default", index=True)
+
+    name = Column(String(255), nullable=False)
+    subject_template = Column(String(500), nullable=False)
+    body_template = Column(Text, nullable=False)
+    version = Column(Integer, nullable=False, default=1)
+    active = Column(Boolean, nullable=False, default=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 def init_db():
