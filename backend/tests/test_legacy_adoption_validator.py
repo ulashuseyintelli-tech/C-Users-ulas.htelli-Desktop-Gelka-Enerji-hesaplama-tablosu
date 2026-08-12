@@ -23,6 +23,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.legacy_adoption import policy  # noqa: E402
+from app.legacy_adoption.fingerprint import collect_fingerprint  # noqa: E402
 from app.legacy_adoption.result import (  # noqa: E402
     R_ALEMBIC_REVISION_NOT_ALLOWLISTED,
     R_ALEMBIC_VERSION_MISSING,
@@ -444,6 +445,97 @@ def test_unknown_unique_index_hard_stops(mutable_db):
     con.commit()
     con.close()
     assert R_UNKNOWN_INDEX_PRESENT in _run(mutable_db).reason_codes
+
+
+def test_partial_unique_index_does_not_satisfy_required_uniqueness(mutable_db):
+    """
+    PARTIAL bir UNIQUE index GLOBAL benzersizlik SAGLAMAZ: WHERE kosulunun
+    disinda kalan satirlar icin kisit yoktur. Modeldeki tam unique kisitin
+    yerine gecmis gibi kabul edilirse validator FAIL-OPEN olur — eksik bir
+    veri butunlugu garantisini "var" sayar.
+    """
+    con = sqlite3.connect(mutable_db)
+    con.execute("DROP INDEX ix_contracts_contract_number")
+    con.execute(
+        "CREATE UNIQUE INDEX ix_contracts_contract_number "
+        "ON contracts (contract_number) WHERE contract_number IS NOT NULL"
+    )
+    con.commit()
+    con.close()
+    assert R_REQUIRED_INDEX_MISSING in _run(mutable_db).reason_codes
+
+
+def test_partial_index_flag_is_collected(mutable_db):
+    """Fingerprint partial bayragini kaydetmelidir; kaydetmezse ayrim yapilamaz."""
+    con = sqlite3.connect(mutable_db)
+    con.execute("CREATE INDEX ix_probe_partial ON customers (email) WHERE email IS NOT NULL")
+    con.commit()
+    con.close()
+    fp = collect_fingerprint(mutable_db)
+    assert fp.tables["customers"].indexes["ix_probe_partial"].partial is True
+    assert fp.tables["customers"].indexes["ix_customers_name"].partial is False
+
+
+def test_all_indexes_of_a_table_are_collected_not_just_the_first(mutable_db):
+    """
+    PRAGMA index_list satirlari ayni cursor'da ic ice execute() ile
+    gezilirse tablo basina yalniz ILK index okunur. Faz 1 kaniti bu yuzden
+    123 index'in 31'ini kaydetmisti. Regresyonu kalici olarak kapatir.
+    """
+    con = sqlite3.connect(mutable_db)
+    for i in range(5):
+        con.execute(f"CREATE INDEX ix_probe_multi_{i} ON customers (phone) WHERE id > {i}")
+    con.commit()
+    con.close()
+    toplanan = set(collect_fingerprint(mutable_db).tables["customers"].indexes)
+    for i in range(5):
+        assert f"ix_probe_multi_{i}" in toplanan, f"{i}. index kacirildi: {sorted(toplanan)}"
+
+
+def test_autoindex_from_pk_is_excluded_but_unique_constraint_autoindex_is_not(golden_db):
+    """
+    origin='pk' otomatik index'i PK'nin kendisidir, ayri bir kisit degildir.
+    origin='u' ise gercek bir UNIQUE constraint tasir ve karsilastirmaya girer.
+    """
+    fp = collect_fingerprint(golden_db)
+    mrp = fp.tables["market_reference_prices"].indexes
+    u_kaynakli = [i for i in mrp.values() if i.origin == "u"]
+    assert u_kaynakli, "UNIQUE constraint autoindex'i bulunamadi"
+    assert all(i.unique for i in u_kaynakli)
+    assert _run(golden_db).outcome is Outcome.PASS
+
+
+@pytest.mark.parametrize(
+    "kolon,yeni_tip",
+    [("deduction_total", "REAL"), ("dedupe_bucket", "TEXT")],
+)
+def test_incidents_production_drift_is_fail_closed(mutable_db, kolon, yeni_tip):
+    """
+    Uretimdeki iki incidents sapmasi (PDSMR-R1D/2R1 ADIM 4) HARD_STOP
+    uretmelidir. Model, migration 004 ve write path'in ucu de Integer der;
+    uretim semasi sapmadir. Bu test allowlist'e sessizce eklenmesini onler.
+    """
+    _rewrite_table_sql(mutable_db, "incidents", f"{kolon} INTEGER", f"{kolon} {yeni_tip}")
+    report = _run(mutable_db)
+    assert R_COLUMN_AFFINITY_DRIFT in report.reason_codes
+    assert any(f"incidents.{kolon}" in f.detail for f in report.findings)
+
+
+def test_package_has_no_outreach_or_smtp_surface():
+    """provider invocation = 0: pakette e-posta/SMTP yuzeyi bulunmamalidir."""
+    paket = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app", "legacy_adoption"
+    )
+    ihlaller = []
+    for dosya in sorted(os.listdir(paket)):
+        if not dosya.endswith(".py"):
+            continue
+        with open(os.path.join(paket, dosya), encoding="utf-8") as fh:
+            icerik = fh.read().lower()
+        for yasak in ("smtplib", "outreach.smtp", "sendmail", "send_message", "starttls"):
+            if yasak in icerik:
+                ihlaller.append(f"{dosya}:{yasak}")
+    assert ihlaller == [], ihlaller
 
 
 def test_unexpected_view_hard_stops(mutable_db):
