@@ -67,6 +67,10 @@ class IndexFingerprint:
     columns: tuple[str, ...]
     unique: bool
     origin: str  # 'c' = CREATE INDEX, 'pk' = primary key, 'u' = UNIQUE constraint
+    # PARTIAL (WHERE kosullu) index GLOBAL bir garanti tasimaz: kosulun
+    # disinda kalan satirlar icin kisit YOKTUR. Bu bayrak olmadan bir
+    # partial unique index, tam bir unique kisit sanilir.
+    partial: bool = False
 
 
 @dataclass(frozen=True)
@@ -194,11 +198,13 @@ def collect_fingerprint(db_path: str) -> DatabaseFingerprint:
             index_rows = cur.execute(f"PRAGMA index_list({name})").fetchall()
             indexes: dict[str, IndexFingerprint] = {}
             for r in index_rows:
-                idx_name, unique, origin = r[1], bool(r[2]), r[3]
+                idx_name, unique, origin, partial = r[1], bool(r[2]), r[3], bool(r[4])
                 cols = tuple(
                     x[2] for x in cur.execute(f"PRAGMA index_info({idx_name})").fetchall()
                 )
-                indexes[idx_name] = IndexFingerprint(columns=cols, unique=unique, origin=origin)
+                indexes[idx_name] = IndexFingerprint(
+                    columns=cols, unique=unique, origin=origin, partial=partial
+                )
 
             sql_row = cur.execute(
                 "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (name,)

@@ -115,26 +115,39 @@ def _types_compatible(model_declared: str, db_affinity: str) -> bool:
     return sqlite_affinity(model_declared) == db_affinity
 
 
-def _model_unique_signatures(table) -> set[tuple[tuple[str, ...], bool]]:
+# Index imzasi = (kolonlar, unique, partial).
+#
+# `partial` imzanin PARCASIDIR, ek bilgi degil: PARTIAL bir unique index
+# yalnizca WHERE kosulunu saglayan satirlar icin benzersizlik garanti eder.
+# Modeldeki tam bir unique kisitin yerine gecemez — gecebilseydi validator
+# olmayan bir veri butunlugu garantisini "var" sayardi (fail-open).
+IndexSignature = tuple[tuple[str, ...], bool, bool]
+
+
+def _model_unique_signatures(table) -> set[IndexSignature]:
     """Modeldeki VERI BUTUNLUGU tasiyan (unique) index/kisit imzalari."""
-    sigs: set[tuple[tuple[str, ...], bool]] = set()
+    sigs: set[IndexSignature] = set()
     for idx in table.indexes:
         if idx.unique:
-            sigs.add((tuple(c.name for c in idx.columns), True))
+            sigs.add((tuple(c.name for c in idx.columns), True, False))
     for con in table.constraints:
         if con.__class__.__name__ == "UniqueConstraint":
-            sigs.add((tuple(c.name for c in con.columns), True))
+            sigs.add((tuple(c.name for c in con.columns), True, False))
     return sigs
 
 
-def _db_index_signatures(tfp) -> dict[tuple[tuple[str, ...], bool], str]:
+def _db_index_signatures(tfp) -> dict[IndexSignature, str]:
     """DB'deki index imzalari. PK'nin otomatik index'i haric tutulur."""
-    out: dict[tuple[tuple[str, ...], bool], str] = {}
+    out: dict[IndexSignature, str] = {}
     for name, idx in tfp.indexes.items():
         if idx.origin == "pk":
             continue
-        out[(idx.columns, idx.unique)] = name
+        out[(idx.columns, idx.unique, idx.partial)] = name
     return out
+
+
+def _sig_metni(sig: IndexSignature) -> str:
+    return f"{list(sig[0])}{' PARTIAL' if sig[2] else ''}"
 
 
 # ── Kontrol bloklari ─────────────────────────────────────────────────────
@@ -287,27 +300,27 @@ def _check_indexes(
 
         for sig in sorted(m_unique - db_unique):
             findings.append(Finding(
-                R_REQUIRED_INDEX_MISSING, f"{tname} unique{list(sig[0])}"
+                R_REQUIRED_INDEX_MISSING, f"{tname} unique{_sig_metni(sig)}"
             ))
         for sig in sorted(db_unique - m_unique):
             findings.append(Finding(
                 R_UNKNOWN_INDEX_PRESENT,
-                f"{tname} unique{list(sig[0])} name={db_sigs[sig]}",
+                f"{tname} unique{_sig_metni(sig)} name={db_sigs[sig]}",
             ))
 
         m_non_unique = {
-            (tuple(c.name for c in idx.columns), False)
+            (tuple(c.name for c in idx.columns), False, False)
             for idx in mtable.indexes
             if not idx.unique
         }
         db_non_unique = {sig for sig in db_sigs if not sig[1]}
         for sig in sorted(m_non_unique - db_non_unique):
-            entry = f"{tname}{list(sig[0])}"
+            entry = f"{tname}{_sig_metni(sig)}"
             non_unique_missing.append(entry)
             if policy.ENFORCE_NON_UNIQUE_INDEX_PARITY:
                 findings.append(Finding(R_REQUIRED_INDEX_MISSING, entry))
         for sig in sorted(db_non_unique - m_non_unique):
-            entry = f"{tname}{list(sig[0])} name={db_sigs[sig]}"
+            entry = f"{tname}{_sig_metni(sig)} name={db_sigs[sig]}"
             non_unique_extra.append(entry)
             if policy.ENFORCE_NON_UNIQUE_INDEX_PARITY:
                 findings.append(Finding(R_UNKNOWN_INDEX_PRESENT, entry))
