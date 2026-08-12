@@ -141,6 +141,64 @@ KNOWN_CHECK_CONSTRAINT_TABLES = frozenset({
 # gevsetme degil; degeri False yapmak kurali sikilastirir.
 ENFORCE_NON_UNIQUE_INDEX_PARITY = False
 
+# ── CANONICAL INDEX SOZLESMESI (PDSMR-R1D/2R2) ──────────────────────────
+# Owner karari: migration 004'un yarattigi ALTI index adopted semanin
+# parcasidir ve onarim sonrasi BULUNMAK ZORUNDADIR.
+#
+# Bu tanimlar TAHMIN DEGILDIR: disposable bir `alembic upgrade head`
+# ciktisindan olculmustur (bkz. 2R2/ADIM 2). Altisi da origin='c',
+# partial=False, expression=False, BINARY collation, ASC siralidir.
+#
+# NEDEN AYRI BIR SOZLESME: validator gerekli unique kisitlari yalnizca
+# Base.metadata'dan turetiyordu. incidents modelinde
+# (tenant_id, dedupe_key, dedupe_bucket) UNIQUE kisiti TANIMLI DEGILDI —
+# yalniz docstring'de anlatilmisti. Sonuc: canonical semanin bir parcasi
+# dogrulama kapsaminin tamamen DISINDA kaldi. Model'e guvenmek yerine
+# canonical alembic ciktisi burada ACIKCA sabitlenir.
+REQUIRED_CANONICAL_INDEXES = {
+    "incidents": (
+        {
+            "name": "ix_incidents_dedupe_unique",
+            "columns": ("tenant_id", "dedupe_key", "dedupe_bucket"),
+            "unique": True,
+            "partial": False,
+        },
+        {
+            "name": "ix_incidents_dedupe_bucket",
+            "columns": ("dedupe_bucket",),
+            "unique": False,
+            "partial": False,
+        },
+        {"name": "ix_incidents_provider", "columns": ("provider",),
+         "unique": False, "partial": False},
+        {"name": "ix_incidents_period", "columns": ("period",),
+         "unique": False, "partial": False},
+        {"name": "ix_incidents_primary_flag", "columns": ("primary_flag",),
+         "unique": False, "partial": False},
+        {"name": "ix_incidents_action_type", "columns": ("action_type",),
+         "unique": False, "partial": False},
+    ),
+}
+
+# ── Kanonik INTEGER affinity gerektiren kolonlar (owner karari) ─────────
+# Model, migration 004 ve write path ucu de Integer der; uretimdeki
+# TEXT/REAL sapmalari allowlist'e ALINMAZ.
+CANONICAL_INTEGER_COLUMNS = (
+    ("incidents", "dedupe_bucket"),
+    ("incidents", "deduction_total"),
+)
+
+# ── Onarimin ASLA dokunamayacagi yollar ─────────────────────────────────
+# Onarim rutini yalniz DISPOSABLE kopya uzerinde calisir. Kurulu
+# uygulamanin dizinine denk gelen bir yol verilirse fail-closed reddeder.
+FORBIDDEN_REPAIR_PATH_MARKERS = (
+    "programs\\gelka enerji",
+    "programs/gelka enerji",
+    "program files",
+    "appdata\\local\\programs",
+    "appdata/local/programs",
+)
+
 # ── Yedekleme on-kosulu ─────────────────────────────────────────────────
 # Adoption'dan once DB'nin yedegi alinabilmelidir. Serbest alan, DB
 # boyutunun bu kati kadar olmalidir (yedek + calisma payi).
