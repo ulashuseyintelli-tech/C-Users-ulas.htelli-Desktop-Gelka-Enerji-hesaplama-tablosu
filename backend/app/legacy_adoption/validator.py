@@ -39,6 +39,8 @@ from .result import (
     R_ALEMBIC_VERSION_MISSING,
     R_BACKUP_INSUFFICIENT_FREE_SPACE,
     R_BACKUP_TARGET_NOT_WRITABLE,
+    R_CANONICAL_INDEX_DEFINITION_MISMATCH,
+    R_CANONICAL_INDEX_MISSING,
     R_COLUMN_AFFINITY_DRIFT,
     R_COLUMN_NULLABILITY_DRIFT,
     R_DB_FILE_MISSING,
@@ -331,6 +333,49 @@ def _check_indexes(
     evidence["non_unique_index_parity_enforced"] = policy.ENFORCE_NON_UNIQUE_INDEX_PARITY
 
 
+def _check_canonical_indexes(fp: DatabaseFingerprint, findings: list[Finding]) -> None:
+    """
+    Canonical alembic ciktisinda VAR OLAN index'lerin adopted DB'de de
+    bulundugunu ACIKCA dogrular.
+
+    Modelden turetmeye GUVENMEZ: incidents'in
+    (tenant_id, dedupe_key, dedupe_bucket) UNIQUE kisiti Base.metadata'da
+    tanimli degildi ve bu yuzden model-turevli kontrol onu hic aramadi.
+    Burada ad, siralanmis kolonlar, benzersizlik ve partial yuklemi
+    BIREBIR karsilastirilir.
+
+    Cagrildigi yerler:
+    - validate_legacy_db() [PDSMR-R1D/2R2]
+    """
+    for tablo, gerekliler in sorted(policy.REQUIRED_CANONICAL_INDEXES.items()):
+        tfp = fp.tables.get(tablo)
+        if tfp is None:
+            continue  # tablo yoklugu zaten tablo kontrolunde raporlandi
+        for spec in gerekliler:
+            mevcut = tfp.indexes.get(spec["name"])
+            if mevcut is None:
+                findings.append(Finding(
+                    R_CANONICAL_INDEX_MISSING,
+                    f"{tablo}.{spec['name']} beklenen={list(spec['columns'])}"
+                    f" unique={spec['unique']}",
+                ))
+                continue
+            farklar = []
+            if mevcut.columns != tuple(spec["columns"]):
+                farklar.append(
+                    f"kolonlar gercek={list(mevcut.columns)} beklenen={list(spec['columns'])}"
+                )
+            if mevcut.unique != spec["unique"]:
+                farklar.append(f"unique gercek={mevcut.unique} beklenen={spec['unique']}")
+            if mevcut.partial != spec["partial"]:
+                farklar.append(f"partial gercek={mevcut.partial} beklenen={spec['partial']}")
+            if farklar:
+                findings.append(Finding(
+                    R_CANONICAL_INDEX_DEFINITION_MISMATCH,
+                    f"{tablo}.{spec['name']} " + "; ".join(farklar),
+                ))
+
+
 def _check_row_counts(fp: DatabaseFingerprint, findings: list[Finding]) -> None:
     for table, expected in sorted(policy.EXPECTED_ROW_COUNTS.items()):
         actual = fp.row_counts.get(table)
@@ -468,6 +513,7 @@ def validate_legacy_db(
     common = _check_tables(fp, metadata, findings)
     _check_columns_and_keys(fp, metadata, common, findings, accepted)
     _check_indexes(fp, metadata, common, findings, evidence)
+    _check_canonical_indexes(fp, findings)
     _check_row_counts(fp, findings)
     _check_backup_capability(db_path, fp.file_size, backup_target_dir, findings, evidence)
 

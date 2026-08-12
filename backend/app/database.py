@@ -446,8 +446,23 @@ class Incident(Base):
     """
     __tablename__ = "incidents"
 
+    # PDSMR-R1D/2R2: Bu unique index migration 004'te ZATEN vardi
+    # (CREATE UNIQUE INDEX ix_incidents_dedupe_unique ON incidents
+    #  (tenant_id, dedupe_key, dedupe_bucket)) ama modelde TANIMLI DEGILDI —
+    # yalniz yukaridaki docstring'de anlatilmisti. Sonucu: create_all() ile
+    # kurulan taze bir DB dedupe benzersizligini DB seviyesinde HIC
+    # zorlamiyordu. Burada canonical alembic ciktisiyla BIREBIR ayni
+    # tanim bildiriliyor; yeni bir sema niyeti yaratilmiyor.
+    __table_args__ = (
+        sa.Index(
+            "ix_incidents_dedupe_unique",
+            "tenant_id", "dedupe_key", "dedupe_bucket",
+            unique=True,
+        ),
+    )
+
     id = Column(Integer, primary_key=True, index=True)
-    
+
     # Trace
     trace_id = Column(String(50), nullable=False, index=True)
     tenant_id = Column(String(50), nullable=False, default="default", index=True)

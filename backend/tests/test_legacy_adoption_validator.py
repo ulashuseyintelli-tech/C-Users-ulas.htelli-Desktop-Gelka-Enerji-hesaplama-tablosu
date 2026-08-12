@@ -28,6 +28,8 @@ from app.legacy_adoption.result import (  # noqa: E402
     R_ALEMBIC_REVISION_NOT_ALLOWLISTED,
     R_ALEMBIC_VERSION_MISSING,
     R_BACKUP_TARGET_NOT_WRITABLE,
+    R_CANONICAL_INDEX_DEFINITION_MISMATCH,
+    R_CANONICAL_INDEX_MISSING,
     R_COLUMN_AFFINITY_DRIFT,
     R_COLUMN_NULLABILITY_DRIFT,
     R_DB_FILE_MISSING,
@@ -48,6 +50,10 @@ from app.legacy_adoption.result import (  # noqa: E402
     R_UNKNOWN_INDEX_PRESENT,
     R_UNKNOWN_TABLE_PRESENT,
     Outcome,
+)
+from app.legacy_adoption.repair import (  # noqa: E402
+    RepairRefused,
+    repair_incidents_canonical,
 )
 from app.legacy_adoption.validator import (  # noqa: E402
     assert_evidence_sanitized,
@@ -664,6 +670,288 @@ def test_phase_three_adoption_is_not_wired_anywhere():
                 if "legacy_adoption" in fh.read():
                     ihlaller.append(os.path.relpath(yol, backend))
     assert ihlaller == [], f"legacy_adoption uygulama koduna baglanmis: {ihlaller}"
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# PDSMR-R1D / 2R2 — canonical index sozlesmesi + onarim provasi
+# ─────────────────────────────────────────────────────────────────────────
+_CANONICAL_INDEX_SPECS = policy.REQUIRED_CANONICAL_INDEXES["incidents"]
+
+
+def _drop_index(path: str, name: str) -> None:
+    con = sqlite3.connect(path)
+    con.execute(f"DROP INDEX {name}")
+    con.commit()
+    con.close()
+
+
+def _recreate_index(path: str, sql: str, drop: str) -> None:
+    con = sqlite3.connect(path)
+    con.execute(f"DROP INDEX {drop}")
+    con.execute(sql)
+    con.commit()
+    con.close()
+
+
+def test_golden_db_contains_all_six_canonical_indexes(golden_db):
+    """Golden fixture canonical semayi tasir; altisi da bulunmalidir."""
+    idx = collect_fingerprint(golden_db).tables["incidents"].indexes
+    for spec in _CANONICAL_INDEX_SPECS:
+        assert spec["name"] in idx, f"{spec['name']} golden DB'de yok"
+        d = idx[spec["name"]]
+        assert d.columns == tuple(spec["columns"])
+        assert d.unique == spec["unique"]
+        assert d.partial == spec["partial"]
+
+
+@pytest.mark.parametrize("spec", _CANONICAL_INDEX_SPECS, ids=lambda s: s["name"])
+def test_each_canonical_index_missing_independently_hard_stops(mutable_db, spec):
+    """Alti index'in HER BIRI tek basina eksildiginde HARD_STOP olmalidir."""
+    _drop_index(mutable_db, spec["name"])
+    report = _run(mutable_db)
+    assert R_CANONICAL_INDEX_MISSING in report.reason_codes
+    assert any(spec["name"] in f.detail for f in report.findings)
+
+
+def test_canonical_index_with_wrong_uniqueness_hard_stops(mutable_db):
+    # UNIQUE kaybolursa dedupe benzersizligi DB seviyesinde YOK olur.
+    _recreate_index(
+        mutable_db,
+        "CREATE INDEX ix_incidents_dedupe_unique ON incidents "
+        "(tenant_id, dedupe_key, dedupe_bucket)",
+        "ix_incidents_dedupe_unique",
+    )
+    report = _run(mutable_db)
+    assert R_CANONICAL_INDEX_DEFINITION_MISMATCH in report.reason_codes
+    assert any("unique gercek=False" in f.detail for f in report.findings)
+
+
+def test_canonical_index_with_wrong_column_order_hard_stops(mutable_db):
+    # Kolon sirasi index'in kullanilabilirligini degistirir; ayni kume degil.
+    _recreate_index(
+        mutable_db,
+        "CREATE UNIQUE INDEX ix_incidents_dedupe_unique ON incidents "
+        "(dedupe_key, tenant_id, dedupe_bucket)",
+        "ix_incidents_dedupe_unique",
+    )
+    report = _run(mutable_db)
+    assert R_CANONICAL_INDEX_DEFINITION_MISMATCH in report.reason_codes
+    assert any("kolonlar gercek=" in f.detail for f in report.findings)
+
+
+def test_canonical_index_with_unexpected_partial_predicate_hard_stops(mutable_db):
+    # Partial yuklem benzersizligi kosullu hale getirir -> canonical DEGIL.
+    _recreate_index(
+        mutable_db,
+        "CREATE UNIQUE INDEX ix_incidents_dedupe_unique ON incidents "
+        "(tenant_id, dedupe_key, dedupe_bucket) WHERE dedupe_key IS NOT NULL",
+        "ix_incidents_dedupe_unique",
+    )
+    report = _run(mutable_db)
+    assert R_CANONICAL_INDEX_DEFINITION_MISMATCH in report.reason_codes
+    assert any("partial gercek=True" in f.detail for f in report.findings)
+
+
+def test_same_name_wrong_definition_index_hard_stops(mutable_db):
+    """Ad dogru ama tanim yanlis: 'var' gorunup korumayan en sinsi hal."""
+    _recreate_index(
+        mutable_db,
+        "CREATE INDEX ix_incidents_dedupe_bucket ON incidents (dedupe_key)",
+        "ix_incidents_dedupe_bucket",
+    )
+    report = _run(mutable_db)
+    assert R_CANONICAL_INDEX_DEFINITION_MISMATCH in report.reason_codes
+    assert R_CANONICAL_INDEX_MISSING not in report.reason_codes
+
+
+def test_model_now_declares_the_canonical_dedupe_unique_index():
+    """
+    Kor noktanin koku: bu unique kisit migration 004'te vardi ama modelde
+    yoktu; create_all() ile kurulan taze DB'ler korumasiz kaliyordu.
+    """
+    from app.legacy_adoption.validator import _load_model_metadata
+
+    idx = {
+        i.name: (tuple(c.name for c in i.columns), bool(i.unique))
+        for i in _load_model_metadata().tables["incidents"].indexes
+    }
+    assert idx.get("ix_incidents_dedupe_unique") == (
+        ("tenant_id", "dedupe_key", "dedupe_bucket"), True
+    )
+
+
+# ── Onarim provasi (YALNIZ disposable kopya) ────────────────────────────
+def _make_pre_repair_copy(golden_db, tmp_path) -> str:
+    """Uretim ailesini taklit eder: iki kolon sapmis + alti index yok."""
+    hedef = str(tmp_path / "pre_repair.db")
+    shutil.copyfile(golden_db, hedef)
+    for spec in _CANONICAL_INDEX_SPECS:
+        _drop_index(hedef, spec["name"])
+    _rewrite_table_sql(hedef, "incidents", "dedupe_bucket INTEGER", "dedupe_bucket TEXT")
+    _rewrite_table_sql(hedef, "incidents", "deduction_total INTEGER", "deduction_total REAL")
+    return hedef
+
+
+def test_repair_refuses_without_explicit_disposable_confirmation(golden_db, tmp_path):
+    hedef = str(tmp_path / "c.db")
+    shutil.copyfile(golden_db, hedef)
+    before = _sha256(hedef)
+    with pytest.raises(RepairRefused):
+        repair_incidents_canonical(hedef)
+    assert _sha256(hedef) == before
+
+
+def test_repair_refuses_installed_application_path(tmp_path):
+    """Kurulu uygulama yoluna benzeyen bir hedef FIZIKSEL olarak reddedilir."""
+    sahte = tmp_path / "AppData" / "Local" / "Programs" / "Gelka Enerji" / "resources"
+    sahte.mkdir(parents=True)
+    db = sahte / "gelka_enerji.db"
+    sqlite3.connect(str(db)).close()
+    with pytest.raises(RepairRefused, match="disposable"):
+        repair_incidents_canonical(str(db), confirm_disposable_copy=True)
+
+
+def test_repair_refuses_fractional_value_conversion(golden_db, tmp_path):
+    hedef = _make_pre_repair_copy(golden_db, tmp_path)
+    con = sqlite3.connect(hedef)
+    con.execute("UPDATE incidents SET deduction_total = 7.5")
+    con.commit()
+    con.close()
+    before = _sha256(hedef)
+    with pytest.raises(RepairRefused, match="DEGISTIRIRDI"):
+        repair_incidents_canonical(hedef, confirm_disposable_copy=True)
+    assert _sha256(hedef) == before, "reddedilen onarim DB'yi degistirdi"
+
+
+def test_repair_refuses_nonnumeric_text_conversion(golden_db, tmp_path):
+    hedef = _make_pre_repair_copy(golden_db, tmp_path)
+    con = sqlite3.connect(hedef)
+    con.execute("UPDATE incidents SET dedupe_bucket = 'bugun'")
+    con.commit()
+    con.close()
+    before = _sha256(hedef)
+    with pytest.raises(RepairRefused, match="BELIRSIZ"):
+        repair_incidents_canonical(hedef, confirm_disposable_copy=True)
+    assert _sha256(hedef) == before
+
+
+def test_repair_handles_all_null_dedupe_bucket(golden_db, tmp_path):
+    """Uretimin gercek hali: dedupe_bucket tamamen NULL."""
+    hedef = _make_pre_repair_copy(golden_db, tmp_path)
+    con = sqlite3.connect(hedef)
+    con.execute("UPDATE incidents SET dedupe_bucket = NULL")
+    con.commit()
+    con.close()
+    rapor = repair_incidents_canonical(hedef, confirm_disposable_copy=True)
+    assert rapor.outcome == "REPAIRED"
+    con = sqlite3.connect(hedef)
+    assert con.execute(
+        "SELECT COUNT(*) FROM incidents WHERE dedupe_bucket IS NOT NULL"
+    ).fetchone()[0] == 0
+    con.close()
+
+
+def test_repair_converts_populated_safe_values(golden_db, tmp_path):
+    hedef = _make_pre_repair_copy(golden_db, tmp_path)
+    con = sqlite3.connect(hedef)
+    con.execute("UPDATE incidents SET dedupe_bucket = '20677', deduction_total = 7.0")
+    con.commit()
+    con.close()
+    rapor = repair_incidents_canonical(hedef, confirm_disposable_copy=True)
+    assert rapor.outcome == "REPAIRED"
+    con = sqlite3.connect(hedef)
+    tip, deger = con.execute(
+        "SELECT typeof(dedupe_bucket), dedupe_bucket FROM incidents"
+    ).fetchone()
+    assert (tip, deger) == ("integer", 20677)
+    tip2, deger2 = con.execute(
+        "SELECT typeof(deduction_total), deduction_total FROM incidents"
+    ).fetchone()
+    assert (tip2, deger2) == ("integer", 7)
+    con.close()
+
+
+def test_repair_preserves_rows_columns_fks_and_unrelated_indexes(golden_db, tmp_path):
+    hedef = _make_pre_repair_copy(golden_db, tmp_path)
+    con = sqlite3.connect(hedef)
+    once_kolon = [r[1] for r in con.execute("PRAGMA table_info(incidents)").fetchall()]
+    once_satir = con.execute("SELECT COUNT(*) FROM incidents").fetchone()[0]
+    once_index = {r[1] for r in con.execute("PRAGMA index_list(incidents)").fetchall()}
+    once_diger = {
+        t: con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+        for t in ("customers", "offers", "contracts", "market_reference_prices")
+    }
+    con.close()
+
+    rapor = repair_incidents_canonical(hedef, confirm_disposable_copy=True)
+    assert rapor.outcome == "REPAIRED"
+
+    con = sqlite3.connect(hedef)
+    assert [r[1] for r in con.execute("PRAGMA table_info(incidents)").fetchall()] == once_kolon
+    assert con.execute("SELECT COUNT(*) FROM incidents").fetchone()[0] == once_satir
+    sonra_index = {r[1] for r in con.execute("PRAGMA index_list(incidents)").fetchall()}
+    assert once_index.issubset(sonra_index), f"kaybolan index: {once_index - sonra_index}"
+    for t, n in once_diger.items():
+        assert con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] == n
+    assert con.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    assert con.execute("PRAGMA foreign_key_check").fetchall() == []
+    con.close()
+    assert rapor.integrity_check == "ok"
+    assert rapor.foreign_key_violations == 0
+
+
+def test_post_repair_validator_passes_and_source_copy_untouched(golden_db, tmp_path):
+    """Onarim provasinin asil kaniti: onarilan kopya PASS eder."""
+    kaynak = _make_pre_repair_copy(golden_db, tmp_path)
+    kaynak_hash = _sha256(kaynak)
+
+    on_rapor = _run(kaynak)
+    assert on_rapor.outcome is Outcome.HARD_STOP
+    assert R_CANONICAL_INDEX_MISSING in on_rapor.reason_codes
+    assert R_COLUMN_AFFINITY_DRIFT in on_rapor.reason_codes
+
+    calisma = str(tmp_path / "calisma.db")
+    shutil.copyfile(kaynak, calisma)
+    repair_incidents_canonical(calisma, confirm_disposable_copy=True)
+
+    sonra = _run(calisma)
+    assert sonra.outcome is Outcome.PASS, sonra.reason_codes
+
+    # Kaynak kopya BIREBIR ayni kalmali; HARD_STOP hukmu PASS'e cevrilmez.
+    assert _sha256(kaynak) == kaynak_hash
+    assert _run(kaynak).outcome is Outcome.HARD_STOP
+
+
+def test_repair_is_idempotent_no_op_on_second_run(golden_db, tmp_path):
+    hedef = _make_pre_repair_copy(golden_db, tmp_path)
+    assert repair_incidents_canonical(hedef, confirm_disposable_copy=True).outcome == "REPAIRED"
+    hash_1 = _sha256(hedef)
+    ikinci = repair_incidents_canonical(hedef, confirm_disposable_copy=True)
+    assert ikinci.outcome == "ALREADY_CANONICAL"
+    assert _sha256(hedef) == hash_1, "ikinci kosu DB'yi degistirdi — no-op degil"
+
+
+def test_post_repair_dedupe_uniqueness_is_enforced_by_the_database(golden_db, tmp_path):
+    """
+    Semantik dogrulama: onarim sonrasi ayni (tenant_id, dedupe_key,
+    dedupe_bucket) uclusu ICIN IKINCI satir DB tarafindan REDDEDILIR.
+    """
+    hedef = _make_pre_repair_copy(golden_db, tmp_path)
+    repair_incidents_canonical(hedef, confirm_disposable_copy=True)
+
+    con = sqlite3.connect(hedef)
+    con.execute(
+        "UPDATE incidents SET tenant_id='gelka', dedupe_key='k1', dedupe_bucket=20677"
+    )
+    con.commit()
+    with pytest.raises(sqlite3.IntegrityError):
+        con.execute(
+            "INSERT INTO incidents (trace_id, tenant_id, severity, category, message, "
+            "status, occurrence_count, dedupe_key, dedupe_bucket) "
+            "VALUES ('t2','gelka','HIGH','CALC','m','OPEN',1,'k1',20677)"
+        )
+        con.commit()
+    con.close()
 
 
 def test_sanitization_gate_catches_leaked_email():
