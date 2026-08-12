@@ -29,8 +29,9 @@ import {
   CustomerMatchOut,
 } from './prospectingApi';
 import type { Subject } from './crmApi';
+import { OutreachPanel } from './OutreachPanel';
 
-type DetailTab = 'general' | 'contacts' | 'sources';
+type DetailTab = 'general' | 'contacts' | 'sources' | 'outreach';
 
 const STATUS_LABELS: Record<string, string> = {
   DISCOVERED: 'Keşfedildi', VERIFIED: 'Doğrulandı', QUALIFIED: 'Uygun', DISQUALIFIED: 'Uygun Değil', CONVERTED: 'Müşteriye Dönüştürüldü',
@@ -339,6 +340,7 @@ export function ProspectDetailScreen({ prospectId, onBack, onOpenSubject }: Pros
               ['general', 'Genel Bilgiler'],
               ['contacts', `İletişimler (${prospect.contact_count})`],
               ['sources', `Kaynaklar (${prospect.source_count})`],
+              ['outreach', 'Tanışma E-postası'],
             ] as [DetailTab, string][]
           ).map(([key, label]) => (
             <button
@@ -395,6 +397,8 @@ export function ProspectDetailScreen({ prospectId, onBack, onOpenSubject }: Pros
           )}
         </div>
       )}
+
+      {tab === 'outreach' && <OutreachPanel prospectId={prospectId} />}
 
       {tab === 'sources' && (
         <div className="space-y-2">

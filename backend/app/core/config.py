@@ -76,6 +76,62 @@ class Settings(BaseSettings):
     default_tenant: str = "default"
 
     # ═══════════════════════════════════════════════════════════════════════════
+    # S5 — Outreach (SMTP + compliance)
+    #
+    # openai_api_key ile AYNI desen: dev'de .env, packaged'da electron/main.js
+    # loadMachineLocalEnv() ile userData/machine-local.env'den process.env'e
+    # enjekte edilir — parola BURADA sabit kodlanmaz, git'e girmez, installer'a
+    # gömülmez (owner kararı, S5 GO). Owner'ın SMTP kararı (10.08): host/port/
+    # security transport parametreleri de config'ten okunur, HARD-CODE edilmez
+    # — V1 tercih: 587+STARTTLS, fallback: 465+implicit-TLS (ikisi de canlı
+    # test edildi, PASS).
+    # ═══════════════════════════════════════════════════════════════════════════
+    outreach_smtp_host: str | None = None
+    outreach_smtp_port: int = 587
+    outreach_smtp_security: str = "starttls"  # starttls | implicit_tls
+    outreach_smtp_username: str | None = None
+    outreach_smtp_password: str | None = None
+
+    # Owner-onaylı test-adres whitelist (virgülle ayrılmış) — YALNIZ bu
+    # listedeki adresler recipient_category=TEST_RECIPIENT compliance
+    # bypass'ından yararlanabilir (bkz. app/outreach/compliance.py).
+    # Kullanıcı girdisinden ASLA türetilmez, yalnız bu config'ten okunur.
+    outreach_test_recipient_emails: str = ""
+
+    # IYS_UNKNOWN | IYS_VERIFIED | IYS_BLOCKED | IYS_NOT_REQUIRED_OR_SPECIAL_CASE
+    # Owner kararı (10.08): "IYS: UNKNOWN / CREDENTIALS NOT PROVIDED" — gerçek
+    # İYS entegrasyonu yazılmadı, bu yüzden varsayılan IYS_UNKNOWN; PROSPECT_
+    # RECIPIENT gönderimi bu değer değişene kadar hard-blocked kalır.
+    outreach_iys_status: str = "IYS_UNKNOWN"
+
+    @property
+    def outreach_test_recipient_email_set(self) -> set[str]:
+        return {
+            e.strip().lower()
+            for e in self.outreach_test_recipient_emails.split(",")
+            if e.strip()
+        }
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # S5 — Outreach: gönderici (Gelka) kimlik profili
+    #
+    # Owner'ın 10.08 düzeltmesi madde 5: "Mandatory sender identification
+    # recipient'tan türetilmeyecek. Verified GELKA sender profile'dan
+    # gelecek." Bu alanların GERÇEK değerlerini (MERSİS no, tescilli unvan
+    # vb.) Claude İCAT EDEMEZ — owner tarafından doldurulmalı. Boş bırakılırsa
+    # app/outreach/sender_profile.py::render_mandatory_footer() fail-closed
+    # SenderProfileIncompleteError fırlatır (draft üretimi durur, sahte/eksik
+    # bir yasal footer ile ASLA devam etmez).
+    # ═══════════════════════════════════════════════════════════════════════════
+    outreach_sender_trade_name: str | None = None  # tescilli ticaret unvanı
+    outreach_sender_mersis_number: str | None = None
+    outreach_sender_email: str | None = None  # boşsa outreach_smtp_username'e düşer
+    outreach_sender_phone: str | None = None
+    outreach_sender_website: str | None = None
+    outreach_sender_privacy_notice_url: str | None = None
+    outreach_sender_unsubscribe_instruction: str | None = None
+
+    # ═══════════════════════════════════════════════════════════════════════════
     # Helpers
     # ═══════════════════════════════════════════════════════════════════════════
     @property

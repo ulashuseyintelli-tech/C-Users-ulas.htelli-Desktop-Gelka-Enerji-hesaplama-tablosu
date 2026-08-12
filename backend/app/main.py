@@ -146,6 +146,13 @@ app.include_router(crm_router)
 from .prospecting.router import prospecting_router
 app.include_router(prospecting_router)
 
+# S5 — Outreach: insan-onaylı tanışma e-postası (draft → approve → send).
+# HARD GATE — evaluate_email_send_eligibility() hiçbir endpoint tarafından
+# bypass edilemez; gerçek prospect gönderimi İYS/KVKK netleşene kadar
+# hard-blocked kalır (owner kararı). Bkz. app/outreach/compliance.py.
+from .outreach.router import outreach_router
+app.include_router(outreach_router)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Security - API Key Authentication + Rate Limiting
