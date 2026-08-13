@@ -5,6 +5,10 @@ __pycache__/
 *.so
 .Python
 build/
+# PDSMR-R2: electron/build/ Python'un build/ kurali ile golgeleniyordu;
+# NSIS kaynak dosyasi (installer.nsh) build ARTEFAKTI degil kaynak koddur.
+!electron/build/
+!electron/build/installer.nsh
 develop-eggs/
 dist/
 downloads/
