@@ -79,20 +79,26 @@ def _retype_column_in_ddl(ddl: str, column: str, new_type: str) -> str:
     """
     DDL metninde YALNIZ verilen kolonun tip bildirimini degistirir.
 
-    Kolon adi bir kelime siniri icinde ve satir basinda aranir; boylece
-    `deduction_total` ararken `x_deduction_total` gibi bir kolona
-    yanlislikla dokunulmaz.
+    Gercek uretim DDL'i HIBRITTIR: create_all() ile uretilen kolonlar
+    `,\\n\\tad TIP` bicimindeyken, sonradan ALTER TABLE ADD COLUMN ile
+    eklenenler ayni satira `, ad TIP` olarak eklenir. Bu yuzden kolon adi
+    satir basina degil, kendisinden once gelen `,` ya da `(` ayiricisina
+    gore aranir; ayirici sarti `x_dedupe_bucket` gibi bir kolona
+    yanlislikla dokunulmasini da onler.
+
+    Eslesme TEKIL degilse islem reddedilir — belirsiz bir DDL uzerinde
+    tahminle degisiklik yapmak, hic yapmamaktan daha tehlikelidir.
     """
     desen = re.compile(
-        r'(^\s*"?' + re.escape(column) + r'"?\s+)([A-Za-z_][A-Za-z0-9_]*(?:\s*\(\s*\d+\s*(?:,\s*\d+\s*)?\))?)',
-        re.MULTILINE,
+        r'([,(]\s*"?' + re.escape(column)
+        + r'"?\s+)([A-Za-z_][A-Za-z0-9_]*(?:\s*\(\s*\d+\s*(?:,\s*\d+\s*)?\))?)'
     )
-    yeni, adet = desen.subn(lambda m: m.group(1) + new_type, ddl, count=1)
-    if adet != 1:
+    eslesmeler = desen.findall(ddl)
+    if len(eslesmeler) != 1:
         raise RepairRefused(
-            f"{column} kolonunun tip bildirimi DDL'de tekil olarak bulunamadi (adet={adet})"
+            f"{column} kolonunun tip bildirimi DDL'de tekil degil (adet={len(eslesmeler)})"
         )
-    return yeni
+    return desen.sub(lambda m: m.group(1) + new_type, ddl, count=1)
 
 
 def _is_already_canonical(con: sqlite3.Connection) -> bool:
@@ -143,6 +149,12 @@ def repair_incidents_canonical(
     con = sqlite3.connect(db_path)
     con.isolation_level = None  # islem sinirlarini biz yonetiyoruz
     try:
+        incidents_var = con.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='incidents'"
+        ).fetchone()[0]
+        if not incidents_var:
+            raise RepairRefused("hedefte incidents tablosu YOK — bu legacy ailesi degil")
+
         if _is_already_canonical(con):
             return RepairReport(outcome="ALREADY_CANONICAL")
 
