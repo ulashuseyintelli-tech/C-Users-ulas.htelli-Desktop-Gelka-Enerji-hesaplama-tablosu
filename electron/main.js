@@ -3,6 +3,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const http = require('http');
 const fs = require('fs');
+const dbRouting = require('./dbRouting'); // PDSMR-R2: canonical DATABASE_URL karari
 
 let mainWindow;
 let backendProcess;
@@ -110,11 +111,43 @@ function startBackend() {
       { cwd: path.join(__dirname, '..', 'backend'), env: { ...process.env, ...machineLocalEnv }, stdio: ['pipe', 'pipe', 'pipe'] }
     );
   } else {
+    // PDSMR-R2: paketli backend YALNIZ canonical (userData/database) DB'yi
+    // kullanmalı. resources/backend/gelka_enerji.db (legacy) installer
+    // upgrade sırasında SİLİNEBİLİR; DATABASE_URL burada AÇIKÇA verilmezse
+    // backend'in kendi setdefault fallback'i (run_server.py) legacy yola
+    // düşer ve upgrade sonrası SESSİZCE yeni boş bir DB açılabilir.
+    const routing = dbRouting.resolveDatabaseRouting({
+      userDataDir: app.getPath('userData'),
+      resourcesPath: process.resourcesPath,
+    });
+    logBackend(`DB routing: mode=${routing.mode} reason="${routing.reason}"`);
+
+    if (routing.mode === dbRouting.MODE_FAIL_CLOSED_MISSING_RESCUE) {
+      // legacy VAR, canonical YOK: pre-upgrade kurtarma (PDSMR-R2) hiç
+      // çalışmamış ya da başarısız olmuş olabilir. Sessizce devam edip
+      // resources altında yeni bir DB açmak veri kaybını gizler —
+      // FAIL CLOSED: backend hiç başlatılmaz, kullanıcı açıkça bilgilendirilir.
+      logBackend(`[FAIL_CLOSED] legacy=${routing.legacyPath} canonical=${routing.canonicalPath}`);
+      dialog.showErrorBox(
+        'Veritabanı Bulunamadı',
+        'Kurulum güncellemesi sırasında veri taşıma adımı tamamlanamamış görünüyor.\n' +
+        'Mevcut verileriniz kaybolmadı ancak uygulama güvenlik nedeniyle başlatılmıyor.\n' +
+        'Lütfen destek ile iletişime geçin.\n\n' +
+        `Log: ${getBackendLogPath()}`
+      );
+      return;
+    }
+
+    if (!fs.existsSync(path.dirname(routing.canonicalPath))) {
+      fs.mkdirSync(path.dirname(routing.canonicalPath), { recursive: true });
+    }
+
     const backendDir = path.join(process.resourcesPath, 'backend');
     const backendExe = path.join(backendDir, 'gelka-backend.exe');
     logBackend(`Backend exe: ${backendExe}`);
     logBackend(`Backend dir: ${backendDir}`);
     logBackend(`Exe exists: ${fs.existsSync(backendExe)}`);
+    logBackend(`DATABASE_URL: ${routing.url}`);
     backendProcess = spawn(backendExe,
       ['--host', '127.0.0.1', '--port', String(BACKEND_PORT)],
       {
@@ -124,7 +157,10 @@ function startBackend() {
         // exe içine gömdüğü paket-göreli konumdan (playwright/driver/package/
         // .local-browsers) kullan. Dev branch'ine BİLEREK eklenmedi — dev ortamı
         // hâlâ kullanıcı cache'ini kullanmaya devam eder (regresyon yok).
-        env: { ...process.env, ...machineLocalEnv, PLAYWRIGHT_BROWSERS_PATH: '0' },
+        // DATABASE_URL: backend run_server.py `os.environ.setdefault(...)`
+        // kullanır — burada AÇIKÇA verilen deger setdefault tarafından
+        // ASLA ezilmez (setdefault yalnız anahtar YOKSA yazar).
+        env: { ...process.env, ...machineLocalEnv, PLAYWRIGHT_BROWSERS_PATH: '0', DATABASE_URL: routing.url },
         stdio: ['pipe', 'pipe', 'pipe'],
       }
     );
