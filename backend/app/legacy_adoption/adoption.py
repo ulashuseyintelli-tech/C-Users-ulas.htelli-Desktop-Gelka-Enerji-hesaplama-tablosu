@@ -26,7 +26,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 import sqlite3
 from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
@@ -210,56 +209,30 @@ def _row_counts(path: str) -> dict[str, int]:
         con.close()
 
 
-# ── Alembic surumu (ALT SUREC) ──────────────────────────────────────────
-# DIKKAT: alembic IN-PROCESS import EDILEMEZ. `backend/` sys.path'te
-# oldugundan `backend/alembic/` (migration dizini) kurulu `alembic`
-# paketini GOLGELER ve `from alembic import command` ImportError verir.
-# Konsol script'i alt surecte dogru paketi cozer; ayrica migration'lar
-# temiz bir yorumlayicida calisir.
+# ── Alembic surumu (PAYLASILAN — DEV'de alt surec, FROZEN'da in-process) ──
+# PDSMR-R3/R3A: bu yardimcilar alembic_runner.py'ye PROMOTE edildi
+# (startup_gate.py de AYNI modulu kullanir - kod tekrarindan kacinmak icin,
+# owner kurali). AdoptionRefused'a cevirme burada YAPILIR ki bu modulun
+# mevcut cagirici sozlesmesi (hep AdoptionRefused firlatir) DEGISMESIN.
+from . import alembic_runner as _ar
+
+
 def _backend_dir() -> str:
-    # __file__ = backend/app/legacy_adoption/adoption.py -> uc kez yukari
-    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
-def _alembic_exe() -> str:
-    import sys
-
-    kok = os.path.dirname(sys.executable)
-    for ad in ("alembic.exe", "alembic"):
-        aday = os.path.join(kok, ad)
-        if os.path.isfile(aday):
-            return aday
-    bulunan = shutil.which("alembic")
-    if not bulunan:
-        raise AdoptionRefused("alembic calistirilabiliri bulunamadi")
-    return bulunan
-
-
-def _run_alembic(db_path: str, *args: str) -> str:
-    import subprocess
-
-    env = dict(os.environ)
-    env["DATABASE_URL"] = "sqlite:///" + db_path.replace("\\", "/")
-    sonuc = subprocess.run(
-        [_alembic_exe(), *args],
-        cwd=_backend_dir(), env=env, capture_output=True, text=True,
-    )
-    if sonuc.returncode != 0:
-        kuyruk = (sonuc.stderr or sonuc.stdout).strip().splitlines()[-6:]
-        raise AdoptionRefused(
-            f"alembic {' '.join(args)} basarisiz (exit={sonuc.returncode}): "
-            + " | ".join(kuyruk)
-        )
-    return sonuc.stdout
+    return _ar.backend_dir()
 
 
 def _alembic_upgrade(db_path: str, revision: str) -> None:
-    _run_alembic(db_path, "upgrade", revision)
+    try:
+        _ar.alembic_upgrade(db_path, revision)
+    except (_ar.AlembicUnavailable, RuntimeError) as exc:
+        raise AdoptionRefused(str(exc)) from exc
 
 
 def _alembic_heads_count(db_path: str) -> int:
-    cikti = _run_alembic(db_path, "heads")
-    return len([s for s in cikti.splitlines() if s.strip()])
+    try:
+        return _ar.alembic_heads_count(db_path)
+    except (_ar.AlembicUnavailable, RuntimeError) as exc:
+        raise AdoptionRefused(str(exc)) from exc
 
 
 # ── Kontrollu lineage uzlastirmasi ──────────────────────────────────────
@@ -331,12 +304,20 @@ def read_audit(working: str) -> Optional[dict]:
         return None
 
 
-def _is_certifiably_adopted(path: str) -> bool:
+def is_certifiably_canonical(path: str) -> bool:
     """
     DB'nin BAGIMSIZ OLARAK canonical oldugunu kanitlar (audit'e guvenmez).
 
     Bozuk/eksik audit tek basina yeniden calistirmayi tetiklememelidir;
     ancak DB durumu tam olarak sertifikalanabiliyorsa no-op guvenlidir.
+
+    PDSMR-R3: bu fonksiyon PUBLIC'e cikarildi (eskiden _is_certifiably_adopted) -
+    startup_gate.py'nin "VERIFIED_CANONICAL_HEAD" siniflandirmasi da AYNI
+    kontrolu kullanir (kod tekrarindan kacinmak icin, owner kurali).
+
+    Cagrildigi yerler:
+    - adopt_legacy_copy() [PDSMR-R1D/Faz3] (idempotentlik kontrolu)
+    - app/legacy_adoption/startup_gate.py::classify_startup_state() [PDSMR-R3]
     """
     if _revisions(path) != (CANONICAL_HEAD,):
         return False
@@ -430,7 +411,7 @@ def adopt_legacy_copy(
             raise AdoptionRefused(f"{ad}: {fk} FK ihlali")
 
     # ── Idempotentlik: zaten adopt edilmis mi ──────────────────────────
-    if _is_certifiably_adopted(working_path):
+    if is_certifiably_canonical(working_path):
         return AdoptionReport(
             outcome="ALREADY_ADOPTED",
             terminal_revision=CANONICAL_HEAD,
@@ -547,5 +528,6 @@ __all__ = [
     "FAULT_POINTS",
     "InjectedFault",
     "adopt_legacy_copy",
+    "is_certifiably_canonical",
     "read_audit",
 ]

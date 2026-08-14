@@ -1,6 +1,6 @@
 {
   "name": "gelka-enerji",
-  "version": "1.0.6",
+  "version": "1.0.12",
   "description": "Gelka Enerji - Fatura Analiz ve Teklif Sistemi",
   "main": "main.js",
   "author": "Gelka Enerji",
@@ -9,7 +9,7 @@
     "start": "electron .",
     "dev": "electron .",
     "build:frontend": "cd ../frontend && npm run build",
-    "build:backend": "cd ../backend && pyinstaller --onefile --name gelka-backend --add-data \"app;app\" --hidden-import uvicorn.logging --hidden-import uvicorn.protocols.http --hidden-import uvicorn.protocols.http.auto --hidden-import uvicorn.protocols.websockets --hidden-import uvicorn.protocols.websockets.auto --hidden-import uvicorn.lifespan --hidden-import uvicorn.lifespan.on run_server.py",
+    "build:backend": "cd ../backend && pyinstaller --onefile --name gelka-backend --add-data \"app;app\" --hidden-import uvicorn.logging --hidden-import uvicorn.protocols.http --hidden-import uvicorn.protocols.http.auto --hidden-import uvicorn.protocols.websockets --hidden-import uvicorn.protocols.websockets.auto --hidden-import uvicorn.lifespan --hidden-import uvicorn.lifespan.on --hidden-import logging.config --collect-all alembic run_server.py",
     "pack": "electron-builder --dir",
     "dist": "electron-builder",
     "dist:win": "electron-builder --win"
@@ -48,6 +48,19 @@
       {
         "from": "../backend/build-info.json",
         "to": "backend/build-info.json"
+      },
+      {
+        "from": "../backend/alembic.ini",
+        "to": "backend/alembic.ini"
+      },
+      {
+        "from": "../backend/alembic",
+        "to": "backend/alembic",
+        "filter": [
+          "**/*",
+          "!__pycache__",
+          "!__pycache__/**"
+        ]
       }
     ],
     "forceCodeSigning": false,

@@ -1,4 +1,9 @@
 @echo off
+:: PDSMR-R3B — script'in KENDI konumuna gore calisir, cagrildigi CWD'den
+:: BAGIMSIZ (bazi cagiran kabuklarda/araclarda CWD senkronizasyonu guvenilmez
+:: olabiliyor - GERCEK denemeyle yasandi). %~dp0 = bu .bat dosyasinin KENDI
+:: sürücü+dizini, HER ZAMAN dogru.
+cd /d "%~dp0"
 echo ============================================
 echo   Gelka Enerji - Masaustu Uygulama Build
 echo ============================================
@@ -53,6 +58,67 @@ if not exist "%VENV_PY%" (
 )
 %VENV_PY% -m pip install pyinstaller >nul 2>&1
 
+:: PDSMR-R3B STEP 1 — PyInstaller'i "%VENV_PY% -m PyInstaller" YERINE
+:: console-script .exe'si UZERINDEN cagiriyoruz. NEDEN: "python -m X" CWD'yi
+:: (backend\) sys.path[0]'a KOSULSUZ ekler (Python'un KENDI -m davranisi,
+:: --paths . bayragindan TAMAMEN BAGIMSIZ) - GERCEK derlemeyle KANITLANDI
+:: (PDSMR-R3B): --paths . kaldirilsa DAHI "-m PyInstaller" ile derlenen exe
+:: HALA backend/alembic/ (proje migration klasoru) ile GERCEK alembic
+:: paketini KARISTIRIYORDU (EXIT 52). pyinstaller.exe (bu script'in ait
+:: oldugu backend\.venv\Scripts\ altinda) bu CWD-otomatik-ekleme davranisina
+:: SAHIP DEGIL - AYRI, izole testle KANITLANDI.
+set PYINSTALLER_EXE=.venv\Scripts\pyinstaller.exe
+if not exist "%PYINSTALLER_EXE%" (
+    echo HATA: %PYINSTALLER_EXE% bulunamadi.
+    pause
+    exit /b 1
+)
+
+:: PDSMR-R3B STEP 2 — DETERMINISTIK TEMIZ DERLEME: PyInstaller'in build\
+:: dizini ONCEKI analizi ONBELLEKLER (.toc dosyalari) - bayat bytecode/analiz
+:: SESSIZCE yeniden kullanilabilir (PDSMR-R3A'da GERCEK olarak yasandi: eski
+:: __pycache__/build/ kalintisi YUZUNDEN, KAYNAK KODU duzeltilmis olsa bile,
+:: derlenen exe'ye ESKI alembic_runner.py gomulmustu). Bu YUZDEN HER
+:: derlemeden once YALNIZ bu build'e AIT, ureteceğimiz artifact'lari ACIKCA
+:: sileriz - baska HICBIR seye (ozellikle backend/dist/gelka-backend.exe
+:: DISINDAKI baska dist/ klasorlerine, ör. frontend/dist, electron/dist)
+:: DOKUNMAYIZ.
+::
+:: DUZELTME (GERCEK derlemeyle YAKALANDI): asagidaki __pycache__ silme
+:: dongusu ONCEDEN baslangic dizini VERMEDEN "for /d /r %%D in (__pycache__)"
+:: seklindeydi - CWD bu noktada backend\ oldugundan, bu KOSULSUZ olarak
+:: backend\.venv\Lib\site-packages\**\__pycache__ (ANA repo ile PAYLASILAN,
+:: junction uzerinden erisilen venv) icine de SIZIYORDU: (a) Step 2'nin
+:: "YALNIZ bu build'e AIT/owned artifacts" kapsaminin DISINDA - ucuncu parti
+:: paket pycache'i "bizim KAYNAK KODUMUZUN bayat analizi" riskiyle ILGISIZ;
+:: (b) GERCEK build ciktisinda gorulen "Sistem belirtilen yolu bulamiyor"
+:: hata gurultusunun KOK NEDENI (ic ice __pycache__ silinirken ust dizin
+:: ONCE kaldiriliyor, dongu sonraki hedefi artik MEVCUT OLMAYAN bir yolda
+:: ariyor); (c) HER derlemede TUM venv'in bytecode onbellegini bosa
+:: siliyordu (yavaslik). Duzeltme: YALNIZ bizim git-tracked kaynak
+:: dizinlerimiz (app, alembic, scripts, tests) taranir - .venv'e HIC girilmez.
+echo   Onceki build/dist/spec/__pycache__ temizleniyor (deterministik derleme)...
+if exist build rmdir /s /q build
+if exist dist rmdir /s /q dist
+if exist gelka-backend.spec del /q gelka-backend.spec
+for %%S in (app alembic scripts tests) do (
+    for /d /r "%%S" %%D in (__pycache__) do @if exist "%%D" rmdir /s /q "%%D"
+)
+if exist __pycache__ rmdir /s /q __pycache__
+
+:: PDSMR-R3B STEP 1 — DERLEME-ONCESI (pre-build) DOGRULAMA: PyInstaller'i
+:: (~2-3 dakika suren analiz/derleme) HIC CALISTIRMADAN, `import alembic`'in
+:: bu derleme ortaminda YUKLU ucuncu parti pakete cozuldugunu (backend/alembic/
+:: proje klasoru TARAFINDAN GOLGELENMEDIGINI) VE `app` paketinin HALA
+:: bulunabilir oldugunu KANITLAR - bkz. scripts/assert_alembic_identity.py.
+echo   Derleme-oncesi dogrulama: alembic kimligi + app bulunabilirligi...
+%VENV_PY% scripts\assert_alembic_identity.py
+if %ERRORLEVEL% neq 0 (
+    echo HATA: derleme-oncesi dogrulama BASARISIZ - PyInstaller CALISTIRILMADI.
+    pause
+    exit /b 1
+)
+
 :: 3a. Playwright Chromium — PAKET-GORELI konuma kur (kullanicinin
 :: %LOCALAPPDATA%\ms-playwright cache'ine DEGIL). PLAYWRIGHT_BROWSERS_PATH=0
 :: playwright'in kendi kaynak kodunda ( driver/package/lib/server/registry/
@@ -82,8 +148,21 @@ if %ERRORLEVEL% neq 0 (
 :: PDF uretiminde hic kullanilmiyor).
 for /d %%D in (".venv\Lib\site-packages\playwright\driver\package\.local-browsers\ffmpeg-*") do rmdir /s /q "%%D"
 
-%VENV_PY% -m PyInstaller --onefile --name gelka-backend ^
-    --paths . ^
+:: PDSMR-R3B STEP 2 — build komutu + bagimlilik surumleri KAYDEDILIR (asagida,
+:: build BASARILI olduktan SONRA build-info.json'a SHA256 ile birlikte
+:: eklenir - bkz. asagidaki "Build metadata" adimi).
+::
+:: PDSMR-R3B STEP 3/7 — --hidden-import html.parser: bu satirlar `^` ile
+:: DEVAM EDEN TEK bir komut olusturur - yorum satiri BURAYA, komutun
+:: ICINE konursa cmd.exe onu satir-birlestirmeden SONRA PyInstaller'a
+:: GERCEK bir ARGUMAN olarak GECIRIR (GERCEK derlemeyle KANITLANDI, bkz.
+:: git gecmisi - bu yuzden asagida DEGIL, BURADA, zincirin DISINDA durur).
+:: html.parser (stdlib; app/prospecting/discovery.py DuckDuckGo HTML
+:: ayristirmasi icin kullanir) PyInstaller'in STATIK analizinde gozden
+:: kacmisti - GERCEK paketlenmis exe'yle (Step 7 pozitif matris) YAKALANDI:
+:: schema kapisi 351d314819d5'e BASARIYLA ulastiktan HEMEN SONRA app.main
+:: import zincirinde ModuleNotFoundError.
+%PYINSTALLER_EXE% --onefile --name gelka-backend ^
     --add-data "app;app" ^
     --add-data "prompts;prompts" ^
     --add-data "app/templates;app/templates" ^
@@ -102,6 +181,7 @@ for /d %%D in (".venv\Lib\site-packages\playwright\driver\package\.local-browser
     --collect-submodules uvicorn ^
     --collect-submodules sqlalchemy ^
     --collect-submodules playwright ^
+    --collect-submodules PIL ^
     --hidden-import pydantic_settings ^
     --hidden-import dotenv ^
     --hidden-import multipart ^
@@ -111,8 +191,6 @@ for /d %%D in (".venv\Lib\site-packages\playwright\driver\package\.local-browser
     --hidden-import httpx._transports ^
     --hidden-import httpx._transports.default ^
     --hidden-import openai ^
-    --hidden-import PIL ^
-    --hidden-import PIL.Image ^
     --hidden-import pypdfium2 ^
     --hidden-import pdfplumber ^
     --hidden-import jinja2 ^
@@ -128,9 +206,26 @@ for /d %%D in (".venv\Lib\site-packages\playwright\driver\package\.local-browser
     --hidden-import idna ^
     --hidden-import certifi ^
     --hidden-import httpcore ^
+    --hidden-import logging.config ^
+    --hidden-import html.parser ^
+    --collect-all alembic ^
     run_server.py
 if %ERRORLEVEL% neq 0 (
     echo HATA: Backend build basarisiz!
+    pause
+    exit /b 1
+)
+
+:: PDSMR-R3B STEP 2 — artifact SHA256 + derleme komutu + bagimlilik surumleri
+:: build-info.json'a EKLENIR (mevcut alanlar KORUNUR - app/main.py bunlari
+:: `.get(key, default)` ile okur, BILINMEYEN/YENI anahtarlar zararsizdir).
+:: Karmasik cok-satirli PowerShell mantigi AYRI bir .ps1 dosyasinda (batch
+:: icine gomulu, kirilgan tirnak/devam sozdizimi yerine).
+for /f "delims=" %%H in ('powershell -NoProfile -Command "(Get-FileHash 'dist\gelka-backend.exe' -Algorithm SHA256).Hash"') do set BACKEND_EXE_SHA256=%%H
+echo   gelka-backend.exe SHA256: %BACKEND_EXE_SHA256%
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\update_build_info.ps1 -Sha256 "%BACKEND_EXE_SHA256%" -VenvPython "%VENV_PY%"
+if %ERRORLEVEL% neq 0 (
+    echo HATA: build-info.json guncellenemedi!
     pause
     exit /b 1
 )
@@ -141,6 +236,24 @@ echo [4/5] Electron bagimliliklari yukleniyor...
 cd electron
 call npm install
 cd ..
+
+:: PDSMR-R3B — gelka-rescue.exe (PDSMR-R2I kurtarma yardimcisi) HER
+:: derlemede TAZE uretilir (backend\dist_rescue\ -> electron\build\ altina
+:: kopyalanir). Bu binary BILEREK git'e commit EDILMEZ (bkz. .gitignore
+:: satiri + owner karari, PDSMR-R2I) ve build-desktop.bat ONCEDEN bu
+:: adimi HICBIR YERDEN cagirmiyordu (GERCEK derlemeyle YAKALANAN bosluk —
+:: bkz. build-desktop-output.log: "no files found" / "Error in macro
+:: customInit"). installer.nsh'nin customInit makrosu bu dosyayi installer
+:: .exe'nin ICINE gomer; eksikse NSIS paketleme KESIN basarisiz olur.
+:: build-rescue-helper.bat (PDSMR-R2I'de zaten dogrulanmis) DEGISTIRILMEDEN,
+:: oldugu gibi, commit SHA'siyla cagrilir.
+echo   gelka-rescue.exe olusturuluyor (electron\build\build-rescue-helper.bat, PDSMR-R2I)...
+call electron\build\build-rescue-helper.bat %GIT_COMMIT%
+if %ERRORLEVEL% neq 0 (
+    echo HATA: gelka-rescue.exe build basarisiz - NSIS customInit bu dosyayi bulamaz!
+    pause
+    exit /b 1
+)
 
 :: 5. Electron build
 :: NOT: electron/package.json'daki nsis.artifactName SABIT bir isim

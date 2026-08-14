@@ -581,7 +581,23 @@ def update_incident_status(db: Session, incident_id: int, status: str, resolutio
     return True
 
 
-VALID_ENVIRONMENTS = {"development", "staging", "production"}
+VALID_ENVIRONMENTS = {"development", "staging", "production", "desktop"}
+# PDSMR-R3B STEP 5 — "desktop": paketlenmis masaustu uygulamasinin (Electron +
+# frozen gelka-backend.exe) GERCEK, DURUST calisma-zamani degeri. "staging"
+# YANILTICIYDI (bu bir dev/test ortami DEGIL - PDSMR-R3A'da owner tarafindan
+# ACIKCA reddedildi); duz "production" ise check_production_guard()'in
+# ADMIN_API_KEY_ENABLED+32-karakter key zorunlulugunu tetikler - ki bu,
+# require_api_key() KULLANAN 21 endpoint'in TAMAMINI (fatura/teklif/PDF ana
+# API yuzeyi) etkiler ve frontend/Electron IPC'sinin BUYUK bir kismi HENUZ
+# key gondermeyi bilmiyor (yalniz AdminPanel.tsx haberdar) - bu, "dar
+# kapsamli build yapilandirmasi"nin ACIKCA DISINDA, AYRI bir guvenlik/UX
+# degisikligi gerektirir. "desktop" bu ikisi arasinda: check_production_guard()
+# yalniz LITERAL "production" icin katı kurali TETIKLER (asagida `if env !=
+# "production": return True, ""`), bu yuzden "desktop" hicbir DAVRANIS
+# degisikligine YOL ACMADAN (API key zorunlulugu YOK) GERCEGI yansitir -
+# paketlenmis calisma-zamaninin ASIL sinyali zaten GELKA_PACKAGED_RUNTIME=1'dir
+# (bkz. app/database.py::init_db(), backend/run_server.py::
+# _enforce_packaged_environment_invariants).
 
 
 def validate_environment(env: str) -> Tuple[bool, str]:
