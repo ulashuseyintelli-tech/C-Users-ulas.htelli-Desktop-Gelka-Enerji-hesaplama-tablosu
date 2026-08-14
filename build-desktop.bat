@@ -9,15 +9,68 @@ echo   Gelka Enerji - Masaustu Uygulama Build
 echo ============================================
 echo.
 
-:: 0. Versiyon numarasini artir (patch: 1.0.0 -> 1.0.1 -> ...)
-:: Boylece her build'in uygulama icinde (footer/Hakkinda) FARKLI bir
-:: numarasi olur ve hangi iyilestirmelerin dahil oldugu takip edilebilir.
-echo [0/5] Versiyon numarasi artiriliyor...
+:: PDSMR-S5-RC-PREP — RELEASE PREFLIGHT (fail-closed): worktree ONCE, HERHANGI
+:: bir adimdan (versiyon belirleme dahil) ONCE TEMIZ olmali - boylece
+:: committed package.json'daki versiyon, "bu build'in GERCEKTEN temsil ettigi
+:: versiyon" olarak GUVENILIR olur (owner karari: "clean master'dan tek
+:: immutable RC uret" gereksinimi, HER calistirmada kosulsuz versiyon artiran
+:: eski davranisla CELISIYORDU).
+set GIT_DIRTY=0
+for /f "delims=" %%i in ('git status --porcelain 2^>nul') do set GIT_DIRTY=1
+if "%GIT_DIRTY%"=="1" (
+    echo HATA: worktree TEMIZ DEGIL - release build kirli calisma agacindan calistirilamaz.
+    git status --short
+    pause
+    exit /b 1
+)
+
+:: 0. Versiyon DOGRULANIR (ARTIK KOSULSUZ ARTIRILMAZ).
+:: ONCEKI davranis: "npm version patch" HER build'de CALISIYORDU - bu,
+:: committed package.json'daki degerin RC icin guvenilir versiyon-kaynagi
+:: olmasini ENGELLIYORDU (owner: "1.0.12 diyorsa 1.0.12'yi koru, diagnostic
+:: rebuild'ler yuzunden ARTIRMA"). Varsayilan davranis ARTIK: committed
+:: package.json'daki versiyon OLDUGU GIBI kullanilir. Versiyon artirma ayri,
+:: acik bir opt-in'dir: "set BUMP_VERSION=1 ^&^& build-desktop.bat" (dev
+:: iterasyonu icin - normal release build'in yan etkisi DEGILDIR).
+echo [0/5] Versiyon dogrulaniyor...
 cd electron
-call npm version patch --no-git-tag-version --allow-same-version >nul
+if "%BUMP_VERSION%"=="1" (
+    echo   BUMP_VERSION=1 - versiyon ACIKCA artiriliyor ^(opt-in^)...
+    call npm version patch --no-git-tag-version --allow-same-version >nul
+)
 for /f "delims=" %%i in ('node -p "require('./package.json').version"') do set APP_VERSION=%%i
+for /f "delims=" %%i in ('node -p "require('./package-lock.json').version"') do set LOCK_VERSION=%%i
 cd ..
-echo   Yeni versiyon: %APP_VERSION%
+echo   Versiyon: %APP_VERSION%
+
+echo %APP_VERSION%| findstr /r /c:"^[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*$" >nul
+if errorlevel 1 (
+    echo HATA: versiyon gecerli semver ^(X.Y.Z^) formatinda degil: %APP_VERSION%
+    pause
+    exit /b 1
+)
+if not "%APP_VERSION%"=="%LOCK_VERSION%" (
+    echo HATA: package.json versiyonu ^(%APP_VERSION%^) package-lock.json ile ^(%LOCK_VERSION%^) UYUSMUYOR.
+    pause
+    exit /b 1
+)
+
+:: Onceki AYNI-adli installer artifact'i varsa (bu run'un ciktisi ile eski
+:: kalintinin karismamasi icin acikca) temizlenir.
+if exist "electron\release\Gelka-Enerji-Setup.exe" (
+    echo   Onceki installer artifact'i temizleniyor...
+    del /q "electron\release\Gelka-Enerji-Setup.exe"
+)
+
+:: PDSMR-S5-RC-PREP — build-info.json'a gomulecek "dirty" bayragi + BUILD
+:: SIRASINDA kaynak dosyalarda beklenmeyen degisiklik olup olmadigini
+:: SONDA dogrulamak icin BASLANGIC anlik goruntusu. (Versiyon belirleme
+:: ADIMINDAN SONRA aliniyor - BUMP_VERSION=1 kullanildiysa package.json/lock
+:: DEGISIKLIGI dirty=true olarak DOGRU sekilde yansitilir; sonraki build
+:: asamalari HICBIR ek tracked-dosya degisikligi YAPMAMALIDIR.)
+set BUILD_DIRTY=false
+for /f "delims=" %%i in ('git status --porcelain 2^>nul') do set BUILD_DIRTY=true
+git status --porcelain > "%TEMP%\gelka_rc_status_before.txt" 2>nul
 
 :: 1. Build metadata (commit/branch/date/version) - /version endpoint icin
 echo [1/5] Build metadata olusturuluyor...
@@ -26,7 +79,7 @@ for /f "delims=" %%i in ('git rev-parse HEAD') do set GIT_COMMIT=%%i
 for /f "delims=" %%i in ('git rev-parse --short HEAD') do set GIT_SHORT=%%i
 for /f "delims=" %%i in ('git rev-parse --abbrev-ref HEAD') do set GIT_BRANCH=%%i
 for /f "delims=" %%i in ('powershell -NoProfile -Command "Get-Date -Format o"') do set BUILD_DATE=%%i
->build-info.json echo {"commit":"%GIT_COMMIT%","commit_short":"%GIT_SHORT%","branch":"%GIT_BRANCH%","build_date":"%BUILD_DATE%","app_version":"%APP_VERSION%"}
+>build-info.json echo {"commit":"%GIT_COMMIT%","commit_short":"%GIT_SHORT%","branch":"%GIT_BRANCH%","build_date":"%BUILD_DATE%","app_version":"%APP_VERSION%","dirty":%BUILD_DIRTY%}
 echo   build-info.json: v%APP_VERSION% - %GIT_SHORT% (%GIT_BRANCH%) %BUILD_DATE%
 cd ..
 
@@ -275,9 +328,33 @@ if %ERRORLEVEL% neq 0 (
 )
 cd ..
 
+:: PDSMR-S5-RC-PREP — BUILD-ORTASI KAYNAK DEGISIKLIGI TESPITI (fail-closed):
+:: build BASARIYLA tamamlanmis GORUNSE bile, eger tracked kaynak dosyalari
+:: build SIRASINDA (baslangictaki versiyon-belirleme SONRASI ile BURASI
+:: arasinda) beklenmedik sekilde degistiyse, bu artifact GUVENILIR bir
+:: RELEASE ADAYI DEGILDIR - butun build ciktilari (dist/build/release/
+:: node_modules) zaten .gitignore'da oldugundan, bu karsilastirma YALNIZ
+:: GERCEK kaynak-kodu mutasyonlarini yakalar.
+if exist "%TEMP%\gelka_rc_status_before.txt" (
+    git status --porcelain > "%TEMP%\gelka_rc_status_after.txt" 2>nul
+    fc /b "%TEMP%\gelka_rc_status_before.txt" "%TEMP%\gelka_rc_status_after.txt" >nul
+    if errorlevel 1 (
+        echo HATA: build SIRASINDA kaynak dosyalarinda BEKLENMEYEN degisiklik tespit edildi!
+        echo   Versiyon belirleme SONRASI durum:
+        type "%TEMP%\gelka_rc_status_before.txt"
+        echo   Simdiki durum:
+        type "%TEMP%\gelka_rc_status_after.txt"
+        del /q "%TEMP%\gelka_rc_status_before.txt" "%TEMP%\gelka_rc_status_after.txt" 2>nul
+        pause
+        exit /b 1
+    )
+    del /q "%TEMP%\gelka_rc_status_before.txt" "%TEMP%\gelka_rc_status_after.txt" 2>nul
+)
+
 echo.
 echo ============================================
 echo   Build tamamlandi! Versiyon: v%APP_VERSION%
 echo   Installer: electron\release\Gelka-Enerji-Setup.exe
+echo   Dirty: %BUILD_DIRTY%
 echo ============================================
 pause
