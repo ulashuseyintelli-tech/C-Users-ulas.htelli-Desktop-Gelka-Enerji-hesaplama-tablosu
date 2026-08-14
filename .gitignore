@@ -106,6 +106,21 @@ backend/dist/
 backend/build/
 backend/*.spec
 
+# PDSMR-R2I: gelka-rescue.exe (kurtarma helper'i) build ciktilari.
+# build_rescue/dist_rescue, backend/dist//backend/build ile CAKISMAMASI
+# icin build-rescue-helper.bat'in --distpath/--workpath flag'leriyle AYRI
+# adlandirildi - bu yuzden yukaridaki genel kural bunlari kapsamiyor,
+# ayrica listelenmeleri gerekiyor.
+backend/build_rescue/
+backend/dist_rescue/
+# electron/build/ dizini installer.nsh (KAYNAK) icin yukarida ISTISNA
+# edildi; gelka-rescue.exe ise DERLENMIS BINARY'dir (build-rescue-helper.bat
+# tarafindan electron/build/ ALTINA kopyalanir) - kaynak DEGILDIR, bu
+# istisnadan AYRICA tekrar haric tutulur. Owner karari: "Do not commit
+# generated installer/binary unless repository release policy explicitly
+# requires it" (PDSMR-R2I).
+electron/build/gelka-rescue.exe
+
 # Build metadata (build-desktop.bat tarafindan uretilir)
 backend/build-info.json
 

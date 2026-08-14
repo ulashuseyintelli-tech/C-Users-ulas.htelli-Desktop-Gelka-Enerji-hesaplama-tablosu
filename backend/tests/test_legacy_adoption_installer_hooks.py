@@ -92,12 +92,22 @@ def test_customInstall_hook_is_too_late_for_rescue():
     assert uninstall_idx < apply_files_idx < custom_install_idx
 
 
-def test_rescue_executable_is_not_yet_bundled():
+def test_rescue_executable_is_bundled_and_wired():
     """
-    Bilinen/beklenen durum: rescue.exe bu turda GERCEKTEN derlenmedi.
-    installer.nsh'nin gercek ExecWait cagrisi bilerek YORUM SATIRINDA.
-    Bu test, birisi yanlislikla "etkinlestirdim" saniminda kalmasin diye
-    mevcut durumu ACIKCA kayit altina alir.
+    PDSMR-R2I ile durum degisti: rescue.exe GERCEKTEN derlendi, GERCEK bir
+    NSIS derlemesiyle (electron-builder --win nsis) gomulup, GERCEK bir
+    installer calistirilarak customInit -> ExecWait -> rescue.exe zinciri
+    uctan uca kanitlandi (bkz. PDSMR-R2I kapanis raporu — disposable
+    upgrade/rescue/adoption provasi). Bu test artik TERSINI dogrular:
+    ExecWait satiri AKTIF (yorum satirinda DEGIL) ve gelka-rescue.exe'yi
+    beklenen argumanlarla cagiriyor.
+
+    NOT: gelka-rescue.exe'nin KENDISI git'e commit EDILMEZ (.gitignore -
+    "Do not commit generated installer/binary unless repository release
+    policy explicitly requires it", owner PDSMR-R2I karari) - yalniz onu
+    URETEN build-rescue-helper.bat ve onu CAGIRAN installer.nsh commit
+    edilir. Bu yuzden bu test dosyanin VARLIGINI DEGIL, installer.nsh
+    METNINI kontrol eder.
     """
     yol = os.path.join(_ELECTRON_DIR, "build", "installer.nsh")
     with open(yol, encoding="utf-8") as fh:
@@ -106,7 +116,24 @@ def test_rescue_executable_is_not_yet_bundled():
         s for s in icerik.splitlines()
         if "ExecWait" in s and not s.strip().startswith(";")
     ]
-    assert aktif_satirlar == [], (
-        "ExecWait etkinlestirilmis gorunuyor ama rescue.exe henuz derlenmedi "
-        "— once packaging PR'inda gercek exe'yi uretin"
+    assert len(aktif_satirlar) == 1, (
+        "installer.nsh'de tam olarak 1 aktif ExecWait satiri bekleniyordu "
+        f"(rescue.exe cagrisi) - bulunan: {len(aktif_satirlar)}"
+    )
+    satir = aktif_satirlar[0]
+    assert "gelka-rescue.exe" in satir
+    assert "--legacy" in satir and "--canonical" in satir and "--backups-dir" in satir
+    assert "--version-label" in satir
+
+    # DUZELTME KANITI (PDSMR-R2I kapanis): $0 tek basina yeterli DEGIL -
+    # ExecWait'in tampered/non-executable helper durumunda $0'i "0"
+    # birakabildigi GERCEK derlemeyle olculdu. Bu yuzden pozitif kanit
+    # (canonical dosyanin VARLIGI) da ARANMALI - NSIS'in kendi $0 != 0
+    # kontrolune EK olarak ${orIfNot} ${FileExists} ile.
+    # (str.split("ExecWait") KULLANILMAZ - yorumlarda da "ExecWait" kelimesi
+    # gectigi icin belirsiz olur; dogrudan desen aranir.)
+    assert "${orIfNot} ${FileExists}" in icerik, (
+        "ExecWait sonrasi $0 != 0 tek basina yeterli DEGIL - canonical "
+        "dosyanin varligini da dogrulayan ${orIfNot} ${FileExists} kontrolu "
+        "OLMALI (bkz. PDSMR-R2I tampered-helper bulgusu)"
     )

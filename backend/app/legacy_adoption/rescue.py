@@ -36,6 +36,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
 from dataclasses import dataclass, field
@@ -56,8 +57,31 @@ FAULT_POINTS = (
 )
 
 
+# ── Kategorize edilmis exit code semasi (PDSMR-R2I ADIM 1) ──────────────
+# CLI (_main) bu kodlari AYNEN sureç exit code'u olarak doner. NSIS
+# customInit hook'u yalniz 0/non-zero ayrimini kullanir, ancak kategoriler
+# log/destek tanisi icin sabittir ve TESTLE korunur — mesaj METNINE
+# BAGIMLI degildir.
+EXIT_OK = 0
+EXIT_CONFLICT = 10                 # E: iki taraf da var, hash farkli
+EXIT_CANONICAL_INVALID = 11        # F: canonical bozuk/okunamiyor
+EXIT_LEGACY_INVALID = 12           # G: legacy bozuk/okunamiyor
+EXIT_PRECONDITION = 20             # onay eksik / yol guvenligi / bilinmeyen fault
+EXIT_FILESYSTEM = 30               # disk-full / access-denied / cakisma / dogrulama
+EXIT_UNEXPECTED = 99               # beklenmeyen exception (CLI katmaninda yakalanir)
+
+
 class RescueRefused(Exception):
-    """On-kosul saglanmadi ya da HARD_STOP durumu. Hedefe anlamli yazma YAPILMADI."""
+    """
+    On-kosul saglanmadi ya da HARD_STOP durumu. Hedefe anlamli yazma YAPILMADI.
+
+    `exit_code`, cagiran process'in (CLI/NSIS) KATEGORIZE edilmis, kararli
+    bir sinyal almasi icin tasinir — mesaj METNINI parse etmesi GEREKMEZ.
+    """
+
+    def __init__(self, message: str, exit_code: int = EXIT_PRECONDITION):
+        super().__init__(message)
+        self.exit_code = exit_code
 
 
 class InjectedFault(Exception):
@@ -314,9 +338,13 @@ def perform_rescue(
     for etiket, yol in (("canonical", canonical_path), ("backups_dir", backups_dir)):
         marker = is_forbidden_target(yol)
         if marker:
-            raise RescueRefused(f"{etiket} kurulu uygulama alaninda (marker={marker!r})")
+            raise RescueRefused(
+                f"{etiket} kurulu uygulama alaninda (marker={marker!r})", EXIT_PRECONDITION
+            )
     if same_file(legacy_path, canonical_path):
-        raise RescueRefused("legacy ile canonical AYNI dosya — mutasyon reddedildi")
+        raise RescueRefused(
+            "legacy ile canonical AYNI dosya — mutasyon reddedildi", EXIT_PRECONDITION
+        )
 
     siniflandirma = classify_precedence(legacy_path, canonical_path)
 
@@ -331,7 +359,12 @@ def perform_rescue(
                              canonical_path=canonical_path, source_sha256=siniflandirma.legacy_sha256 or "",
                              details={"detail": siniflandirma.detail})
     if siniflandirma.state in _HARD_STOP_STATES:
-        raise RescueRefused(f"{siniflandirma.state.value}: {siniflandirma.detail}")
+        _kod = {
+            PrecedenceState.CONFLICT: EXIT_CONFLICT,
+            PrecedenceState.CANONICAL_INVALID: EXIT_CANONICAL_INVALID,
+            PrecedenceState.LEGACY_INVALID: EXIT_LEGACY_INVALID,
+        }[siniflandirma.state]
+        raise RescueRefused(f"{siniflandirma.state.value}: {siniflandirma.detail}", _kod)
 
     # ── A: kurtarilabilir — asil transaction ────────────────────────────
     assert siniflandirma.state is PrecedenceState.LEGACY_ELIGIBLE
@@ -348,7 +381,7 @@ def perform_rescue(
         backups_dir, f"gelka_enerji.pre-upgrade.{guvenli_etiket}.{kaynak_hash[:12]}.db"
     )
     if same_file(legacy_path, backup_path):
-        raise RescueRefused("hesaplanan yedek yolu legacy ile CAKISIYOR")
+        raise RescueRefused("hesaplanan yedek yolu legacy ile CAKISIYOR", EXIT_PRECONDITION)
 
     temp_path = _temp_path(canonical_path)
     try:
@@ -361,7 +394,9 @@ def perform_rescue(
             os.replace(gecici_yedek, backup_path)
         # 5) yedek parmak izi dogrulamasi
         if _sha256(backup_path) != kaynak_hash:
-            raise RescueRefused("YEDEK parmak izi kaynakla eslesmiyor — kurtarma durduruldu")
+            raise RescueRefused(
+                "YEDEK parmak izi kaynakla eslesmiyor — kurtarma durduruldu", EXIT_FILESYSTEM
+            )
         _fault("after_backup", fault_at)
 
         # 6) temp'e kopyala (canonical HEDEF dosya sisteminde — cross-fs rename riski yok)
@@ -373,7 +408,9 @@ def perform_rescue(
 
         # 8) temp dogrulamasi
         if _sha256(temp_path) != kaynak_hash:
-            raise RescueRefused("TEMP kopya parmak izi kaynakla eslesmiyor — rename YAPILMADI")
+            raise RescueRefused(
+                "TEMP kopya parmak izi kaynakla eslesmiyor — rename YAPILMADI", EXIT_FILESYSTEM
+            )
         temp_con = sqlite3.connect(_ro(temp_path), uri=True)
         try:
             butunluk = temp_con.execute("PRAGMA integrity_check").fetchone()[0]
@@ -381,16 +418,22 @@ def perform_rescue(
         finally:
             temp_con.close()
         if butunluk != "ok" or fk:
-            raise RescueRefused(f"TEMP kopya bozuk: integrity={butunluk} fk={fk} — rename YAPILMADI")
+            raise RescueRefused(
+                f"TEMP kopya bozuk: integrity={butunluk} fk={fk} — rename YAPILMADI",
+                EXIT_FILESYSTEM,
+            )
         # source runtime'da degisti mi (savunma amacli ikinci kontrol)
         if _sha256(legacy_path) != kaynak_hash:
-            raise RescueRefused("KAYNAK kopyalama sirasinda DEGISTI — kurtarma durduruldu")
+            raise RescueRefused(
+                "KAYNAK kopyalama sirasinda DEGISTI — kurtarma durduruldu", EXIT_FILESYSTEM
+            )
 
         # 9) atomik rename — hedef TOCTOU'ya karsi tekrar kontrol edilir
         _fault("before_rename", fault_at)
         if os.path.exists(canonical_path):
             raise RescueRefused(
-                "canonical hedef kurtarma SIRASINDA olustu — cakisma, rename yapilmadi"
+                "canonical hedef kurtarma SIRASINDA olustu — cakisma, rename yapilmadi",
+                EXIT_FILESYSTEM,
             )
         os.rename(temp_path, canonical_path)  # Windows: hedef varsa FileExistsError (OSError)
     except InjectedFault:
@@ -400,7 +443,9 @@ def perform_rescue(
     except OSError as exc:
         # disk-full / access-denied / antivirus lock / hedef kurtarma
         # sirasinda dolmus (FileExistsError) — hepsi ayni fail-closed yol.
-        raise RescueRefused(f"dosya sistemi hatasi: {type(exc).__name__}: {exc}") from exc
+        raise RescueRefused(
+            f"dosya sistemi hatasi: {type(exc).__name__}: {exc}", EXIT_FILESYSTEM
+        ) from exc
     finally:
         if os.path.exists(temp_path):
             try:
@@ -411,7 +456,7 @@ def perform_rescue(
 
     # 10) canonical'i tekrar ac + dogrula
     if _sha256(canonical_path) != kaynak_hash:
-        raise RescueRefused("CANONICAL rename sonrasi parmak izi eslesmiyor")
+        raise RescueRefused("CANONICAL rename sonrasi parmak izi eslesmiyor", EXIT_FILESYSTEM)
     canon_con = sqlite3.connect(_ro(canonical_path), uri=True)
     try:
         butunluk2 = canon_con.execute("PRAGMA integrity_check").fetchone()[0]
@@ -419,7 +464,9 @@ def perform_rescue(
     finally:
         canon_con.close()
     if butunluk2 != "ok" or fk2:
-        raise RescueRefused(f"CANONICAL dogrulamasi basarisiz: integrity={butunluk2} fk={fk2}")
+        raise RescueRefused(
+            f"CANONICAL dogrulamasi basarisiz: integrity={butunluk2} fk={fk2}", EXIT_FILESYSTEM
+        )
 
     # 11) DB DISINDA imzali journal (musteri verisi / secret YOK)
     _fault("before_journal", fault_at)
@@ -444,8 +491,16 @@ def perform_rescue(
 
 
 __all__ = [
+    "EXIT_CANONICAL_INVALID",
+    "EXIT_CONFLICT",
+    "EXIT_FILESYSTEM",
+    "EXIT_LEGACY_INVALID",
+    "EXIT_OK",
+    "EXIT_PRECONDITION",
+    "EXIT_UNEXPECTED",
     "FAULT_POINTS",
     "JOURNAL_SUFFIX",
+    "RESCUE_VERSION",
     "InjectedFault",
     "PrecedenceClassification",
     "PrecedenceState",
@@ -454,22 +509,59 @@ __all__ = [
     "classify_precedence",
     "perform_rescue",
     "read_journal",
+    "sanitize_for_log",
 ]
 
 
-# ── CLI (gelecekte PyInstaller ile ayri bir rescue.exe uretmek icin) ────
-# Bu turda GERCEK derleme YAPILMAZ (installer execution yetkisiz); CLI
-# yalniz arayuzu sabitler ki electron/build/installer.nsh onu cagirabilsin.
-def _main() -> int:  # pragma: no cover - manuel/CLI yolu, testler dogrudan API kullanir
+# ── PyInstaller ile ayri bir rescue.exe olarak derlenen CLI (PDSMR-R2I) ──
+# NSIS customInit hook'u bu exe'yi ExecWait ile senkron cagirir ve YALNIZ
+# exit code'a bakar (0 = devam, non-zero = Abort).
+RESCUE_VERSION = "PDSMR-R2I/1"
+
+
+def sanitize_for_log(text: str) -> str:
+    """
+    Gercek kullanici adini/DB icerigini asla stdout/stderr'e YAZMAZ.
+
+    `C:\\Users\\<ad>\\...` bicimindeki gercek Windows profil yollarindaki
+    kullanici adi bolumu maskelenir; DB icerigi zaten hicbir yerde
+    okunmaz/loglanmaz (yalniz sha256/PRAGMA sonuclari tasinir).
+    """
+    return re.sub(
+        r"([\\/][Uu]sers[\\/])([^\\/]+)",
+        lambda m: m.group(1) + "<user>",
+        text,
+    )
+
+
+def _main(argv: Optional[list[str]] = None) -> int:  # pragma: no cover - CLI yolu; testler dogrudan API kullanir
     import argparse
     import sys
 
-    ayristirici = argparse.ArgumentParser(description="PDSMR-R2 installer pre-upgrade rescue")
-    ayristirici.add_argument("--legacy", required=True)
-    ayristirici.add_argument("--canonical", required=True)
-    ayristirici.add_argument("--backups-dir", required=True)
-    ayristirici.add_argument("--version-label", required=True)
-    args = ayristirici.parse_args()
+    ayristirici = argparse.ArgumentParser(
+        prog="gelka-rescue", description="PDSMR-R2 installer pre-upgrade rescue"
+    )
+    ayristirici.add_argument("--version", action="store_true", help="surum bilgisini yazdirir ve cikar")
+    ayristirici.add_argument("--legacy")
+    ayristirici.add_argument("--canonical")
+    ayristirici.add_argument("--backups-dir")
+    ayristirici.add_argument("--version-label")
+    args = ayristirici.parse_args(argv)
+
+    if args.version:
+        build_sha = os.environ.get("PDSMR_RESCUE_BUILD_SHA", "unknown")
+        sys.stdout.write(f"{RESCUE_VERSION} build={build_sha}\n")
+        return EXIT_OK
+
+    eksik = [
+        ad for ad, deger in (
+            ("--legacy", args.legacy), ("--canonical", args.canonical),
+            ("--backups-dir", args.backups_dir), ("--version-label", args.version_label),
+        ) if not deger
+    ]
+    if eksik:
+        sys.stderr.write(f"RESCUE_REFUSED: eksik zorunlu argumanlar: {', '.join(eksik)}\n")
+        return EXIT_PRECONDITION
 
     try:
         rapor = perform_rescue(
@@ -477,10 +569,16 @@ def _main() -> int:  # pragma: no cover - manuel/CLI yolu, testler dogrudan API 
             version_label=args.version_label, confirm_installer_context=True,
         )
     except RescueRefused as exc:
-        sys.stderr.write(f"RESCUE_REFUSED: {exc}\n")
-        return 1
-    sys.stdout.write(f"RESCUE_OK: {rapor.outcome}\n")
-    return 0
+        sys.stderr.write(f"RESCUE_REFUSED[{exc.exit_code}]: {sanitize_for_log(str(exc))}\n")
+        return exc.exit_code
+    except Exception as exc:  # noqa: BLE001 - beklenmeyen HER hata non-zero DONMELI
+        sys.stderr.write(
+            f"RESCUE_UNEXPECTED: {type(exc).__name__}: {sanitize_for_log(str(exc))}\n"
+        )
+        return EXIT_UNEXPECTED
+
+    sys.stdout.write(f"RESCUE_OK: {rapor.outcome} precedence={rapor.precedence.value}\n")
+    return EXIT_OK
 
 
 if __name__ == "__main__":  # pragma: no cover

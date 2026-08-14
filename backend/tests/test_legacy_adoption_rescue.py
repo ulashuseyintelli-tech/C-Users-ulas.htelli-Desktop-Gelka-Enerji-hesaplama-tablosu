@@ -29,13 +29,23 @@ from app.legacy_adoption.pathsafety import (  # noqa: E402
     same_file,
 )
 from app.legacy_adoption.rescue import (  # noqa: E402
+    EXIT_CANONICAL_INVALID,
+    EXIT_CONFLICT,
+    EXIT_FILESYSTEM,
+    EXIT_LEGACY_INVALID,
+    EXIT_OK,
+    EXIT_PRECONDITION,
+    EXIT_UNEXPECTED,
     FAULT_POINTS,
+    RESCUE_VERSION,
     InjectedFault,
     PrecedenceState,
     RescueRefused,
+    _main as rescue_main,
     classify_precedence,
     perform_rescue,
     read_journal,
+    sanitize_for_log,
 )
 from test_legacy_adoption_validator import _build_golden_legacy_db  # noqa: E402
 
@@ -565,3 +575,142 @@ def test_same_file_detects_relative_and_case_alias(rig, monkeypatch):
     monkeypatch.chdir(os.path.dirname(rig["legacy"]))
     takma = os.path.join(".", os.path.basename(rig["legacy"]).upper())
     assert same_file(takma, rig["legacy"])
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# PDSMR-R2I ADIM 1 — kategorize exit code'lar + CLI
+# ─────────────────────────────────────────────────────────────────────────
+def _cli(argv, capsys):
+    kod = rescue_main(argv)
+    yakalanan = capsys.readouterr()
+    return kod, yakalanan.out, yakalanan.err
+
+
+def test_version_flag_prints_version_and_exits_zero(capsys):
+    kod, out, _err = _cli(["--version"], capsys)
+    assert kod == EXIT_OK
+    assert RESCUE_VERSION in out
+
+
+def test_version_flag_does_not_require_other_arguments(capsys):
+    """--version yalniz basina calismali; --legacy vb. ZORUNLU olmamali."""
+    kod, _out, _err = _cli(["--version"], capsys)
+    assert kod == EXIT_OK
+
+
+def test_missing_required_arguments_returns_precondition_exit(capsys):
+    kod, _out, err = _cli(["--legacy", "x"], capsys)
+    assert kod == EXIT_PRECONDITION
+    assert "canonical" in err
+
+
+def test_cli_success_returns_exit_ok(rig, capsys):
+    kod, out, _err = _cli([
+        "--legacy", rig["legacy"], "--canonical", rig["canonical"],
+        "--backups-dir", rig["backups_dir"], "--version-label", "1.0.6",
+    ], capsys)
+    assert kod == EXIT_OK
+    assert "RESCUE_OK" in out
+    assert "RESCUED" in out
+
+
+def test_cli_conflict_returns_exit_conflict(rig, capsys):
+    os.makedirs(os.path.dirname(rig["canonical"]), exist_ok=True)
+    shutil.copyfile(rig["legacy"], rig["canonical"])
+    con = sqlite3.connect(rig["canonical"])
+    con.execute("UPDATE customers SET name='farkli' WHERE id=(SELECT MIN(id) FROM customers)")
+    con.commit()
+    con.close()
+    kod, _out, err = _cli([
+        "--legacy", rig["legacy"], "--canonical", rig["canonical"],
+        "--backups-dir", rig["backups_dir"], "--version-label", "1.0.6",
+    ], capsys)
+    assert kod == EXIT_CONFLICT
+    assert "RESCUE_REFUSED" in err
+
+
+def test_cli_invalid_canonical_returns_exit_canonical_invalid(rig, capsys):
+    os.makedirs(os.path.dirname(rig["canonical"]), exist_ok=True)
+    with open(rig["canonical"], "wb") as fh:
+        fh.write(b"bozuk" * 20)
+    kod, _out, _err = _cli([
+        "--legacy", rig["legacy"], "--canonical", rig["canonical"],
+        "--backups-dir", rig["backups_dir"], "--version-label", "1.0.6",
+    ], capsys)
+    assert kod == EXIT_CANONICAL_INVALID
+
+
+def test_cli_invalid_legacy_returns_exit_legacy_invalid(rig, capsys):
+    with open(rig["legacy"], "wb") as fh:
+        fh.write(b"bozuk")
+    kod, _out, _err = _cli([
+        "--legacy", rig["legacy"], "--canonical", rig["canonical"],
+        "--backups-dir", rig["backups_dir"], "--version-label", "1.0.6",
+    ], capsys)
+    assert kod == EXIT_LEGACY_INVALID
+
+
+def test_cli_installed_application_target_returns_exit_precondition(rig, tmp_path, capsys):
+    sahte = str(tmp_path / "Program Files" / "Gelka Enerji" / "resources" / "gelka_enerji.db")
+    kod, _out, _err = _cli([
+        "--legacy", rig["legacy"], "--canonical", sahte,
+        "--backups-dir", rig["backups_dir"], "--version-label", "1.0.6",
+    ], capsys)
+    assert kod == EXIT_PRECONDITION
+
+
+def test_cli_never_raises_uncaught_exception_on_garbage_input(capsys):
+    """Beklenmeyen HER hata non-zero DONMELI, exception FIRLATILMAMALI."""
+    kod, _out, err = _cli([
+        "--legacy", "\x00gecersiz\x00", "--canonical", "\x00gecersiz\x00",
+        "--backups-dir", "\x00gecersiz\x00", "--version-label", "1.0.6",
+    ], capsys)
+    assert kod not in (None,)
+    assert kod != EXIT_OK
+
+
+def test_cli_exit_codes_are_stable_and_distinct():
+    kodlar = [EXIT_OK, EXIT_CONFLICT, EXIT_CANONICAL_INVALID, EXIT_LEGACY_INVALID,
+              EXIT_PRECONDITION, EXIT_FILESYSTEM, EXIT_UNEXPECTED]
+    assert len(set(kodlar)) == len(kodlar), "exit code'lar CAKISIYOR"
+    assert EXIT_OK == 0
+    assert all(k != 0 for k in kodlar[1:]), "basari-disi bir kod 0 DEGERINDE"
+
+
+def test_sanitize_for_log_masks_real_username_in_windows_path():
+    girdi = r"hata: C:\Users\ulastelli\AppData\Roaming\gelka-enerji\database\gelka_enerji.db"
+    temiz = sanitize_for_log(girdi)
+    assert "ulastelli" not in temiz
+    assert "<user>" in temiz
+    assert "gelka_enerji.db" in temiz  # dosya adi/yapisi bilgisi KORUNUR
+
+
+def test_cli_error_output_never_contains_real_username(rig, tmp_path, capsys):
+    """
+    Kullanici adini iceren GERCEKCI bir yol ile HARD_STOP tetiklenir; CLI
+    stderr ciktisinda o kullanici adi asla GORUNMEMELIDIR.
+    """
+    kullanicili_kok = tmp_path / "Users" / "gizli_kullanici_adi" / "AppData" / "Roaming"
+    canonical = str(kullanicili_kok / "gelka-enerji" / "database" / "gelka_enerji.db")
+    os.makedirs(os.path.dirname(canonical), exist_ok=True)
+    with open(canonical, "wb") as fh:
+        fh.write(b"bozuk" * 20)
+    _kod, _out, err = _cli([
+        "--legacy", rig["legacy"], "--canonical", canonical,
+        "--backups-dir", rig["backups_dir"], "--version-label", "1.0.6",
+    ], capsys)
+    assert "gizli_kullanici_adi" not in err
+
+
+def test_cli_never_prints_db_row_content(rig, capsys):
+    """
+    stdout/stderr sema/sayim/yol DISINDA veri ICERMEMELIDIR. golden fixture
+    icindeki ornek deger dizilerinden hicbiri ciktida gorunmemelidir.
+    """
+    kod, out, err = _cli([
+        "--legacy", rig["legacy"], "--canonical", rig["canonical"],
+        "--backups-dir", rig["backups_dir"], "--version-label", "1.0.6",
+    ], capsys)
+    assert kod == EXIT_OK
+    for yasakli in ("customers.name", "offers.tenant_id"):
+        assert yasakli not in out and yasakli not in err
