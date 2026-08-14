@@ -1,31 +1,29 @@
 """
-PDSMR-R2I — pre-adoption DB uzerinde backend baslatmanin GERCEK davranisi.
+PDSMR-R2I (temel bulgu) + PDSMR-R3 (kapanis) — pre-adoption DB uzerinde
+backend baslatmanin GERCEK davranisi.
 
-BU TEST FAIL-CLOSED KANITI DEGILDIR. TAM TERSINI kanitlar: `init_db()`
-(app/database.py, DEGISTIRILMEDI) `settings.env != "prod"` oldugu surece
-`Base.metadata.create_all(bind=engine)`'i KOSULSUZ calistirir. Paketlenmis
-uygulamaya gomulen backend/.env.production `ENV=development` yazdigindan,
-gercek paketlenmis runtime'da bu guard HICBIR ZAMAN devreye girmez.
+PDSMR-R2I'de KANITLANAN bulgu (asagida KORUNDU, hala dogru): `init_db()`
+(o zamanki hali) `settings.env != "prod"` oldugu surece
+`Base.metadata.create_all(bind=engine)`'i KOSULSUZ calistiriyordu — ve
+paketlenmis uygulamaya gomulen backend/.env.production `ENV=development`
+yazdigindan bu guard GERCEK paketlenmis runtime'da HICBIR ZAMAN devreye
+girmiyordu.
 
-Sonuc: pre-adoption (013 revizyonunda, S5 tablolari eksik) bir DB'ye karsi
-backend baslatilirsa:
-  - alembic_version DEGISMEZ (013'te kalir) - create_all migration lineage'i
-    KULLANMAZ, sadece "yoksa yarat" yapar.
-  - Modelde tanimli ama DB'de eksik olan tablolar (outreach_messages,
-    outreach_templates, suppression_entries) SESSIZCE, migration'siz
-    yaratilir.
-  - Bu karisik durum PDSMR-R1D Faz 2R2 validator'i tarafindan HARD_STOP
-    olarak yakalanir (policy.EXPECTED_ABSENT_MODEL_TABLES) - ANCAK bu
-    yakalama create_all() CALISTIKTAN SONRA, geriye donuk olur; create_all()
-    calismasini ONCEDEN ENGELLEMEZ.
+PDSMR-R3'te KAPATILDI: `init_db()`'ye YENI, KOSULSUZ bir on-kontrol
+eklendi — `GELKA_PACKAGED_RUNTIME=1` (electron/main.js tarafindan
+machine-local.env SONRASINDA, EZILEMEZ sekilde enjekte edilir) gorulurse
+create_all() HIC CAGRILMAZ. Ayrica backend/.env.production'daki
+`ENV=development` -> `ENV=staging` DUZELTILDI (check_production_guard()'in
+"production" icin ZORUNLU kildigi ADMIN_API_KEY_ENABLED+32-karakter
+gereksinimini TETIKLEMEDEN, yanlis "development" etiketini duzeltir).
 
-Bu, PDSMR-R2I owner kapanis talimatinin 3. maddesi geregi eklendi: bulgu
-"deterministik bir NEGATIF test" olarak kalici hale getirildi. init_db(),
-database.py, main.py'ye HICBIR DEGISIKLIK yapilmadi (owner: madde 1) -
-bu dosya SADECE mevcut, degistirilmemis fonksiyonlari cagirir.
-
-Ilgili: docs/PDSMR-R3 (henuz yetkilendirilmedi) - startup schema gate +
-controlled adoption wiring bu bulguyu KAPATACAK sonraki faz.
+Bu dosyadaki testler ARTIK IKI SENARYOYU birlikte belgeler:
+  1) GELKA_PACKAGED_RUNTIME YOKSA (ör. eski/harici bir cagiran): create_all()
+     HALA fail-open calisir (REGRESYONA KARSI - eski davranis KORUNMALI,
+     "geriye donuk uyumluluk" owner kurali).
+  2) GELKA_PACKAGED_RUNTIME=1 VARSA (gercek paketlenmis app, PDSMR-R3
+     startup_gate.py DB'yi ONCEDEN hazirladiktan SONRA main.js'in
+     enjekte ettigi sinyal): create_all() ATLANIR - fail-open KAPANMISTIR.
 
 Cagrildigi yerler:
 - pytest suite (backend/tests/) - CI/manuel regresyon
@@ -68,6 +66,16 @@ def _alembic_version(db_path: str) -> str:
         con.close()
 
 
+def _sha256_dosya(path: str) -> str:
+    import hashlib
+
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 @pytest.fixture()
 def pre_adoption_db(tmp_path) -> str:
     """
@@ -77,22 +85,47 @@ def pre_adoption_db(tmp_path) -> str:
     return _build_golden_legacy_db(str(tmp_path / "pre_adoption.db"))
 
 
-def test_settings_env_is_not_prod_in_shipped_config():
+def test_settings_env_is_desktop_not_staging_or_prod_in_shipped_config():
     """
-    init_db()'nin `settings.env == "prod"` erken-donus koruması, paketlenmis
-    uygulamaya gomulen backend/.env.production dosyasi ENV=development
-    yazdigi surece HICBIR ZAMAN devreye girmez. Bu, asagidaki testin NEDEN
-    gercek paketlenmis davranisi temsil ettigini kanitlayan on-kosuldur.
+    PDSMR-R3B DUZELTMESI: sirasiyla "development" (yanlis) -> "staging"
+    (PDSMR-R3, HALA yanlis - owner: bu bir dev/test ortami degil) -> "desktop"
+    (PDSMR-R3B, GERCEK/DURUST deger, incident_service.py::VALID_ENVIRONMENTS'a
+    eklendi). init_db()'nin ESKI `settings.env == "prod"` erken-donus korumasi
+    bu deger ile HALA devreye GIRMEZ (regresyon yok) - ama bu ASIL guard
+    DEGIL, GELKA_PACKAGED_RUNTIME kontrolu ASIL guard'dir. Ayrica
+    run_server.py::_enforce_packaged_environment_invariants() (PDSMR-R3B
+    STEP 5) frozen modda ENV'in GERCEKTEN 'desktop' oldugunu BAGIMSIZ
+    dogrular - bkz. test_pdsmr_r3_run_server_import_order.py.
     """
     wt_backend = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     env_production_path = os.path.join(wt_backend, ".env.production")
     with open(env_production_path, "r", encoding="utf-8") as fh:
         content = fh.read()
-    assert "ENV=development" in content, (
-        "backend/.env.production artik ENV=development YAZMIYOR - bu test "
-        "ve PDSMR-R2I kapanis bulgusu bu varsayima dayaniyordu; PDSMR-R3 "
-        "kapsaminda yeniden degerlendirilmeli."
+    assert "ENV=desktop" in content, (
+        "backend/.env.production ENV=desktop YAZMIYOR - PDSMR-R3B STEP 5 "
+        "duzeltmesi geri alinmis olabilir."
     )
+    assert "ENV=development" not in content
+    assert "ENV=staging" not in content, (
+        "ENV=staging ARTIK GECERSIZ - PDSMR-R3A'da owner tarafindan "
+        "yaniltici bulundu, PDSMR-R3B'de ENV=desktop'a DUZELTILDI"
+    )
+    assert "ENV=production" not in content, (
+        "ENV=production check_production_guard()'i TETIKLER - "
+        "ADMIN_API_KEY_ENABLED+32-karakter key ZORUNLU olur, mevcut "
+        "API_KEY_ENABLED=false ile paketlenmis app'in baslangicini KIRAR"
+    )
+
+
+def test_incident_service_accepts_desktop_as_valid_environment():
+    """PDSMR-R3B STEP 5 — check_production_guard()'un ilk adimi
+    (validate_environment) 'desktop'u REDDETMEMELI (aksi halde main.py
+    modul-yukleme anindaki cagri RuntimeError firlatir, TUM app.main
+    import'unu kirar)."""
+    from app.incident_service import check_production_guard
+
+    ok, hata = check_production_guard("desktop", False, "")
+    assert ok, f"'desktop' check_production_guard'i BASARISIZ yapiyor: {hata}"
 
 
 def test_pre_adoption_startup_create_all_is_fail_open(pre_adoption_db, monkeypatch):
@@ -152,6 +185,74 @@ def test_pre_adoption_startup_create_all_is_fail_open(pre_adoption_db, monkeypat
             "('CREATE_ALL FAIL-OPEN CONFIRMED') yeniden dogrulanmasi GEREKIR."
         )
     assert policy.EXPECTED_ABSENT_MODEL_TABLES <= yeni_tablolar
+
+
+def test_packaged_runtime_flag_prevents_create_all_fail_open(pre_adoption_db, monkeypatch):
+    """
+    PDSMR-R3 STEP 7 — DOGRUDAN DUZELTME KANITI (yukaridaki testin TERSI):
+    GELKA_PACKAGED_RUNTIME=1 gorulunce create_all() HIC CAGRILMAZ - S5
+    tablolari YARATILMAZ, DB pre-adoption (013) haliyle DEGISMEDEN kalir.
+
+    Bu, "Add a direct regression test proving zero create_all calls"
+    (owner, PDSMR-R3 STEP 7) gereksinimini karsilar.
+    """
+    from sqlalchemy import create_engine
+
+    import app.database as db_module
+
+    onceki_tablolar = _tablolar(pre_adoption_db)
+    onceki_revizyon = _alembic_version(pre_adoption_db)
+    onceki_hash = _sha256_dosya(pre_adoption_db)
+
+    monkeypatch.setenv("GELKA_PACKAGED_RUNTIME", "1")
+    test_engine = create_engine(f"sqlite:///{pre_adoption_db}")
+    monkeypatch.setattr(db_module, "engine", test_engine)
+
+    db_module.init_db()  # GERCEK, DEGISTIRILMIS fonksiyon - YENI guard
+    test_engine.dispose()
+
+    sonraki_tablolar = _tablolar(pre_adoption_db)
+    sonraki_revizyon = _alembic_version(pre_adoption_db)
+
+    assert sonraki_revizyon == onceki_revizyon == policy.ALLOWED_ALEMBIC_REVISION
+    assert sonraki_tablolar == onceki_tablolar, (
+        "GELKA_PACKAGED_RUNTIME=1 iken create_all() YINE DE tablo yaratti - "
+        "STEP 7 guard'i regrese olmus olabilir"
+    )
+    for hedef in policy.EXPECTED_ABSENT_MODEL_TABLES:
+        assert hedef not in sonraki_tablolar
+    assert _sha256_dosya(pre_adoption_db) == onceki_hash, (
+        "DB dosyasinin ICERIGI DEGISTI (create_all() gercekten atlanmadi mi?)"
+    )
+
+
+def test_create_all_fail_open_baseline_still_reproduces_without_flag(
+    pre_adoption_db, monkeypatch
+):
+    """
+    REGRESYONA KARSI KORUMA: GELKA_PACKAGED_RUNTIME set EDILMEZSE eski
+    (PDSMR-R2I'de bulunan) fail-open davranisi HALA aynen calisir - STEP 7
+    guard'i yalniz OPT-IN'dir, var olan (dev/test) davranisi degistirmez.
+    """
+    from sqlalchemy import create_engine
+
+    import app.database as db_module
+
+    monkeypatch.delenv("GELKA_PACKAGED_RUNTIME", raising=False)
+    onceki_tablolar = _tablolar(pre_adoption_db)
+
+    test_engine = create_engine(f"sqlite:///{pre_adoption_db}")
+    monkeypatch.setattr(db_module, "engine", test_engine)
+    db_module.init_db()
+    test_engine.dispose()
+
+    sonraki_tablolar = _tablolar(pre_adoption_db)
+    yeni_tablolar = sonraki_tablolar - onceki_tablolar
+    assert policy.EXPECTED_ABSENT_MODEL_TABLES <= yeni_tablolar, (
+        "GELKA_PACKAGED_RUNTIME yokken bile create_all() artik S5 "
+        "tablolarini yaratmiyor - bu, OPT-IN guard'in yanlislikla HERKESE "
+        "uygulandigi/regresyona yol actigi anlamina gelebilir"
+    )
 
 
 def test_validator_hard_stops_after_create_all_fail_open(pre_adoption_db, monkeypatch):

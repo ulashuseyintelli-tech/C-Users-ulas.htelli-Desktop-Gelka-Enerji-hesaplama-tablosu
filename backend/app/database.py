@@ -1240,7 +1240,36 @@ def init_db():
 
     NOT: Production'da Alembic migration kullanılmalı.
     Bu fonksiyon sadece dev/test için.
+
+    PDSMR-R3 (STEP 7): paketlenmiş (frozen) runtime'da create_all() ARTIK
+    ÇAĞRILMAZ — backend/run_server.py, app.main import edilmeden ÖNCE
+    startup_gate.py'nin durum makinesini çalıştırır (fresh init: Alembic
+    base->head; legacy: kontrollü adoption; zaten canonical: no-op
+    sertifikasyon) ve DB'yi ZATEN 351d314819d5'e getirmiş olur. Bu noktada
+    create_all() çağrılması SESSİZCE S5 tablolarını migration'sız
+    yaratabilir (PDSMR-R2I'de KANITLANMIŞ fail-open bulgusu, bkz.
+    tests/test_pre_adoption_startup_create_all_fail_open.py) — GEREKSİZ
+    ve TEHLİKELİDİR, bu yüzden GELKA_PACKAGED_RUNTIME sinyali görülünce
+    KOŞULSUZ atlanır.
+
+    GELKA_PACKAGED_RUNTIME, electron/main.js tarafından machine-local.env
+    SONRASINDA literal olarak enjekte edilir (machine-local.env tarafından
+    EZİLEMEZ — bkz. main.js::startBackend() paketlenmiş dal). Dev ortamı bu
+    değişkeni HİÇ görmez — create_all() DAVRANIŞI DEĞİŞMEDEN kalır (owner
+    kararı: "Development/test create_all behavior may remain... explicitly
+    isolated from packaged mode").
+
+    Eski `settings.env == "prod"` kontrolü de KORUNDU (geriye dönük
+    uyumluluk — harici bir araç/script gerçekten ENV=prod ile çağırırsa).
     """
+    if os.environ.get("GELKA_PACKAGED_RUNTIME") == "1":
+        import logging
+        logging.getLogger(__name__).info(
+            "init_db(): GELKA_PACKAGED_RUNTIME=1 - create_all() ATLANDI "
+            "(PDSMR-R3 startup_gate.py DB'yi zaten hazırladı)."
+        )
+        return
+
     # Production'da migration kullan
     try:
         from .core.config import settings
@@ -1252,10 +1281,10 @@ def init_db():
             return
     except ImportError:
         pass
-    
+
     # Pricing modülü tablolarını kaydet (Base.metadata'ya)
     import app.pricing.schemas  # noqa: F401
-    
+
     Base.metadata.create_all(bind=engine)
 
 

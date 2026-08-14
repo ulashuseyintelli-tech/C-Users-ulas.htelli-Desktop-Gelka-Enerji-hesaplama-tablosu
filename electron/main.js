@@ -4,12 +4,22 @@ const { spawn } = require('child_process');
 const http = require('http');
 const fs = require('fs');
 const dbRouting = require('./dbRouting'); // PDSMR-R2: canonical DATABASE_URL karari
+const { parseGateRefusal } = require('./gateRefusalParser'); // PDSMR-R3 STEP 8
 
 let mainWindow;
 let backendProcess;
 
 const BACKEND_PORT = 8000;
 const isDev = !app.isPackaged;
+
+// PDSMR-R3 STEP 8 — backend/run_server.py, sema kapisi HARD_STOP verdiginde
+// stderr'e sabit onekli, sanitize edilmis TEK bir satir yazar (bkz.
+// run_server.py::_run_startup_schema_gate, gateRefusalParser.js). Bu,
+// ambiguous 3-saniyelik health-check-retry dansindan GECMEDEN, dogrudan
+// spesifik ve eyleme donusturulebilir bir hata gostermemizi saglar -
+// backend bu durumda PORTU HIC BAGLAMAMIS olur (gate, app.main
+// import'undan/uvicorn.run'dan ONCE calisir).
+let lastGateRefusal = null;
 
 // ── Backend log dosyası (crash debug için) ───────────────────────────────────
 function getBackendLogPath() {
@@ -157,17 +167,43 @@ function startBackend() {
         // exe içine gömdüğü paket-göreli konumdan (playwright/driver/package/
         // .local-browsers) kullan. Dev branch'ine BİLEREK eklenmedi — dev ortamı
         // hâlâ kullanıcı cache'ini kullanmaya devam eder (regresyon yok).
-        // DATABASE_URL: backend run_server.py `os.environ.setdefault(...)`
-        // kullanır — burada AÇIKÇA verilen deger setdefault tarafından
-        // ASLA ezilmez (setdefault yalnız anahtar YOKSA yazar).
-        env: { ...process.env, ...machineLocalEnv, PLAYWRIGHT_BROWSERS_PATH: '0', DATABASE_URL: routing.url },
+        //
+        // KORUNAN ANAHTARLAR (PDSMR-R3 STEP 2, PDSMR-R3B STEP 5): DATABASE_URL,
+        // ENV, GELKA_PACKAGED_RUNTIME — üçü de ...machineLocalEnv'DEN SONRA
+        // literal olarak verilir, böylece machine-local.env (kullanıcının
+        // kendi makinesinde, elle düzenlenebilir bir dosya) bunları ASLA
+        // EZEMEZ. DATABASE_URL zaten böyleydi (run_server.py
+        // os.environ.setdefault kullanır); ENV/GELKA_PACKAGED_RUNTIME de
+        // AYNI ilkeyle eklendi — backend/app/database.py::init_db()
+        // GELKA_PACKAGED_RUNTIME'ı create_all() SESSİZ-YOK-SAYMA (fail-open,
+        // PDSMR-R2I bulgusu) sinyali olarak KOŞULSUZ kabul eder.
+        // ENV='desktop' (PDSMR-R3B STEP 5 — ÖNCEDEN 'staging' idi, YANILTICIYDI):
+        // paketlenmiş masaüstü uygulamasının GERÇEK/DÜRÜST değeri — bkz.
+        // backend/.env.production ve incident_service.py::VALID_ENVIRONMENTS
+        // yorumları. run_server.py bu İKİ değeri (ENV + GELKA_PACKAGED_RUNTIME)
+        // AYRICA, Electron'dan BAĞIMSIZ olarak doğrular (fail-closed).
+        env: {
+          ...process.env, ...machineLocalEnv,
+          PLAYWRIGHT_BROWSERS_PATH: '0',
+          DATABASE_URL: routing.url,
+          ENV: 'desktop',
+          GELKA_PACKAGED_RUNTIME: '1',
+        },
         stdio: ['pipe', 'pipe', 'pipe'],
       }
     );
   }
 
+  lastGateRefusal = null;
   backendProcess.stdout.on('data', (data) => logBackend(`[stdout] ${data.toString().trim()}`));
-  backendProcess.stderr.on('data', (data) => logBackend(`[stderr] ${data.toString().trim()}`));
+  backendProcess.stderr.on('data', (data) => {
+    const metin = data.toString();
+    logBackend(`[stderr] ${metin.trim()}`);
+    const ayristirilan = parseGateRefusal(metin);
+    if (ayristirilan) {
+      lastGateRefusal = ayristirilan;
+    }
+  });
   backendProcess.on('error', (err) => {
     logBackend(`[ERROR] Backend başlatma hatası: ${err.message}`);
     dialog.showErrorBox('Hata', `Backend başlatılamadı: ${err.message}`);
@@ -175,6 +211,29 @@ function startBackend() {
   backendProcess.on('exit', (code, signal) => {
     logBackend(`[EXIT] Backend process kapandı (code: ${code}, signal: ${signal})`);
     backendProcess = null;
+
+    // PDSMR-R3 STEP 8: sema kapisi ACIKCA reddettiyse (stderr'de yakalanan
+    // sabit onek), belirsiz health-check-retry dansina GEREK YOK -
+    // backend PORTU HIC BAGLAMADI (gate, uvicorn.run'dan ONCE calisti).
+    // Sanitize edilmis, eyleme donusturulebilir mesaji DOGRUDAN goster.
+    // "Devam et" secenegi KASITLI olarak YOK (owner: "never offer
+    // continue anyway").
+    if (lastGateRefusal) {
+      const { exitCode, message } = lastGateRefusal;
+      logBackend(`[GATE_REFUSED] exitCode=${exitCode} message="${message}"`);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        dialog.showErrorBox(
+          'Veritabanı Hazırlanamadı',
+          'Uygulama başlangıcı, veritabanı durumu güvenli şekilde ' +
+          'doğrulanamadığı için güvenlik nedeniyle durduruldu.\n' +
+          'Mevcut verileriniz DEĞİŞTİRİLMEDİ.\n\n' +
+          `Kategori: ${exitCode !== null ? exitCode : 'beklenmeyen hata'}\n` +
+          'Lütfen destek ile iletişime geçin.\n\n' +
+          `Log: ${getBackendLogPath()}`
+        );
+      }
+      return;
+    }
 
     // PyInstaller --onefile modunda wrapper process kapanabilir ama
     // asıl Python process hala çalışıyor olabilir.
