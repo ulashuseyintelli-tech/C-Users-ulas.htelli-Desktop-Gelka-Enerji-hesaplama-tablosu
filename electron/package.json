@@ -68,7 +68,8 @@
       "shortcutName": "Gelka Enerji",
       "deleteAppDataOnUninstall": false,
       "menuCategory": "Gelka Enerji",
-      "artifactName": "Gelka-Enerji-Setup.${ext}"
+      "artifactName": "Gelka-Enerji-Setup.${ext}",
+      "include": "build/installer.nsh"
     }
   }
 }
