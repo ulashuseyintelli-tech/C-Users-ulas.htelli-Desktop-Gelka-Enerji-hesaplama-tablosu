@@ -1,10 +1,11 @@
 ﻿import { useState, useCallback, useMemo, useEffect } from 'react';
-import { Upload, FileText, Zap, TrendingDown, AlertCircle, CheckCircle, Loader2, RefreshCw, Download, Settings, FileSignature, Users } from 'lucide-react';
+import { Upload, FileText, Zap, TrendingDown, AlertCircle, CheckCircle, Loader2, RefreshCw, Download, Settings, FileSignature, Users, Database } from 'lucide-react';
 import { fullProcess, downloadPdf, FullProcessResponse, pricingAnalyze, pricingGetTemplates, pricingGetPeriods, pricingDownloadPdf, pricingDownloadExcel, PricingAnalyzeResponse, normalizeInvoicePeriod, API_BASE, TemplateItem, getVersion, VersionInfo, PdfMismatchError, PdfMismatchContract, createOffer, createCustomer, OfferCalculationPayload } from './api';
 import { ContractWizardModal } from './contracts/ContractWizardModal';
 import AdminPanel from './AdminPanel';
 import ReconPage from './recon/ReconPage';
 import CrmCorePage from './crm-core/CrmCorePage';
+import MarketDataPage from './marketdata/MarketDataPage';
 import { generateBayiRaporPdf } from './bayiRapor';
 
 // EPDK Dağıtım Tarifeleri — Backend API'den çekilir
@@ -200,6 +201,7 @@ function App() {
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [showReconPage, setShowReconPage] = useState(false);
   const [showCrmCore, setShowCrmCore] = useState(false); // S1 CRM Core (Bugün/Müşteriler/Teklifler/Sözleşmeler)
+  const [showMarketDataPage, setShowMarketDataPage] = useState(false); // EPİAŞ saatlik PTF/SMF piyasa verisi yükleme/kapsam sayfası
   
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1064,6 +1066,11 @@ function App() {
     return <CrmCorePage onBack={() => setShowCrmCore(false)} />;
   }
 
+  // EPİAŞ Piyasa Verisi sayfası göster
+  if (showMarketDataPage) {
+    return <MarketDataPage onBack={() => setShowMarketDataPage(false)} />;
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex flex-col overflow-auto">
       {/* Header */}
@@ -1095,6 +1102,14 @@ function App() {
                 aria-label="CRM Core"
               >
                 <Users className="w-5 h-5 text-gray-500" />
+              </button>
+              <button
+                onClick={() => setShowMarketDataPage(true)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                title="EPİAŞ Piyasa Verisi"
+                aria-label="EPİAŞ Piyasa Verisi"
+              >
+                <Database className="w-5 h-5 text-gray-500" />
               </button>
               <button
                 onClick={() => setShowAdminPanel(true)}
