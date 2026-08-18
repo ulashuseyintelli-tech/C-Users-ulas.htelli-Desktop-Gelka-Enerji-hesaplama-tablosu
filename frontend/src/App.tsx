@@ -228,7 +228,16 @@ function App() {
   const [yekdemPrice, setYekdemPrice] = useState(364.0);
   const [multiplier, setMultiplier] = useState(1.01);
   // SoT-X Seviye 1: profil-ağırlıklı PTF (manuel akış)
-  const [ptfProfile, setPtfProfile] = useState('puant_agir'); // puant_agir|duz|gece_agir
+  //
+  // Owner kararı: varsayılan "duz" (PROFILE_WEIGHTS'te T1=T2=T3=1.0, yani
+  // matematiksel olarak SAF basit ortalama — market_prices.py:39-42). Önceki
+  // varsayılan "puant_agir" idi; manuel teklif hazırlarken kimse bu seçiciye
+  // bakmadığı için salt-okunur/beklenmedik şekilde daha yüksek bir PTF
+  // (puant saatler 3x ağırlıklı) teklife karışıyordu — düz ortalamadan farklı
+  // sonuç, dışarıya "yalancı" (piyasa ortalamasıyla tutarsız) teklif riski.
+  // "Puant ağırlıklı"/"Gece ağırlıklı" seçenekleri KALDIRILMADI — istenirse
+  // elle seçilebilir, yalnız otomatik doldurmanın BAŞLANGIÇ değeri değişti.
+  const [ptfProfile, setPtfProfile] = useState('duz'); // puant_agir|duz|gece_agir
   const [ptfSource, setPtfSource] = useState<string | null>(null); // hourly_consumption:* | hourly_weighted:* | reference_scalar | not_found
   const [ptfSourceWarning, setPtfSourceWarning] = useState<string | null>(null);
   // Seviye 2-b (C1): yüklü tüketim profili olan firmalar + seçili firma (gerçek tüketim-ağırlıklı PTF)
