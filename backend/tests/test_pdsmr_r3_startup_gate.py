@@ -19,7 +19,10 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from test_legacy_adoption_validator import _build_golden_legacy_db  # noqa: E402
+from test_legacy_adoption_validator import (  # noqa: E402
+    _GOLDEN_FIXTURE_ROW_COUNTS,
+    _build_golden_legacy_db,
+)
 
 from app.legacy_adoption import alembic_runner as ar  # noqa: E402
 from app.legacy_adoption import policy  # noqa: E402
@@ -224,7 +227,9 @@ def test_controlled_adoption_reaches_canonical_head_with_s5_tables(rescued_rig):
     assert rapor.heads == 1
     assert rapor.integrity_check == "ok"
     assert rapor.foreign_key_violations == 0
-    for kritik, beklenen in policy.EXPECTED_ROW_COUNTS.items():
+    # PDSMR-R4/Faz3: policy.EXPECTED_ROW_COUNTS kaldirildi; beklenen
+    # degerler golden fixture'in KENDI (test-local) sabitinden gelir.
+    for kritik, beklenen in _GOLDEN_FIXTURE_ROW_COUNTS.items():
         assert rapor.row_counts.get(kritik) == beklenen, f"{kritik} satir sayisi degisti"
 
     con = sqlite3.connect(rescued_rig["canonical"])

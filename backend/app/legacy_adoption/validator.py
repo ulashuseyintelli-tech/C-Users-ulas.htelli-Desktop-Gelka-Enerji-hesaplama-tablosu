@@ -57,7 +57,6 @@ from .result import (
     R_LEGACY_TABLE_NOT_EMPTY,
     R_PRIMARY_KEY_DRIFT,
     R_REQUIRED_INDEX_MISSING,
-    R_ROW_COUNT_BASELINE_MISMATCH,
     R_TABLE_COUNT_MISMATCH,
     R_UNEXPECTED_CHECK_CONSTRAINT,
     R_UNEXPECTED_TRIGGER_PRESENT,
@@ -377,20 +376,44 @@ def _check_canonical_indexes(fp: DatabaseFingerprint, findings: list[Finding]) -
 
 
 def _check_row_counts(fp: DatabaseFingerprint, findings: list[Finding]) -> None:
-    for table, expected in sorted(policy.EXPECTED_ROW_COUNTS.items()):
-        actual = fp.row_counts.get(table)
-        if actual is None:
-            continue  # tablo yoklugu zaten tablo kontrolunde raporlandi
-        if actual != expected:
-            if table == policy.REQUIRED_LEGACY_TABLE:
-                findings.append(Finding(
-                    R_LEGACY_TABLE_NOT_EMPTY, f"{table} satir={actual} beklenen=0"
-                ))
-            else:
-                findings.append(Finding(
-                    R_ROW_COUNT_BASELINE_MISMATCH,
-                    f"{table} gercek={actual} baseline={expected}",
-                ))
+    """
+    PDSMR-R4 / Faz 3: degisken is verisi satir sayisi ARTIK bir kabul/red
+    kriteri DEGILDIR. Dinamik olcum (fp.row_counts) zaten, YENI SQL/tekrar
+    olcum YAZILMADAN, `fp.as_evidence()` uzerinden (bkz. validate_legacy_db,
+    zaten var olan `evidence.update(fp.as_evidence())` cagrisi) tablo adina
+    gore deterministik sirali KANIT olarak raporlanir — bu fonksiyon o
+    kaydi TEKRARLAMAZ.
+
+    Bu fonksiyonun KALAN TEK isi: MUST_BE_EMPTY_LEGACY_TABLES politikasi.
+    Bu, is verisi PRESERVATION kiyasi DEGILDIR (o Faz 4'un kapsamindadir);
+    bagimsiz, adlandirilmis bir kural — "bu tablo legacy-only bir
+    artefakttir, adoption oncesi veri TASIMAMALIDIR". KNOWN_LEGACY_ONLY_
+    TABLES'in TUMUNE OTOMATIK uygulanmaz (ozellikle `alembic_version`
+    HARIC TUTULUR — bkz. policy.py).
+
+    Olcum eksik/okunamazsa SESSIZ PASS verilmez: tablo VARSA ama
+    fp.row_counts'ta KARSILIGI yoksa (fingerprint'in olcemedigi/atladigi
+    bir durum), bu deterministik bir HARD_STOP bulgusudur — "olculemedi,
+    dolayisiyla varsayilan olarak temiz sayildi" asla olmaz.
+
+    Cagrildigi yerler:
+    - validate_legacy_db() [PDSMR-R1D/Faz2 -> PDSMR-R4/Faz3]
+    """
+    for table in sorted(policy.MUST_BE_EMPTY_LEGACY_TABLES):
+        if table not in fp.tables:
+            continue  # tablo yoklugu zaten _check_tables()'ta raporlanir
+        if table not in fp.row_counts:
+            findings.append(Finding(
+                R_LEGACY_TABLE_NOT_EMPTY,
+                f"{table}: satir sayisi olculemedi (fingerprint kapsaminda karsiligi yok) — "
+                "bos-olma politikasi kanitlanamadigindan fail-closed",
+            ))
+            continue
+        actual = fp.row_counts[table]
+        if actual != 0:
+            findings.append(Finding(
+                R_LEGACY_TABLE_NOT_EMPTY, f"{table} satir={actual} beklenen=0"
+            ))
 
 
 def _check_backup_capability(

@@ -203,7 +203,10 @@ def _row_counts(path: str) -> dict[str, int]:
         }
         return {
             t: con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
-            for t in sorted(policy.EXPECTED_ROW_COUNTS) if t in tablolar
+            # PDSMR-R4/Faz3: EXPECTED_ROW_COUNTS (deger tasiyan, kabul/red
+            # politikasi) kaldirildi. ROW_COUNT_REPORT_TABLES ayni tablo
+            # adlarini deger TASIMADAN tutar — davranis birebir aynidir.
+            for t in sorted(policy.ROW_COUNT_REPORT_TABLES) if t in tablolar
         }
     finally:
         con.close()

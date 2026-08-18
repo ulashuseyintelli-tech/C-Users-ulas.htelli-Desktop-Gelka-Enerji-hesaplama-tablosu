@@ -41,7 +41,6 @@ from app.legacy_adoption.result import (  # noqa: E402
     R_LEGACY_TABLE_MISSING,
     R_LEGACY_TABLE_NOT_EMPTY,
     R_REQUIRED_INDEX_MISSING,
-    R_ROW_COUNT_BASELINE_MISMATCH,
     R_TABLE_COUNT_MISMATCH,
     R_UNEXPECTED_CHECK_CONSTRAINT,
     R_UNEXPECTED_TRIGGER_PRESENT,
@@ -102,6 +101,26 @@ _INSERT_ORDER = (
     "incidents", "invoices", "market_reference_prices", "ptf_drift_log",
 )
 
+# PDSMR-R4 / Faz 3: bu satir sayilari SADECE bu fixture'i insa etmek
+# icindir — policy.py'de KARSILIGI YOKTUR (EXPECTED_ROW_COUNTS kaldirildi,
+# validator artik hicbir is verisi satir sayisini kabul/red kriteri
+# olarak KULLANMAZ). Degerler tamamen KEYFIDIR; production'in gercek
+# olculmus rakamlariyla (Faz 0 bulgusu) KASITLI olarak ILISKISIZDIR.
+_GOLDEN_FIXTURE_ROW_COUNTS = {
+    "customers": 3, "offers": 6, "contracts": 3, "activities": 7, "tasks": 7,
+    "prospect_companies": 1, "prospect_contacts": 0, "prospect_sources": 3,
+    "incidents": 1, "invoices": 0, "ptf_drift_log": 0, "market_reference_prices": 60,
+}
+
+# Ayni sekilde GECERLI ama TAMAMEN FARKLI hacimli ikinci bir fixture seti —
+# "jenerik mi, yoksa gizlice bu rakamlara mi baglandi" sorusunu kanitlamak
+# icin (bkz. test_small_and_large_valid_data_volume_produce_same_outcome).
+_ALT_FIXTURE_ROW_COUNTS = {
+    "customers": 41, "offers": 130, "contracts": 17, "activities": 2, "tasks": 0,
+    "prospect_companies": 9, "prospect_contacts": 5, "prospect_sources": 12,
+    "incidents": 0, "invoices": 0, "ptf_drift_log": 0, "market_reference_prices": 4,
+}
+
 
 def _fill_table(con: sqlite3.Connection, table: str, count: int, parent_ids: dict) -> list:
     if count == 0:
@@ -133,19 +152,23 @@ def _fill_table(con: sqlite3.Connection, table: str, count: int, parent_ids: dic
     return ids
 
 
-def _build_golden_legacy_db(path: str) -> str:
+def _build_golden_legacy_db(path: str, row_counts: dict[str, int] | None = None) -> str:
     """
     Production ailesinin sentetik esdegerini uretir:
       - TAM model semasi, ANCAK outreach tablolari YOK (pre-S5)
       - prospect_companies.verified_legal_type* kolonlari YOK (pre-S5)
       - legacy-only tablolar (alembic_version, ptf_drift_log) VAR
       - alembic_version = izinli revision
-      - baseline row count'lari birebir
+      - satir sayilari `row_counts` PARAMETRESINDEN gelir (verilmezse
+        _GOLDEN_FIXTURE_ROW_COUNTS) — PDSMR-R4/Faz3: bu artik policy.py'nin
+        degil, YALNIZ bu test dosyasinin sorumlulugudur.
 
     Sema kaynagi validator ile AYNI fonksiyondur; boylece fixture'in
     modelin bir kismini kacirmasi (ornegin app/pricing/schemas.py)
     mumkun olmaz.
     """
+    if row_counts is None:
+        row_counts = _GOLDEN_FIXTURE_ROW_COUNTS
     from sqlalchemy import create_engine
 
     from app.legacy_adoption.validator import _load_model_metadata
@@ -174,7 +197,7 @@ def _build_golden_legacy_db(path: str) -> str:
 
         parent_ids: dict[str, list] = {}
         for table in _INSERT_ORDER:
-            count = policy.EXPECTED_ROW_COUNTS.get(table, 0)
+            count = row_counts.get(table, 0)
             parent_ids[table] = _fill_table(con, table, count, parent_ids)
 
         con.commit()
@@ -563,12 +586,182 @@ def test_unexpected_trigger_hard_stops(mutable_db):
     assert R_UNEXPECTED_TRIGGER_PRESENT in _run(mutable_db).reason_codes
 
 
-def test_row_count_baseline_mismatch_hard_stops(mutable_db):
+# ─────────────────────────────────────────────────────────────────────────
+# PDSMR-R4 / Faz 3 — row-count ARTIK kabul/red kriteri degil, yalniz kanit
+# ─────────────────────────────────────────────────────────────────────────
+def test_variable_table_row_count_change_does_not_hard_stop(mutable_db):
+    """
+    `incidents` cocuksuz (hicbir tablo FK ile ona bakmiyor) bir is verisi
+    tablosudur ve MUST_BE_EMPTY_LEGACY_TABLES'ta DEGILDIR. Satirini SIFIRA
+    indirmek (1 -> 0) — eskiden R_ROW_COUNT_BASELINE_MISMATCH ile
+    HARD_STOP olurdu — artik sonucu HIC DEGISTIRMEMELIDIR: row-count bir
+    politika girdisi degil, yalniz kanittir.
+    """
+    before = _run(mutable_db)
+    assert before.outcome is Outcome.PASS, before.reason_codes
+
     con = sqlite3.connect(mutable_db)
-    con.execute("DELETE FROM customers WHERE id=(SELECT MIN(id) FROM customers)")
+    con.execute("DELETE FROM incidents")
     con.commit()
     con.close()
-    assert R_ROW_COUNT_BASELINE_MISMATCH in _run(mutable_db).reason_codes
+
+    after = _run(mutable_db)
+    assert after.outcome is Outcome.PASS, after.reason_codes
+    assert after.evidence["row_counts"]["incidents"] == 0
+
+
+def test_row_count_evidence_reflects_actual_measured_value(mutable_db):
+    """Kanit, POLITIKA degerini degil, GERCEKTE OLCULEN degeri gostermelidir."""
+    con = sqlite3.connect(mutable_db)
+    con.execute("DELETE FROM market_reference_prices WHERE id NOT IN (SELECT MIN(id) FROM market_reference_prices)")
+    con.commit()
+    con.close()
+    report = _run(mutable_db)
+    assert report.outcome is Outcome.PASS, report.reason_codes
+    assert report.evidence["row_counts"]["market_reference_prices"] == 1
+
+
+def test_row_count_evidence_is_sorted_by_table_name(golden_db):
+    report = _run(golden_db)
+    tablolar = list(report.evidence["row_counts"].keys())
+    assert tablolar == sorted(tablolar), tablolar
+    assert len(tablolar) > 1, "sira testi anlamli olmasi icin en az 2 tablo gerekir"
+
+
+def test_small_and_large_valid_data_volume_produce_same_outcome(tmp_path):
+    """
+    Jeneriklik kaniti: AYNI sema, TAMAMEN FARKLI is verisi hacmi tasiyan
+    iki fixture, AYNI validation kararini uretmelidir. Kanit, HER birinin
+    KENDI gercek sayilarini gostermelidir — birbirine veya bir policy
+    sabitine BAGLI degil.
+    """
+    kucuk = _build_golden_legacy_db(str(tmp_path / "kucuk.db"), _GOLDEN_FIXTURE_ROW_COUNTS)
+    buyuk = _build_golden_legacy_db(str(tmp_path / "buyuk.db"), _ALT_FIXTURE_ROW_COUNTS)
+
+    rapor_kucuk = _run(kucuk)
+    rapor_buyuk = _run(buyuk)
+
+    assert rapor_kucuk.outcome is Outcome.PASS, rapor_kucuk.reason_codes
+    assert rapor_buyuk.outcome is Outcome.PASS, rapor_buyuk.reason_codes
+    assert rapor_kucuk.outcome == rapor_buyuk.outcome
+
+    for tablo, beklenen in _GOLDEN_FIXTURE_ROW_COUNTS.items():
+        assert rapor_kucuk.evidence["row_counts"][tablo] == beklenen
+    for tablo, beklenen in _ALT_FIXTURE_ROW_COUNTS.items():
+        assert rapor_buyuk.evidence["row_counts"][tablo] == beklenen
+    assert rapor_kucuk.evidence["row_counts"] != rapor_buyuk.evidence["row_counts"]
+
+
+def test_alembic_version_single_row_is_not_subject_to_emptiness_rule(golden_db):
+    """
+    `alembic_version` KNOWN_LEGACY_ONLY_TABLES'in uyesidir ama
+    MUST_BE_EMPTY_LEGACY_TABLES'in DEGILDIR — DOGAL olarak TAM 1 satir
+    tasir ve bu HICBIR bulguya yol acmamalidir (madde 8).
+    """
+    assert "alembic_version" not in policy.MUST_BE_EMPTY_LEGACY_TABLES
+    con = sqlite3.connect(golden_db)
+    satir = con.execute("SELECT COUNT(*) FROM alembic_version").fetchone()[0]
+    con.close()
+    assert satir == 1
+    report = _run(golden_db)
+    assert report.outcome is Outcome.PASS, report.reason_codes
+    assert R_LEGACY_TABLE_NOT_EMPTY not in report.reason_codes
+
+
+def test_must_be_empty_legacy_table_zero_rows_passes_that_gate(golden_db):
+    """ptf_drift_log=0 -> bu ozel kapi PASS eder (madde 6)."""
+    con = sqlite3.connect(golden_db)
+    satir = con.execute("SELECT COUNT(*) FROM ptf_drift_log").fetchone()[0]
+    con.close()
+    assert satir == 0
+    report = _run(golden_db)
+    assert R_LEGACY_TABLE_NOT_EMPTY not in report.reason_codes
+
+
+def test_row_count_measurement_missing_is_fail_closed_not_silent_pass():
+    """
+    `_check_row_counts()` DOGRUDAN, sentetik bir DatabaseFingerprint ile
+    cagrilir: `ptf_drift_log` tabloda VAR ama `row_counts`'ta KARSILIGI
+    YOK (fingerprint kapsam disi kaldigi senaryosu). Sessiz PASS YASAK —
+    deterministik R_LEGACY_TABLE_NOT_EMPTY HARD_STOP uretmelidir (madde 4).
+    """
+    from app.legacy_adoption.fingerprint import ColumnFingerprint, DatabaseFingerprint, TableFingerprint
+    from app.legacy_adoption.result import Finding
+    from app.legacy_adoption.validator import _check_row_counts
+
+    fp = DatabaseFingerprint(
+        file_path="<sentetik>", file_size=0, file_sha256="0" * 64,
+        sqlite_version="3.0.0", integrity_check="ok", foreign_key_violations=0,
+        alembic_version=policy.ALLOWED_ALEMBIC_REVISION,
+        tables={
+            "ptf_drift_log": TableFingerprint(
+                columns={"id": ColumnFingerprint("INTEGER", "INTEGER", True, False)},
+                primary_key=("id",), foreign_keys=(), indexes={}, has_check_constraint=False,
+            ),
+        },
+        row_counts={},  # <-- ptf_drift_log KASITLI OLARAK burada YOK
+    )
+    findings: list[Finding] = []
+    _check_row_counts(fp, findings)
+    assert any(f.reason_code == R_LEGACY_TABLE_NOT_EMPTY for f in findings), findings
+    assert any("olculemedi" in f.detail for f in findings), findings
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# PDSMR-R4 / Faz 3 — statik/AST kontrolleri
+# ─────────────────────────────────────────────────────────────────────────
+def test_expected_row_counts_symbol_does_not_exist_in_policy_or_validator():
+    import ast
+
+    for modul in ("app/legacy_adoption/policy.py", "app/legacy_adoption/validator.py"):
+        yol = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), modul.replace("/", os.sep)
+        )
+        with open(yol, encoding="utf-8") as fh:
+            kaynak = fh.read()
+        agac = ast.parse(kaynak)
+        isimler = {n.id for n in ast.walk(agac) if isinstance(n, ast.Name)}
+        isimler |= {n.attr for n in ast.walk(agac) if isinstance(n, ast.Attribute)}
+        assert "EXPECTED_ROW_COUNTS" not in isimler, f"{modul}: EXPECTED_ROW_COUNTS hala mevcut"
+
+
+def test_no_production_specific_business_data_numbers_in_policy():
+    """
+    Faz 0'in olctugu GERCEK canli DB sayilari (customers=2, offers=2,
+    contracts=0) policy.py'de HICBIR sabite YAZILMAMALIDIR — aksi halde
+    ayni hata (bir anlik goruntuyu kalici politika sanmak) TEKRARLANIR.
+    """
+    yol = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "app", "legacy_adoption", "policy.py",
+    )
+    with open(yol, encoding="utf-8") as fh:
+        kaynak = fh.read().replace(" ", "")
+    for yasakli in ('"customers":2', "'customers':2", '"offers":2', "'offers':2"):
+        assert yasakli not in kaynak, f"policy.py'de yasakli desen: {yasakli}"
+
+
+def test_check_row_counts_makes_no_new_sql_calls():
+    """
+    `_check_row_counts()` YALNIZ `fp.row_counts`/`fp.tables`'i OKUMALIDIR —
+    hicbir sqlite3.connect/execute cagrisi ICERMEMELIDIR (madde 3: yeni
+    SQL/tekrar olcum YOK).
+    """
+    import ast
+    import inspect
+
+    from app.legacy_adoption.validator import _check_row_counts
+
+    kaynak = inspect.getsource(_check_row_counts)
+    agac = ast.parse(kaynak)
+    for node in ast.walk(agac):
+        if isinstance(node, ast.Call):
+            ad = node.func.attr if isinstance(node.func, ast.Attribute) else (
+                node.func.id if isinstance(node.func, ast.Name) else None
+            )
+            assert ad not in ("connect", "execute", "executemany", "create_all"), (
+                f"_check_row_counts() yasakli cagri icermeli DEGIL: {ad}()"
+            )
 
 
 def test_unexpected_check_constraint_hard_stops(mutable_db):
@@ -627,7 +820,12 @@ def test_no_write_migration_or_stamp_statement_is_ever_executed(mutable_db, monk
     elif bozulma == "tablo":
         con.execute("CREATE TABLE surprise (id INTEGER PRIMARY KEY)")
     elif bozulma == "satir_sayisi":
-        con.execute("DELETE FROM offers WHERE id=(SELECT MIN(id) FROM offers)")
+        # PDSMR-R4/Faz3: is verisi satir sayisi ARTIK kabul/red kriteri
+        # degil — `incidents` (cocuksuz, MUST_BE_EMPTY_LEGACY_TABLES'ta
+        # DEGIL) satirini silmek beklenen sonucu artik PASS'e cevirir
+        # (asagidaki `_BEKLENEN` haritasina bkz.). Amac hala AYNI: PASS
+        # yolunda da HARD_STOP yolunda da SIFIR yazan SQL.
+        con.execute("DELETE FROM incidents")
     con.commit()
     revizyon_oncesi = con.execute("SELECT version_num FROM alembic_version").fetchone()
     con.close()
@@ -636,8 +834,11 @@ def test_no_write_migration_or_stamp_statement_is_ever_executed(mutable_db, monk
     report = _run(mutable_db)
     monkeypatch.undo()
 
-    beklenen = Outcome.PASS if bozulma == "yok" else Outcome.HARD_STOP
-    assert report.outcome is beklenen, report.reason_codes
+    _BEKLENEN = {
+        "revision": Outcome.HARD_STOP, "tablo": Outcome.HARD_STOP,
+        "satir_sayisi": Outcome.PASS, "yok": Outcome.PASS,
+    }
+    assert report.outcome is _BEKLENEN[bozulma], report.reason_codes
 
     yasakli = [s for s in calisan_sql if not _sql_izinli_mi(s)]
     assert yasakli == [], f"validator yazan/degistiren SQL calistirdi: {yasakli}"

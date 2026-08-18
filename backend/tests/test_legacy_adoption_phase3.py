@@ -38,6 +38,7 @@ from app.legacy_adoption.lineage import (  # noqa: E402
     classify_canonical_branch,
 )
 from test_legacy_adoption_validator import (  # noqa: E402
+    _GOLDEN_FIXTURE_ROW_COUNTS,
     _build_golden_legacy_db,
     _rewrite_table_sql,
     _sha256,
@@ -223,8 +224,13 @@ def test_adoption_installs_six_canonical_indexes_and_canonical_affinity(arena):
 
 
 def test_adoption_preserves_row_counts_and_legacy_artifact(arena):
+    # PDSMR-R4/Faz3: policy.EXPECTED_ROW_COUNTS kaldirildi. Beklenen
+    # degerler artik golden FIXTURE'in KENDI (test-local) sabitinden
+    # gelir — adoption.py'nin calisma-zamani DAVRANISI DEGISMEDI, yalniz
+    # "hangi tablolari raporla" kumesi (ROW_COUNT_REPORT_TABLES) deger
+    # tasimayan bir isimle degisti.
     rapor = _adopt(arena)
-    for tablo, beklenen in policy.EXPECTED_ROW_COUNTS.items():
+    for tablo, beklenen in _GOLDEN_FIXTURE_ROW_COUNTS.items():
         assert rapor.row_counts.get(tablo) == beklenen, tablo
     con = sqlite3.connect(arena["working"])
     assert con.execute("SELECT COUNT(*) FROM ptf_drift_log").fetchone()[0] == 0
