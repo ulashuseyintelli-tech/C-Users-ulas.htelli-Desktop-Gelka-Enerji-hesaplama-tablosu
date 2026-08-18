@@ -184,7 +184,12 @@ DEFAULT_YEKDEM_TL_PER_MWH = 364.0  # Ocak 2025 tahmini
 MIN_PTF_TL_PER_MWH = 500.0  # Çok düşük = muhtemelen hata
 MAX_PTF_TL_PER_MWH = 10000.0  # Çok yüksek = muhtemelen hata
 MIN_YEKDEM_TL_PER_MWH = 0.0  # YEKDEM 0 olabilir (muaf)
-MAX_YEKDEM_TL_PER_MWH = 1000.0  # Çok yüksek = muhtemelen hata
+# Owner kararı: 2026 kesinleşen YEKDEM verisi 1000'i asiyor (ör. Mayis 2026 =
+# 1306,10 TL/MWh) - eski 1000 tavani gercek 2026 piyasasini yansitmiyordu,
+# "muhtemelen hata" degil dogrulanmis gercek deger. Tavan 2500'e cikarildi:
+# gozlenen tepe degerin (1306,10) uzerinde makul pay birakiyor, guardrail'in
+# asil amacini (gercekten hatali/yanlis-birim girisleri yakalamak) koruyor.
+MAX_YEKDEM_TL_PER_MWH = 2500.0  # Çok yüksek = muhtemelen hata (owner onayı: 2026 gerçek verisi 1000'i aştı)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
