@@ -449,13 +449,25 @@ def test_non_allowlisted_nullability_drift_hard_stops(mutable_db):
 
 
 def test_allowlisted_nullability_variant_does_not_hard_stop(mutable_db):
-    # market_reference_prices.captured_at owner tarafindan KABUL EDILMIS varyant.
+    """
+    PDSMR-R4B1 SONRASI GUNCELLENDI: model artik canonical migration
+    sekliyle hizali (customers.created_at NOT NULL). Legacy bir DB'de bu
+    kolon NULLABLE'dir — ACCEPTED_NULLABILITY_VARIANTS'taki
+    "LEGACY_COMPATIBILITY_REQUIRED" girdisi tam da bunun icindir ve
+    HARD_STOP uretmemelidir.
+
+    (Eski hali `market_reference_prices.captured_at`i kullaniyordu; o
+    kolon 4B1'de canonical'a uyarak MODELDE de nullable oldu, dolayisiyla
+    artik bir sapma URETMIYOR ve varyanti test EDEMIYORDU.)
+    """
+    assert ("customers", "created_at") in policy.ACCEPTED_NULLABILITY_VARIANTS
     _rewrite_table_sql(
-        mutable_db, "market_reference_prices", "captured_at DATETIME NOT NULL", "captured_at DATETIME"
+        mutable_db, "customers", "created_at DATETIME DEFAULT (CURRENT_TIMESTAMP) NOT NULL",
+        "created_at DATETIME DEFAULT (CURRENT_TIMESTAMP)",
     )
     report = _run(mutable_db)
-    assert R_COLUMN_NULLABILITY_DRIFT not in report.reason_codes
-    assert any("captured_at" in v for v in report.accepted_variants)
+    assert R_COLUMN_NULLABILITY_DRIFT not in report.reason_codes, report.reason_codes
+    assert any("created_at" in v for v in report.accepted_variants)
 
 
 def test_required_unique_index_missing_hard_stops(mutable_db):
@@ -525,12 +537,25 @@ def test_autoindex_from_pk_is_excluded_but_unique_constraint_autoindex_is_not(go
     """
     origin='pk' otomatik index'i PK'nin kendisidir, ayri bir kisit degildir.
     origin='u' ise gercek bir UNIQUE constraint tasir ve karsilastirmaya girer.
+
+    PDSMR-R4B1 SONRASI GUNCELLENDI: ornek tablo
+    `market_reference_prices` -> `uploaded_reference_documents` oldu.
+    market_reference_prices'in (price_type, period) benzersizligi 4B1'de
+    tablo-seviyesi UniqueConstraint'ten (origin='u') canonical'in
+    ADLANDIRILMIS unique index'ine (origin='c') cevrildi; dolayisiyla o
+    tablo artik origin='u' bir autoindex TASIMIYOR. Test edilen DAVRANIS
+    (origin='u' ayirt edilmesi) DEGISMEDI.
     """
     fp = collect_fingerprint(golden_db)
-    mrp = fp.tables["market_reference_prices"].indexes
-    u_kaynakli = [i for i in mrp.values() if i.origin == "u"]
+    urd = fp.tables["uploaded_reference_documents"].indexes
+    u_kaynakli = [i for i in urd.values() if i.origin == "u"]
     assert u_kaynakli, "UNIQUE constraint autoindex'i bulunamadi"
     assert all(i.unique for i in u_kaynakli)
+    # market_reference_prices artik canonical adlandirilmis index kullanir.
+    mrp = fp.tables["market_reference_prices"].indexes
+    assert "ix_market_reference_prices_price_type_period" in mrp
+    assert mrp["ix_market_reference_prices_price_type_period"].origin == "c"
+    assert mrp["ix_market_reference_prices_price_type_period"].unique is True
     assert _run(golden_db).outcome is Outcome.PASS
 
 
