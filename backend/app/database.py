@@ -64,8 +64,12 @@ class Invoice(Base):
     __tablename__ = "invoices"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    tenant_id = Column(String(64), nullable=False, index=True, default="default")  # Multi-tenant
-    
+    # PDSMR-R4B1: server_default migration 002 ile hizalandi (canonical parite).
+    tenant_id = Column(
+        String(64), nullable=False, index=True,
+        default="default", server_default="default",
+    )  # Multi-tenant
+
     source_filename = Column(String(255), nullable=False)
     content_type = Column(String(100), nullable=False)
     
@@ -82,13 +86,24 @@ class Invoice(Base):
     validation_json = Column(JSON, nullable=True)
     
     # Status tracking
-    status = Column(SQLEnum(InvoiceStatus), default=InvoiceStatus.UPLOADED)
+    # PDSMR-R4B1: length/nullable/server_default migration 001 ile hizalandi.
+    # `length=20` YALNIZ uretilen VARCHAR uzunlugunu degistirir; enum
+    # semantigi (enum_class, dogrulama, bind/result isleme) DEGISMEZ.
+    status = Column(
+        SQLEnum(InvoiceStatus, length=20), nullable=False,
+        default=InvoiceStatus.UPLOADED, server_default="UPLOADED",
+    )
     error_message = Column(Text, nullable=True)
-    
+
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+    created_at = Column(
+        DateTime, nullable=False, default=datetime.utcnow, server_default=sa.func.now()
+    )
+    updated_at = Column(
+        DateTime, nullable=False, default=datetime.utcnow,
+        onupdate=datetime.utcnow, server_default=sa.func.now(),
+    )
+
     # Backwards compatibility properties
     @property
     def storage_path(self) -> str:
@@ -105,15 +120,22 @@ class Customer(Base):
     """Müşteri kayıtları"""
     __tablename__ = "customers"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # PDSMR-R4B1: canonical (001_initial) `customers` uzerinde ix_customers_id
+    # URETMEZ — SQLite'ta INTEGER PRIMARY KEY zaten rowid'dir.
+    id = Column(Integer, primary_key=True)
     name = Column(String(255), nullable=False, index=True)
     company = Column(String(255), nullable=True)
     email = Column(String(255), nullable=True)
     phone = Column(String(50), nullable=True)
     address = Column(Text, nullable=True)
     notes = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(
+        DateTime, nullable=False, default=datetime.utcnow, server_default=sa.func.now()
+    )
+    updated_at = Column(
+        DateTime, nullable=False, default=datetime.utcnow,
+        onupdate=datetime.utcnow, server_default=sa.func.now(),
+    )
 
     # Relationships
     offers = relationship("Offer", back_populates="customer")
@@ -123,8 +145,12 @@ class Offer(Base):
     """Teklif arşivi"""
     __tablename__ = "offers"
 
-    id = Column(Integer, primary_key=True, index=True)
-    tenant_id = Column(String(64), nullable=False, index=True, default="default")  # Multi-tenant
+    # PDSMR-R4B1: canonical (001_initial) `offers` uzerinde ix_offers_id URETMEZ.
+    id = Column(Integer, primary_key=True)
+    tenant_id = Column(
+        String(64), nullable=False, index=True,
+        default="default", server_default="default",
+    )  # Multi-tenant
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
     
     # Fatura bilgileri
@@ -149,16 +175,22 @@ class Offer(Base):
     
     # Extra items for Tip-5/7 (reaktif, mahsuplaşma, etc.)
     extra_items_json = Column(JSON, nullable=True)  # [{"label": "Reaktif", "amount_tl": 123.45}]
-    extra_items_total_tl = Column(Float, nullable=True, default=0)
+    # PDSMR-R4B1: server_default migration 002 ile hizalandi.
+    extra_items_total_tl = Column(Float, nullable=True, default=0, server_default="0")
     
     # Full calculation result as JSON
     calculation_result = Column(JSON, nullable=True)
     extraction_result = Column(JSON, nullable=True)
     
     # Metadata
-    created_at = Column(DateTime, default=datetime.utcnow)
+    # PDSMR-R4B1: nullable/server_default migration 001 ile hizalandi.
+    created_at = Column(
+        DateTime, nullable=False, default=datetime.utcnow, server_default=sa.func.now()
+    )
     pdf_ref = Column(String(700), nullable=True)  # Storage ref (local path veya s3://...)
-    status = Column(String(50), default="draft")  # draft, sent, accepted, rejected
+    status = Column(
+        String(50), nullable=False, default="draft", server_default="draft"
+    )  # draft, sent, accepted, rejected
 
     # Relationships
     customer = relationship("Customer", back_populates="offers")
@@ -174,22 +206,38 @@ class Job(Base):
     """Async job queue - DB tabanlı (Redis'e geçiş kolay)"""
     __tablename__ = "jobs"
 
+    # PDSMR-R4B1: nullable/server_default/length migration 001+002 ile hizalandi.
+    # ix_jobs_status_created canonical'da VAR (001_initial) — modele eklendi.
+    __table_args__ = (
+        sa.Index("ix_jobs_status_created", "status", "created_at"),
+    )
+
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    tenant_id = Column(String(64), nullable=False, index=True, default="default")  # Multi-tenant
-    invoice_id = Column(String(36), ForeignKey("invoices.id"), index=True)
-    
-    job_type = Column(SQLEnum(JobType), nullable=False)
-    status = Column(SQLEnum(JobStatus), default=JobStatus.QUEUED)
-    
+    tenant_id = Column(
+        String(64), nullable=False, index=True,
+        default="default", server_default="default",
+    )  # Multi-tenant
+    invoice_id = Column(
+        String(36), ForeignKey("invoices.id"), nullable=False, index=True
+    )
+
+    job_type = Column(SQLEnum(JobType, length=30), nullable=False)
+    status = Column(
+        SQLEnum(JobStatus, length=20), nullable=False,
+        default=JobStatus.QUEUED, server_default="QUEUED",
+    )
+
     # Worker için input
     payload_json = Column(JSON, nullable=True)
-    
+
     # Sonuç/hata
     result_json = Column(JSON, nullable=True)
     error = Column(String(2000), nullable=True)
-    
+
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(
+        DateTime, nullable=False, default=datetime.utcnow, server_default=sa.func.now()
+    )
     started_at = Column(DateTime, nullable=True)
     finished_at = Column(DateTime, nullable=True)
 
@@ -198,15 +246,25 @@ class AuditLog(Base):
     """Audit log - kim ne zaman ne yaptı"""
     __tablename__ = "audit_logs"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # PDSMR-R4B1: canonical (003) ix_audit_logs_id URETMEZ; iki composite
+    # index ise URETIR — modele eklendi. actor_type server_default + action
+    # VARCHAR uzunlugu 003 ile hizalandi.
+    __table_args__ = (
+        sa.Index("ix_audit_logs_tenant_action", "tenant_id", "action"),
+        sa.Index("ix_audit_logs_target", "target_type", "target_id"),
+    )
+
+    id = Column(Integer, primary_key=True)
     tenant_id = Column(String(64), nullable=False, index=True, default="default")
-    
+
     # Actor
-    actor_type = Column(String(50), nullable=False, default="system")  # user, system, api_key, webhook
+    actor_type = Column(
+        String(50), nullable=False, default="system", server_default="system"
+    )  # user, system, api_key, webhook
     actor_id = Column(String(100), nullable=True)  # user_id, api_key hash, etc.
-    
+
     # Action
-    action = Column(SQLEnum(AuditAction), nullable=False)
+    action = Column(SQLEnum(AuditAction, length=50), nullable=False)
     
     # Target
     target_type = Column(String(50), nullable=True)  # invoice, offer, customer
@@ -225,9 +283,10 @@ class WebhookConfig(Base):
     """Webhook konfigürasyonları - tenant bazlı"""
     __tablename__ = "webhook_configs"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # PDSMR-R4B1: canonical (003) ix_webhook_configs_id URETMEZ.
+    id = Column(Integer, primary_key=True)
     tenant_id = Column(String(64), nullable=False, index=True)
-    
+
     # Webhook URL
     url = Column(String(2000), nullable=False)
     
@@ -239,12 +298,13 @@ class WebhookConfig(Base):
     headers_json = Column(JSON, nullable=True)  # Custom headers
     
     # Status
-    is_active = Column(Integer, default=1)  # 1=active, 0=disabled
-    
+    # PDSMR-R4B1: server_default'lar migration 003 ile hizalandi.
+    is_active = Column(Integer, default=1, server_default="1")  # 1=active, 0=disabled
+
     # Stats
     last_triggered_at = Column(DateTime, nullable=True)
-    success_count = Column(Integer, default=0)
-    failure_count = Column(Integer, default=0)
+    success_count = Column(Integer, default=0, server_default="0")
+    failure_count = Column(Integer, default=0, server_default="0")
     
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -255,21 +315,32 @@ class WebhookDelivery(Base):
     """Webhook delivery log - gönderim geçmişi"""
     __tablename__ = "webhook_deliveries"
 
-    id = Column(Integer, primary_key=True, index=True)
-    webhook_config_id = Column(Integer, ForeignKey("webhook_configs.id"), index=True)
-    
+    # PDSMR-R4B1: canonical (003) ix_webhook_deliveries_id URETMEZ; config
+    # index'inin canonical ADI `ix_webhook_deliveries_config`'tir (modelin
+    # otomatik urettigi ix_webhook_deliveries_webhook_config_id DEGIL) ve
+    # ayrica ix_webhook_deliveries_status URETIR.
+    __table_args__ = (
+        sa.Index("ix_webhook_deliveries_config", "webhook_config_id"),
+        sa.Index("ix_webhook_deliveries_status", "status"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    webhook_config_id = Column(Integer, ForeignKey("webhook_configs.id"))
+
     # Event
     event_type = Column(String(100), nullable=False)
     payload_json = Column(JSON, nullable=False)
-    
+
     # Delivery
-    status = Column(String(20), nullable=False, default="pending")  # pending, success, failed
+    status = Column(
+        String(20), nullable=False, default="pending", server_default="pending"
+    )  # pending, success, failed
     response_status_code = Column(Integer, nullable=True)
     response_body = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
-    
+
     # Retry
-    attempt_count = Column(Integer, default=0)
+    attempt_count = Column(Integer, default=0, server_default="0")
     next_retry_at = Column(DateTime, nullable=True)
     
     # Timestamps
@@ -299,10 +370,16 @@ class MarketReferencePrice(Base):
     """
     __tablename__ = "market_reference_prices"
 
+    # PDSMR-R4B1: canonical (18100a648086) ix_market_reference_prices_id
+    # URETIR (id index'i BURADA korunur), ancak price_type icin AYRI bir
+    # index URETMEZ — composite'in leading kolonu zaten karsiliyor
+    # (9d4a2f6b18ce docstring'inde EXPLAIN ile kanitlanmis).
     id = Column(Integer, primary_key=True, index=True)
-    
+
     # Fiyat tipi ve dönem (composite unique)
-    price_type = Column(String(20), nullable=False, default="PTF", index=True)  # PTF, SMF, YEKDEM
+    price_type = Column(
+        String(20), nullable=False, default="PTF", server_default="PTF"
+    )  # PTF, SMF, YEKDEM
     period = Column(String(7), nullable=False, index=True)  # YYYY-MM format
     
     # Fiyatlar (TL/MWh) - DECIMAL(12,2) precision
@@ -310,9 +387,18 @@ class MarketReferencePrice(Base):
     yekdem_tl_per_mwh = Column(Float, nullable=False, default=0)  # YEKDEM bedeli
     
     # Status ve kaynak
-    status = Column(String(20), nullable=False, default="provisional")  # provisional | final
-    source = Column(String(30), nullable=False, default="epias_manual")  # epias_manual | epias_api | migration | seed
-    captured_at = Column(DateTime, nullable=False, default=datetime.utcnow)  # Verinin alındığı tarih
+    # PDSMR-R4B1: server_default'lar migration 011 ile hizalandi. DIKKAT —
+    # server_default (DB seviyesi, YALNIZ kolonu atlayan INSERT'lerde) ile
+    # Python-side default (ORM'in her INSERT'te urettigi deger) FARKLI
+    # katmanlardir; mevcut Python default'lari BILEREK KORUNDU.
+    status = Column(
+        String(20), nullable=False, default="provisional", server_default="final"
+    )  # provisional | final
+    source = Column(
+        String(30), nullable=False, default="epias_manual", server_default="migration"
+    )  # epias_manual | epias_api | migration | seed
+    # 011 bu kolonu NULLABLE olarak ekler; canonical sekil budur.
+    captured_at = Column(DateTime, nullable=True, default=datetime.utcnow)  # Verinin alındığı tarih
     
     # Meta
     source_note = Column(String(500), nullable=True)  # "EPİAŞ şeffaflık ekranı / manuel"
@@ -325,8 +411,17 @@ class MarketReferencePrice(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Unique constraint: (price_type, period)
+    # PDSMR-R4B1: canonical (011) bu benzersizligi ADLANDIRILMIS bir UNIQUE
+    # INDEX olarak uretir (origin='c'). Onceki `UniqueConstraint` tanimi
+    # SQLite'ta tablo-seviyesi bir autoindex (origin='u') uretiyordu — AYNI
+    # veri butunlugu garantisi, FARKLI fiziksel sekil. Ad ile calisan
+    # gelecekteki migration'larin bozulmamasi icin canonical sekle cevrildi.
     __table_args__ = (
-        sa.UniqueConstraint('price_type', 'period', name='uq_market_reference_prices_price_type_period'),
+        sa.Index(
+            "ix_market_reference_prices_price_type_period",
+            "price_type", "period", unique=True,
+        ),
+        sa.Index("ix_market_reference_prices_status", "status"),
     )
 
 
@@ -453,12 +548,20 @@ class Incident(Base):
     # kurulan taze bir DB dedupe benzersizligini DB seviyesinde HIC
     # zorlamiyordu. Burada canonical alembic ciktisiyla BIREBIR ayni
     # tanim bildiriliyor; yeni bir sema niyeti yaratilmiyor.
+    # PDSMR-R4B1: 006/008/009'un urettigi uc composite index de canonical
+    # sozlesmenin parcasidir ama modelde TANIMLI DEGILDI — eklendi.
     __table_args__ = (
         sa.Index(
             "ix_incidents_dedupe_unique",
             "tenant_id", "dedupe_key", "dedupe_bucket",
             unique=True,
         ),
+        sa.Index(
+            "ix_incidents_unreported_bugs",
+            "status", "action_type", "external_issue_id",
+        ),
+        sa.Index("ix_incidents_pending_recompute", "tenant_id", "status", "updated_at"),
+        sa.Index("ix_incidents_resolution_reason", "tenant_id", "resolution_reason"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
