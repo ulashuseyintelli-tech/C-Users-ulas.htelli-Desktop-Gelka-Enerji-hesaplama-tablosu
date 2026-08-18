@@ -10,8 +10,21 @@ Buradaki her sabit ya PDSMR-R1D Faz 1'de gercek production DB'den
 salt-okunur olarak OLCULMUS kanittir, ya da owner'in acikca kabul ettigi
 bir varyanttir. Hicbiri tahmin degildir.
 
+PDSMR-R4 / Faz 0 DUZELTMESI: eskiden burada bir `EXPECTED_ROW_COUNTS`
+sabiti vardi (customers=3, offers=6, ...). Faz 0, bu rakamlarin GERCEK
+canli production DB'sinden DEGIL, kullanilmayan bir oksuz kopyadan
+olculdugunu kanitladi (bkz. evidence-archive/PDSMR-R4/faz0-live-db-
+identity.json). PDSMR-R4 / Faz 3, bu yapisal hatayi kokten kapatir:
+degisken is verisi satir sayisi ARTIK bir kabul/red kriteri DEGILDIR —
+yalniz `fingerprint.py::collect_fingerprint()`'in zaten dinamik olarak
+olctugu, deterministik sirali bir KANIT'tir (bkz. validator.py
+_check_row_counts()). Adoption oncesi/sonrasi veri koruma kiyasi Faz
+4'un kapsamindadir; bu dosyada YOKTUR.
+
 Cagrildigi yerler:
-- app/legacy_adoption/validator.py [PDSMR-R1D/Faz2]
+- app/legacy_adoption/validator.py [PDSMR-R1D/Faz2 -> PDSMR-R4/Faz3]
+- app/legacy_adoption/adoption.py [PDSMR-R1D/Faz3] (yalniz ROW_COUNT_REPORT_TABLES)
+- app/legacy_adoption/startup_gate.py [PDSMR-R3] (yalniz ROW_COUNT_REPORT_TABLES)
 - tests/test_legacy_adoption_validator.py
 """
 from __future__ import annotations
@@ -20,25 +33,29 @@ from __future__ import annotations
 ALLOWED_ALEMBIC_REVISION = "013_extend_ptf_drift_severity"
 EXPECTED_TABLE_COUNT = 31
 
-# ── Kritik row-count parity (Faz 1 fingerprint) ──────────────────────────
-EXPECTED_ROW_COUNTS = {
-    "customers": 3,
-    "offers": 6,
-    "contracts": 3,
-    "activities": 7,
-    "tasks": 7,
-    "prospect_companies": 1,
-    "prospect_contacts": 0,
-    "prospect_sources": 3,
-    "incidents": 1,
-    "invoices": 0,
-    "ptf_drift_log": 0,
-    "market_reference_prices": 60,
-}
+# ── Row-count RAPORLAMA kumesi (PDSMR-R4/Faz3) ───────────────────────────
+# BU BIR KABUL/RED POLITIKASI DEGILDIR — yalniz "hangi tablolarin row-
+# count'u kanit/rapor ciktisinda ilginc" sorusuna cevaptir. Deger TASIMAZ,
+# yalniz tablo ADLARI. adoption.py/startup_gate.py'nin kendi RAPORLAMA
+# ciktilarini (AdoptionReport.row_counts / GateResult.row_counts)
+# doldururken kullandigi ayni kume; hicbir karsilastirma/esik burada YOK.
+ROW_COUNT_REPORT_TABLES = frozenset({
+    "customers", "offers", "contracts", "activities", "tasks",
+    "prospect_companies", "prospect_contacts", "prospect_sources",
+    "incidents", "invoices", "ptf_drift_log", "market_reference_prices",
+})
+
+# ── Bos-olma politikasi (PDSMR-R4/Faz3) ──────────────────────────────────
+# YALNIZ burada ACIKCA sayilan tablolar icin "row_count == 0" ZORUNLUDUR.
+# Bu, preservation kiyasi DEGILDIR (Faz 4'un konusu) — bagimsiz bir kural:
+# "bu tablo, legacy-only bir artefakttir, adoption oncesi is verisi
+# TASIMAMALIDIR". KNOWN_LEGACY_ONLY_TABLES'in TUM uyelerine OTOMATIK
+# uygulanmaz — ozellikle `alembic_version` (o da legacy-only'dir ama
+# DOGAL olarak TAM 1 satir tasir; bosluk kurali ona UYGULANMAZ).
+MUST_BE_EMPTY_LEGACY_TABLES = frozenset({"ptf_drift_log"})
 
 # ── Legacy artifact: korunur, silinmez, aktif modele alinmaz ─────────────
 REQUIRED_LEGACY_TABLE = "ptf_drift_log"
-REQUIRED_LEGACY_TABLE_ROW_COUNT = 0
 
 # ── Modelde OLMAYAN ama production'da BULUNAN tablolar ───────────────────
 # Bu listede olmayan her model-disi tablo UNKNOWN_TABLE_PRESENT -> HARD_STOP.
