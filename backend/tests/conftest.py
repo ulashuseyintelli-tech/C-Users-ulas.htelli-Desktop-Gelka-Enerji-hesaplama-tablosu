@@ -7,9 +7,29 @@ Hypothesis settings:
 
 Import path fix:
 - Production code uses two import styles: `from app.` and `from backend.app.`
-- Tests run from backend/ dir, so `from app.` works natively
 - `from backend.app.` needs the repo root on sys.path
-- We add repo root here so both styles resolve correctly
+- `from app.` needs the backend/ dir itself on sys.path
+- We add both here so both styles resolve deterministically, regardless of
+  which test file pytest happens to collect first.
+
+Why this matters (PDSMR follow-up, 2026-08-18):
+- backend/__init__.py and backend/tests/__init__.py make `backend` and
+  `backend.tests` real packages, so pytest's own "prepend" import-mode
+  rootpath walk (see _pytest.pathlib.resolve_package_path) climbs past
+  backend/ and only ever plants the repo root on sys.path[0] for test
+  modules under here — never backend/ itself.
+- Without the explicit backend/ entry below, bare `from app...` imports
+  only worked by accident: some test file alphabetically before the
+  failing ones (e.g. test_api_properties.py) happened to do its own
+  `sys.path.insert(0, ...)` of backend/ as a private workaround, which
+  incidentally primed sys.modules['app'] for every file collected after
+  it. Any file collected earlier (alphabetically) than that accident,
+  such as test_action_hints_golden.py / test_action_hints_unit.py, hit
+  `ModuleNotFoundError: No module named 'app'` during collection.
+- We append (not insert at position 0) so this can never shadow a real
+  same-named top-level package already resolvable earlier on sys.path
+  (e.g. the real `alembic` library vs. backend/alembic/, which is also
+  a package thanks to backend/alembic/__init__.py).
 """
 
 import sys
@@ -19,6 +39,14 @@ from pathlib import Path
 _repo_root = str(Path(__file__).resolve().parent.parent.parent)
 if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
+
+# Add backend/ itself to sys.path so bare `from app...` works deterministically,
+# not just when some other test file happens to have added it first.
+# Appended (never inserted at the front) so it can't shadow a real package of
+# the same name (e.g. the `alembic` library) that resolves earlier on sys.path.
+_backend_root = str(Path(__file__).resolve().parent.parent)
+if _backend_root not in sys.path:
+    sys.path.append(_backend_root)
 
 from hypothesis import settings, HealthCheck
 
