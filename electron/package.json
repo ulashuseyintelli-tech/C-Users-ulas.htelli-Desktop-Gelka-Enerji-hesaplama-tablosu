@@ -27,7 +27,9 @@
     },
     "files": [
       "main.js",
-      "preload.js"
+      "preload.js",
+      "dbRouting.js",
+      "gateRefusalParser.js"
     ],
     "extraResources": [
       {
