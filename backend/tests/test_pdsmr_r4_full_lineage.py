@@ -400,23 +400,57 @@ def test_faz2_module_never_imports_app_models_or_mutates():
             assert ad not in yasakli_cagri_adlari, f"yasakli cagri: {ad}()"
 
 
-def test_classify_full_lineage_not_wired_into_application_code():
-    """Faz 2, hicbir router/CLI/adoption/startup yolundan cagrilmamalidir
-    (bkz. lineage.py modul dokstring'i madde 8) — yalniz testler cagirir."""
+# PDSMR-R4B2 GUNCELLEMESI: `classify_full_lineage` icin IZINLI cagiran
+# kumesi. Faz 2'de bu kume BOSTU (yalniz tanimin kendisi). Faz 4B2 owner
+# GO'su, unversioned adoption akisinin FRESH DELTA KAPISI olarak bu
+# fonksiyonu CALISTIRMASINI ACIKCA sart kostu ("WORKING uzerinde
+# classify_full_lineage() calistir; onceki faz kanitini devralma").
+#
+# Kapi, adoption'in ICINDE fail-closed bir on-kosul olmak ZORUNDADIR:
+# disariya tasinsa, kapiyi atlayan bir cagri mumkun olurdu.
+#
+# Bu, blanket bir muafiyet DEGILDIR — asagidaki test izinli kumeyi TAM
+# OLARAK sabitler; yeni/yetkisiz bir cagiran eklenirse yine FAIL verir.
+# Gercek guvenlik ozelligi (router/CLI/startup yoluna baglanmama) ayrica
+# test_pdsmr_r4b2_unversioned_adoption.py::
+# test_module_is_not_wired_into_any_runtime_path ile korunur.
+_LINEAGE_TANIMI = "lineage.py"
+_IZINLI_CAGIRANLAR = frozenset({"unversioned_adoption.py"})
+
+
+def test_classify_full_lineage_callers_are_exactly_the_authorized_set():
+    """
+    Faz 2, hicbir router/CLI/startup yolundan cagrilmamalidir
+    (bkz. lineage.py modul dokstring'i madde 8).
+
+    Izinli cagiran kumesi TAM OLARAK dogrulanir: ne eksik ne fazla.
+    Bayat bir izin girdisi de FAIL uretir.
+    """
     backend = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     paket = os.path.join(backend, "app", "legacy_adoption")
+    cagiranlar = set()
     ihlaller = []
     for kok, _d, dosyalar in os.walk(os.path.join(backend, "app")):
         for dosya in dosyalar:
             if not dosya.endswith(".py"):
                 continue
             tam_yol = os.path.join(kok, dosya)
-            if os.path.commonpath([tam_yol, paket]) == paket and os.path.basename(tam_yol) == "lineage.py":
+            if dosya == _LINEAGE_TANIMI and os.path.commonpath([tam_yol, paket]) == paket:
                 continue  # tanimin kendisi haric
             with open(tam_yol, encoding="utf-8", errors="replace") as fh:
-                if "classify_full_lineage" in fh.read():
-                    ihlaller.append(os.path.relpath(tam_yol, backend))
-    assert ihlaller == [], f"classify_full_lineage uygulama koduna baglanmis: {ihlaller}"
+                if "classify_full_lineage" not in fh.read():
+                    continue
+            paket_ici = os.path.commonpath([tam_yol, paket]) == paket
+            if paket_ici and dosya in _IZINLI_CAGIRANLAR:
+                cagiranlar.add(dosya)
+            else:
+                ihlaller.append(os.path.relpath(tam_yol, backend))
+
+    assert ihlaller == [], f"classify_full_lineage YETKISIZ koda baglanmis: {ihlaller}"
+    assert cagiranlar == _IZINLI_CAGIRANLAR, (
+        f"izinli cagiran kumesi bayat: eksik={sorted(_IZINLI_CAGIRANLAR - cagiranlar)} "
+        f"fazla={sorted(cagiranlar - _IZINLI_CAGIRANLAR)}"
+    )
 
 
 # ═════════════════════════════════════════════════════════════════════
