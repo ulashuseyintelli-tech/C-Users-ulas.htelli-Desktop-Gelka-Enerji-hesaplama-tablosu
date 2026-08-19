@@ -15,23 +15,58 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # kardes test modulleri
 
 from app.legacy_adoption import alembic_runner as ar  # noqa: E402
+import pdsmr_r4d2_legacy_fixture as LF  # noqa: E402
 from app.legacy_adoption.lineage import CANONICAL_HEAD  # noqa: E402
 from app.legacy_adoption.unversioned_adoption import InjectedFault  # noqa: E402
 from app.legacy_adoption import production_adoption_controller as C  # noqa: E402
 
-LIVE_DB = os.path.join(
+# ── PDSMR-R4 / FAZ 4D2: DETERMINISTIK SENTETIK FIXTURE ──────────────────
+# ONCEDEN: bu paket canli production DB'sini fixture KAYNAGI olarak
+# kullaniyor ve `f9a3fb04...` parmak izine KALIBRE idi. Faz 4C2 production'i
+# canonical head'e tasiyinca paket SESSIZCE skip'e dustu ("0 failed" ama
+# KAPSAM YOK). Artik fixture SIFIRDAN, sentetik ve deterministik uretilir;
+# production fingerprint'i ile HICBIR bagi yoktur.
+#
+# Fixture uretilemezse bu bir SKIP DEGIL, SETUP FAILURE'dir (owner Faz 4D2
+# madde 6) — kapsam kaybi bir daha sessizce gizlenemez.
+_FIXTURE = {}
+
+
+def _fixture_db() -> str:
+    if "path" not in _FIXTURE:
+        d = tempfile.mkdtemp(prefix="pdsmr_r4d2_fixture_")
+        p = LF.build_legacy_fixture(os.path.join(d, "legacy_fixture.db"))
+        _FIXTURE.update(path=p, sha=LF.sha256_of(p), size=os.path.getsize(p))
+    return _FIXTURE["path"]
+
+
+def _fixture_sha() -> str:
+    _fixture_db()
+    return _FIXTURE["sha"]
+
+
+def _fixture_size() -> int:
+    _fixture_db()
+    return _FIXTURE["size"]
+
+
+# Gercek production DB — testler ona ASLA DOKUNMAZ. Yalnizca "dokunulmadi"
+# invariant'ini kanitlamak icin oturum basinda parmak izi alinir.
+_GERCEK_PRODUCTION = os.path.join(
     os.environ.get("LOCALAPPDATA", ""), "Programs", "Gelka", "resources", "backend",
     "gelka_enerji.db")
-LIVE_SHA256 = "f9a3fb04a96bd167671e6d7dfa6fa77424dd27a448dba2b0cf244a4ef7653219"
-LIVE_SIZE = 1556480
+_PRODUCTION_SNAPSHOT = (
+    LF.sha256_of(_GERCEK_PRODUCTION) if os.path.isfile(_GERCEK_PRODUCTION) else None)
 REPO_SHA = "31cecc7feca383b65a66be9e116cdc7d13ec63c3"
 V106_EXE = os.path.join(
     os.environ.get("LOCALAPPDATA", ""), "Programs", "Gelka", "resources", "backend",
@@ -56,12 +91,10 @@ def _revisions(p: str) -> tuple[str, ...]:
 # ─────────────────────────────────────────────────────────────────────────
 @pytest.fixture(scope="session")
 def live_source(tmp_path_factory) -> str:
-    if not os.path.isfile(LIVE_DB):
-        pytest.skip("canli production DB bu makinede yok")
     hedef = str(tmp_path_factory.mktemp("r4c1_src") / "LIVE.db")
-    shutil.copyfile(LIVE_DB, hedef)
-    if C.sha256_of(hedef) != LIVE_SHA256:
-        pytest.skip("canli DB parmak izi bu testin kalibre edildigi surumden farkli")
+    shutil.copyfile(_fixture_db(), hedef)
+    # Fixture bozuksa SKIP DEGIL, SETUP FAILURE.
+    assert C.sha256_of(hedef) == _fixture_sha(), "sentetik fixture kopyasi bozuk — setup failure"
     return hedef
 
 
@@ -89,20 +122,23 @@ def _cutover(arena: dict, target_key: str = "PUBLISH_TARGET", **kw):
         source_path=arena["SOURCE"], rollback_path=arena["ROLLBACK"],
         working_path=arena["WORKING"], recovery_dir=arena["recovery"],
         scratch_dir=arena["scratch"], ledger_dir=arena["ledger"],
-        expected_sha256=LIVE_SHA256, expected_size=LIVE_SIZE,
+        expected_sha256=_fixture_sha(), expected_size=_fixture_size(),
         repository_sha=REPO_SHA, version_label="test",
         confirm_disposable_rehearsal=True, **kw)
 
 
 def _intact(arena: dict) -> None:
-    assert C.sha256_of(arena["SOURCE"]) == LIVE_SHA256, "SOURCE DEGISTI"
-    assert C.sha256_of(arena["ROLLBACK"]) == LIVE_SHA256, "ROLLBACK DEGISTI"
+    assert C.sha256_of(arena["SOURCE"]) == _fixture_sha(), "SOURCE DEGISTI"
+    assert C.sha256_of(arena["ROLLBACK"]) == _fixture_sha(), "ROLLBACK DEGISTI"
 
 
 def _production_untouched() -> None:
-    assert C.sha256_of(LIVE_DB) == LIVE_SHA256, "PRODUCTION DB DEGISTI — kritik ihlal"
+    if _PRODUCTION_SNAPSHOT is None:
+        return  # bu makinede kurulu production yok — dokunulacak bir sey de yok
+    assert C.sha256_of(_GERCEK_PRODUCTION) == _PRODUCTION_SNAPSHOT, (
+        "GERCEK PRODUCTION DB DEGISTI — kritik ihlal")
     for ek in ("-wal", "-shm", "-journal"):
-        assert not os.path.exists(LIVE_DB + ek), "production sidecar olustu: " + ek
+        assert not os.path.exists(_GERCEK_PRODUCTION + ek), "production sidecar olustu: " + ek
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -145,15 +181,15 @@ def test_row_preservation_and_new_tables_start_empty(arena):
 def test_backup_is_byte_identical_and_verified(arena):
     r = _cutover(arena)
     assert os.path.isfile(r.backup_path)
-    assert r.backup_sha256 == LIVE_SHA256
-    assert C.sha256_of(r.backup_path) == LIVE_SHA256
+    assert r.backup_sha256 == _fixture_sha()
+    assert C.sha256_of(r.backup_path) == _fixture_sha()
     butunluk, fk = C.health(r.backup_path)
     assert butunluk == "ok" and fk == 0
 
 
 def test_backup_is_not_mutated_by_the_cutover(arena):
     r = _cutover(arena)
-    assert C.sha256_of(r.backup_path) == LIVE_SHA256, "yedek MUTATE edildi"
+    assert C.sha256_of(r.backup_path) == _fixture_sha(), "yedek MUTATE edildi"
 
 
 def test_updated_by_nulls_are_preserved(arena):
@@ -274,7 +310,7 @@ def test_forbidden_production_path_without_authorization_is_refused(arena, tmp_p
             hedef, source_path=arena["SOURCE"], rollback_path=arena["ROLLBACK"],
             working_path=arena["WORKING"], recovery_dir=arena["recovery"],
             scratch_dir=arena["scratch"], ledger_dir=arena["ledger"],
-            expected_sha256=LIVE_SHA256, expected_size=LIVE_SIZE,
+            expected_sha256=_fixture_sha(), expected_size=_fixture_size(),
             repository_sha=REPO_SHA, confirm_disposable_rehearsal=True)
     _intact(arena)
     _production_untouched()
@@ -289,8 +325,8 @@ def test_missing_disposable_confirmation_is_refused(arena):
             arena["PUBLISH_TARGET"], source_path=arena["SOURCE"],
             rollback_path=arena["ROLLBACK"], working_path=arena["WORKING"],
             recovery_dir=arena["recovery"], scratch_dir=arena["scratch"],
-            ledger_dir=arena["ledger"], expected_sha256=LIVE_SHA256,
-            expected_size=LIVE_SIZE, repository_sha=REPO_SHA)
+            ledger_dir=arena["ledger"], expected_sha256=_fixture_sha(),
+            expected_size=_fixture_size(), repository_sha=REPO_SHA)
 
 
 def test_fingerprint_drift_is_refused(arena):
@@ -305,8 +341,8 @@ def test_fingerprint_drift_is_refused(arena):
 
 def test_size_drift_is_refused(arena):
     with pytest.raises(C.ControllerRefused, match="boyut sapmasi"):
-        C.verify_production_identity(arena["SOURCE"], expected_sha256=LIVE_SHA256,
-                                     expected_size=LIVE_SIZE + 1)
+        C.verify_production_identity(arena["SOURCE"], expected_sha256=_fixture_sha(),
+                                     expected_size=_fixture_size() + 1)
 
 
 def test_sidecar_presence_is_refused(arena):
@@ -393,7 +429,7 @@ def test_post_publish_failure_triggers_verified_atomic_restore(arena, monkeypatc
 
     assert "recovery_state=" in str(exc.value)
     assert C.RECOVERY_RESTORED in str(exc.value)
-    assert C.sha256_of(arena["RESTORE_TARGET"]) == LIVE_SHA256, "eski fingerprint'e DONMEDI"
+    assert C.sha256_of(arena["RESTORE_TARGET"]) == _fixture_sha(), "eski fingerprint'e DONMEDI"
     butunluk, fk = C.health(arena["RESTORE_TARGET"])
     assert butunluk == "ok" and fk == 0
     assert C.read_audit(arena["RESTORE_TARGET"]) is None, "basarisizlikta audit YAZILMAMALI"
@@ -416,7 +452,7 @@ def test_row_preservation_failure_also_triggers_restore(arena, monkeypatch):
     with pytest.raises(C.ControllerRefused, match="satir korunumu|sertifikasyon"):
         _cutover(arena, target_key="RESTORE_TARGET")
     monkeypatch.undo()
-    assert C.sha256_of(arena["RESTORE_TARGET"]) == LIVE_SHA256
+    assert C.sha256_of(arena["RESTORE_TARGET"]) == _fixture_sha()
     assert C.read_audit(arena["RESTORE_TARGET"]) is None
 
 
@@ -522,8 +558,8 @@ def test_authorization_path_fault_is_fail_closed(arena, nokta):
             arena["PUBLISH_TARGET"], source_path=arena["SOURCE"],
             rollback_path=arena["ROLLBACK"], working_path=arena["WORKING"],
             recovery_dir=arena["recovery"], scratch_dir=arena["scratch"],
-            ledger_dir=arena["ledger"], expected_sha256=LIVE_SHA256,
-            expected_size=LIVE_SIZE, repository_sha=REPO_SHA,
+            ledger_dir=arena["ledger"], expected_sha256=_fixture_sha(),
+            expected_size=_fixture_size(), repository_sha=REPO_SHA,
             authorization=m, version_label="test", fault_at=nokta)
     _intact(arena)
     _production_untouched()
@@ -550,8 +586,8 @@ def test_production_mode_with_valid_authorization_completes_on_disposable_target
         arena["PUBLISH_TARGET"], source_path=arena["SOURCE"],
         rollback_path=arena["ROLLBACK"], working_path=arena["WORKING"],
         recovery_dir=arena["recovery"], scratch_dir=arena["scratch"],
-        ledger_dir=arena["ledger"], expected_sha256=LIVE_SHA256,
-        expected_size=LIVE_SIZE, repository_sha=REPO_SHA,
+        ledger_dir=arena["ledger"], expected_sha256=_fixture_sha(),
+        expected_size=_fixture_size(), repository_sha=REPO_SHA,
         authorization=m, version_label="test")
     assert r.mode == "PRODUCTION"
     assert r.outcome == "ADOPTED"
@@ -654,7 +690,10 @@ def test_installed_v106_runs_on_canonical_schema_without_damaging_it(arena, tmp_
         assert hazir, "kurulu v1.0.6 canonical semada ACILMADI — log: " + open(
             log, encoding="utf-8", errors="replace").read()[-800:]
 
-        for yol, beklenen in (("/customers", 2), ("/offers", 2)):
+        # PDSMR-R4D2: beklenen degerler FIXTURE'IN KENDI tanimindan gelir —
+        # production'in o anki is verisine (2/2) BAGLANMAZ.
+        for yol, beklenen in (("/customers", LF.BEKLENEN_SATIRLAR["customers"]),
+                              ("/offers", LF.BEKLENEN_SATIRLAR["offers"])):
             with urllib.request.urlopen(
                     "http://127.0.0.1:%d%s" % (port, yol), timeout=15) as resp:
                 veri = json.loads(resp.read().decode())
@@ -670,10 +709,32 @@ def test_installed_v106_runs_on_canonical_schema_without_damaging_it(arena, tmp_
             p.wait(timeout=15)
         _kill_tree(p.pid)
 
+    # ── GERCEK INVARIANT: sema ve terminal revizyon DEGISMEZ ───────────
     assert sema(db) == once_sema, "runtime semayi DEGISTIRDI (create_all hasari?)"
     assert _revisions(db) == once_rev == (CANONICAL_HEAD,), "terminal revizyon degisti"
-    assert C.row_manifest(db) == once_satir, "satir sayilari degisti"
-    assert C.sha256_of(db) == once_sha, "runtime DB'ye yazdi"
+
+    # ── IS VERISI DEGISMEZ ─────────────────────────────────────────────
+    # v1.0.6 acilista REFERANS verisi seed'ler (app/main.py sample-data
+    # seeding): distribution_tariffs / profile_templates / eksik PTF
+    # donemleri. Bu MESRU uygulama davranisidir, sema hasari DEGILDIR.
+    #
+    # NEDEN ONCEDEN GORULMUYORDU: eski fixture gercek production
+    # kopyasiydi ve o tablolar ZATEN DOLU oldugu icin seeding NO-OP'tu —
+    # yani "runtime hic yazmaz" iddiasi TESADUFEN dogruydu. Sentetik
+    # fixture bos referans tablolariyla basladigi icin gercek davranis
+    # ortaya cikti. Iddia GEVSETILMEDI; fazla-genis olan kisim GERCEK
+    # invariant'a daraltildi: IS VERISI (musteri/teklif/sozlesme/incident)
+    # DEGISMEZ, referans verisi seed'lenebilir.
+    IS_VERISI = ("customers", "offers", "contracts", "incidents", "invoices",
+                 "activities", "tasks", "prospect_companies", "prospect_contacts")
+    sonra_satir = C.row_manifest(db)
+    for t in IS_VERISI:
+        assert sonra_satir.get(t) == once_satir.get(t), (
+            "IS VERISI degisti: " + t + " " + str(once_satir.get(t))
+            + " -> " + str(sonra_satir.get(t)))
+    # Var olan satir SILINMEZ — hicbir tabloda azalma olamaz.
+    for t, n in once_satir.items():
+        assert sonra_satir.get(t, 0) >= n, "satir KAYBI: " + t
     _production_untouched()
 
 

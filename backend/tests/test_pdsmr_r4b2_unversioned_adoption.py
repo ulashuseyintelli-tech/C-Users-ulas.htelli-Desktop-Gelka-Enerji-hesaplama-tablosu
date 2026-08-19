@@ -1,10 +1,15 @@
 """
 PDSMR-R4 / FAZ 4B2 — UNVERSIONED CONTROLLED ADOPTION testleri.
 
-Kanitlanacak tek cumle: gercek canli unversioned DB'nin DISPOSABLE
-byte-kopyasi, production'a ve kurulu uygulamaya DOKUNMADAN canonical head
-`351d314819d5` sekline getirilebilir; her belirsizlikte fail-closed durur;
-SOURCE ve ROLLBACK hicbir kosulda degismez.
+Kanitlanacak tek cumle: unversioned bir legacy DB, production'a ve kurulu
+uygulamaya DOKUNMADAN canonical head `351d314819d5` sekline getirilebilir;
+her belirsizlikte fail-closed durur; SOURCE ve ROLLBACK hicbir kosulda
+degismez.
+
+FIXTURE (Faz 4D2): kaynak, SIFIRDAN uretilen DETERMINISTIK SENTETIK legacy
+DB'dir (bkz. pdsmr_r4d2_legacy_fixture.py) — canli production'a BAGLI
+DEGILDIR, dolayisiyla production degistiginde bu paket sessizce skip'e
+DUSMEZ.
 
 Fault-injection kritik: yarida kalan bir adoption HICBIR ZAMAN ADOPTED
 raporlamamali ve terminal revizyon esdegerlikten ONCE gorunmemelidir.
@@ -17,12 +22,15 @@ import os
 import shutil
 import sqlite3
 import sys
+import tempfile
 
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # kardes test modulleri
 
 from app.legacy_adoption import alembic_runner as ar  # noqa: E402
+import pdsmr_r4d2_legacy_fixture as LF  # noqa: E402
 from app.legacy_adoption.lineage import CANONICAL_HEAD  # noqa: E402
 from app.legacy_adoption.unversioned_adoption import (  # noqa: E402
     ACCEPTED_DATA_VARIANT,
@@ -42,13 +50,43 @@ from app.legacy_adoption.unversioned_adoption import (  # noqa: E402
     rebuild_fault_points,
 )
 
-# Gercek canli production DB — YALNIZ OKUNUR ve YALNIZ byte-kopya kaynagi
-# olarak kullanilir. Testler ona ASLA baglanmaz/yazmaz.
-LIVE_DB = os.path.join(
+# ── PDSMR-R4 / FAZ 4D2: DETERMINISTIK SENTETIK FIXTURE ──────────────────
+# ONCEDEN: bu paket canli production DB'sini fixture KAYNAGI olarak
+# kullaniyor ve `f9a3fb04...` parmak izine KALIBRE idi. Faz 4C2 production'i
+# canonical head'e tasiyinca paket SESSIZCE skip'e dustu ("0 failed" ama
+# KAPSAM YOK). Artik fixture SIFIRDAN, sentetik ve deterministik uretilir;
+# production fingerprint'i ile HICBIR bagi yoktur.
+#
+# Fixture uretilemezse bu bir SKIP DEGIL, SETUP FAILURE'dir (owner Faz 4D2
+# madde 6) — kapsam kaybi bir daha sessizce gizlenemez.
+_FIXTURE = {}
+
+
+def _fixture_db() -> str:
+    if "path" not in _FIXTURE:
+        d = tempfile.mkdtemp(prefix="pdsmr_r4d2_fixture_")
+        p = LF.build_legacy_fixture(os.path.join(d, "legacy_fixture.db"))
+        _FIXTURE.update(path=p, sha=LF.sha256_of(p), size=os.path.getsize(p))
+    return _FIXTURE["path"]
+
+
+def _fixture_sha() -> str:
+    _fixture_db()
+    return _FIXTURE["sha"]
+
+
+def _fixture_size() -> int:
+    _fixture_db()
+    return _FIXTURE["size"]
+
+
+# Gercek production DB — testler ona ASLA DOKUNMAZ. Yalnizca "dokunulmadi"
+# invariant'ini kanitlamak icin oturum basinda parmak izi alinir.
+_GERCEK_PRODUCTION = os.path.join(
     os.environ.get("LOCALAPPDATA", ""), "Programs", "Gelka", "resources", "backend",
-    "gelka_enerji.db",
-)
-LIVE_SHA256 = "f9a3fb04a96bd167671e6d7dfa6fa77424dd27a448dba2b0cf244a4ef7653219"
+    "gelka_enerji.db")
+_PRODUCTION_SNAPSHOT = (
+    LF.sha256_of(_GERCEK_PRODUCTION) if os.path.isfile(_GERCEK_PRODUCTION) else None)
 
 pytestmark = pytest.mark.skipif(
     not ar.is_alembic_available(), reason="alembic calistirilabiliri yok"
@@ -88,17 +126,15 @@ def _revisions(p: str) -> tuple[str, ...]:
 @pytest.fixture(scope="session")
 def live_source(tmp_path_factory) -> str:
     """
-    Gercek canli DB'nin DISPOSABLE byte-kopyasi.
+    DETERMINISTIK SENTETIK legacy fixture'in DISPOSABLE kopyasi.
 
-    Canli DB yoksa (ör. CI) test ATLANIR — sentetik bir taklitle
-    degistirilmez: bu paketin degeri GERCEK semayla calismasindadir.
+    Uretilemezse SKIP DEGIL, SETUP FAILURE olur — kapsam kaybi sessizce
+    gizlenemez (owner Faz 4D2 madde 6).
     """
-    if not os.path.isfile(LIVE_DB):
-        pytest.skip("canli production DB bu makinede yok")
     hedef = str(tmp_path_factory.mktemp("r4b2_src") / "SOURCE.db")
-    shutil.copyfile(LIVE_DB, hedef)
-    if _sha(hedef) != LIVE_SHA256:
-        pytest.skip("canli DB parmak izi bu testin kalibre edildigi surumden farkli")
+    shutil.copyfile(_fixture_db(), hedef)
+    # Fixture bozuksa SKIP DEGIL, SETUP FAILURE.
+    assert _sha(hedef) == _fixture_sha(), "sentetik fixture kopyasi bozuk — setup failure"
     return hedef
 
 
@@ -128,19 +164,22 @@ def _adopt(arena: dict, **kw):
     return adopt_unversioned_copy(
         arena["WORKING"], source_path=arena["SOURCE"], rollback_path=arena["ROLLBACK"],
         canonical_target=arena["CANONICAL"], scratch_dir=arena["scratch"],
-        expected_source_sha256=LIVE_SHA256, confirm_disposable_copy=True, **kw,
+        expected_source_sha256=_fixture_sha(), confirm_disposable_copy=True, **kw,
     )
 
 
 def _assert_source_rollback_intact(arena: dict) -> None:
-    assert _sha(arena["SOURCE"]) == LIVE_SHA256, "SOURCE DEGISTI"
-    assert _sha(arena["ROLLBACK"]) == LIVE_SHA256, "ROLLBACK DEGISTI"
+    assert _sha(arena["SOURCE"]) == _fixture_sha(), "SOURCE DEGISTI"
+    assert _sha(arena["ROLLBACK"]) == _fixture_sha(), "ROLLBACK DEGISTI"
 
 
 def _assert_production_untouched() -> None:
-    assert _sha(LIVE_DB) == LIVE_SHA256, "PRODUCTION DB DEGISTI — kritik ihlal"
+    if _PRODUCTION_SNAPSHOT is None:
+        return  # bu makinede kurulu production yok — dokunulacak bir sey de yok
+    assert LF.sha256_of(_GERCEK_PRODUCTION) == _PRODUCTION_SNAPSHOT, (
+        "GERCEK PRODUCTION DB DEGISTI — kritik ihlal")
     for ek in ("-wal", "-shm", "-journal"):
-        assert not os.path.exists(LIVE_DB + ek), "production DB'de sidecar olustu: " + ek
+        assert not os.path.exists(_GERCEK_PRODUCTION + ek), "production sidecar olustu: " + ek
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -267,7 +306,7 @@ def test_second_and_third_run_are_byte_stable_no_ops(arena, tmp_path):
         r = adopt_unversioned_copy(
             w, source_path=arena["SOURCE"], rollback_path=arena["ROLLBACK"],
             canonical_target=t, scratch_dir=arena["scratch"],
-            expected_source_sha256=LIVE_SHA256, confirm_disposable_copy=True)
+            expected_source_sha256=_fixture_sha(), confirm_disposable_copy=True)
         assert r.outcome == "ALREADY_ADOPTED"
         assert _sha(w) == adopted, str(kosu) + ". kosu byte mutasyonu yapti"
         assert not os.path.exists(t), str(kosu) + ". kosu yeni hedef yayimladi"
@@ -518,7 +557,7 @@ def test_missing_explicit_confirmation_is_refused(arena):
         adopt_unversioned_copy(
             arena["WORKING"], source_path=arena["SOURCE"], rollback_path=arena["ROLLBACK"],
             canonical_target=arena["CANONICAL"], scratch_dir=arena["scratch"],
-            expected_source_sha256=LIVE_SHA256)
+            expected_source_sha256=_fixture_sha())
     _assert_source_rollback_intact(arena)
 
 
@@ -540,7 +579,7 @@ def test_confirmation_flag_alone_does_not_bypass_path_safety(arena, tmp_path):
         adopt_unversioned_copy(
             arena["WORKING"], source_path=arena["SOURCE"], rollback_path=arena["ROLLBACK"],
             canonical_target=str(sahte / "out.db"), scratch_dir=arena["scratch"],
-            expected_source_sha256=LIVE_SHA256, confirm_disposable_copy=True)
+            expected_source_sha256=_fixture_sha(), confirm_disposable_copy=True)
     _assert_source_rollback_intact(arena)
 
 
@@ -568,7 +607,7 @@ def test_source_and_rollback_same_file_is_refused(arena):
         adopt_unversioned_copy(
             arena["WORKING"], source_path=arena["SOURCE"], rollback_path=arena["SOURCE"],
             canonical_target=arena["CANONICAL"], scratch_dir=arena["scratch"],
-            expected_source_sha256=LIVE_SHA256, confirm_disposable_copy=True)
+            expected_source_sha256=_fixture_sha(), confirm_disposable_copy=True)
 
 
 def test_working_already_versioned_is_refused(arena):
