@@ -237,13 +237,20 @@ export async function createOffer(
     vat_rate?: number;
     btv_rate?: number;
   },
-  customerId?: number,
-  // S5-R01: R2 gross-misread guard girdileri. Persist edilmiş teklif PDF
-  // akışı artık `/generate-pdf-simple` çağırmadığı için (owner Bölüm 1.1)
-  // sapma kapısı PERSIST anına taşındı; sapmalı teklif hiç KAYDEDİLMEZ.
-  // `customer_id` ile aynı desen: query param (backend `OfferParams` şeması
-  // kapsam dışı olduğu için gövdeye eklenmedi).
-  guard?: { invoice_total_raw?: number; operator_confirmed_warnings?: boolean }
+  // `guard` ZORUNLU olduğu için bu parametre `?:` yerine açık
+  // `| undefined` ile yazıldı (TS1016: zorunlu parametre opsiyonelden
+  // sonra gelemez). Çağıranlar `undefined` geçmeye devam edebilir.
+  customerId: number | undefined,
+  // S5-R01A: R2 gross-misread guard girdileri.
+  //
+  // `invoice_total_raw` ZORUNLUDUR ve faturadaki GERÇEK brüt toplamdır
+  // (KDV dahil). Opsiyonel değildir ve `0` sentinel'i YOKTUR — R01'de
+  // opsiyoneldi, `0`a çöküyordu ve sunucudaki sapma kapısını sessizce
+  // atlatıyordu. Sunucu da bu değeri zorunlu kılar (fail-closed).
+  //
+  // `computed_total` / `current_total` / teklif toplamı buraya ASLA
+  // konulmaz — guard'ı anlamsız kılar.
+  guard: { invoice_total_raw: number; operator_confirmed_warnings?: boolean }
 ): Promise<CreateOfferResponse> {
   try {
     const response = await api.post(
@@ -252,10 +259,9 @@ export async function createOffer(
       {
         params: {
           ...(customerId ? { customer_id: customerId } : {}),
-          ...(guard?.invoice_total_raw !== undefined
-            ? { invoice_total_raw: guard.invoice_total_raw }
-            : {}),
-          ...(guard?.operator_confirmed_warnings
+          // HER ZAMAN gönderilir; sunucu eksik/0/negatif/NaN değeri reddeder.
+          invoice_total_raw: guard.invoice_total_raw,
+          ...(guard.operator_confirmed_warnings
             ? { operator_confirmed_warnings: true }
             : {}),
         },
@@ -268,6 +274,11 @@ export async function createOffer(
     const govde = err?.response?.data;
     if (govde?.error?.code === 'extraction_mismatch') {
       throw new PdfMismatchError(govde.error as PdfMismatchContract);
+    }
+    // S5-R01A: ham toplam sözleşme ihlalleri okunabilir mesajla yüzeye çıkar.
+    if (govde?.error?.code === 'invalid_invoice_total_raw'
+        || govde?.error?.code === 'invoice_total_raw_conflict') {
+      throw new Error(govde.error.message || 'Faturadaki gerçek toplam geçersiz.');
     }
     throw err;
   }
