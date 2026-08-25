@@ -7,7 +7,8 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional, List
+from decimal import Decimal, InvalidOperation
+from typing import NamedTuple, Optional, List
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Query, Header, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response, JSONResponse
@@ -1694,52 +1695,139 @@ async def delete_customer(customer_id: int, db: Session = Depends(get_db)):
 # Offer Archive Endpoints
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════════════════════════════
+# S5-R01A — R2 GROSS-MISREAD GUARD (fail-closed)
+#
+# R01'de bu kapi `invoice_total_raw` icin POZITIFLIK kontrolu kullaniyordu
+# (`if ... and invoice_total_raw > 0`). Sonuc: eksik/sifir ham toplam sapmayi
+# SESSIZCE atliyor ve sapmali teklif persist ediliyordu. UAT agi izinde
+# `POST /offers?...invoice_total_raw=0 -> 200` olarak yakalandi.
+#
+# Artik: ham toplam ZORUNLU, sayisal, sonlu ve > 0. Truthiness YOK.
+# Karsilastirma binary float degil KESIN ONDALIK (Decimal) ile yapilir —
+# esik civarinda (%10 / %40) float yuvarlamasi bant kaymasina yol acmasin.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# AI snapshot ile client'in gonderdigi ham toplam arasinda kabul edilen
+# para yuvarlamasi. Bunun uzeri CELISKI sayilir ve fail-closed reddedilir.
+PARA_TOLERANSI = Decimal("0.05")
+
+
+class HamToplamGecersiz(Exception):
+    """`invoice_total_raw` sozlesmeyi saglamiyor. `sebep` makine-okunur."""
+
+    def __init__(self, sebep: str):
+        super().__init__(sebep)
+        self.sebep = sebep
+
+
+def parse_invoice_total_raw(ham) -> Decimal:
+    """
+    Ham fatura toplamini (KDV dahil brut) KESIN ONDALIK olarak dogrular.
+
+    REDDEDILENLER: missing, null, empty string, 0, negatif, NaN, +Infinity,
+    -Infinity, sayisal olmayan. Truthiness kontrolu KULLANILMAZ — `0` gecerli
+    bir sayidir fakat gecerli bir fatura toplami DEGILDIR.
+
+    Cagrildigi yerler:
+    - main.create_offer() -> POST /offers (persist kapisi)
+    """
+    if ham is None:
+        raise HamToplamGecersiz("missing")
+    metin = str(ham).strip()
+    if metin == "":
+        raise HamToplamGecersiz("empty")
+    if metin.lower() in {"null", "none", "undefined"}:
+        raise HamToplamGecersiz("null")
+    try:
+        deger = Decimal(metin)
+    except (InvalidOperation, ValueError):
+        raise HamToplamGecersiz("non_numeric")
+    if not deger.is_finite():  # NaN / +Infinity / -Infinity
+        raise HamToplamGecersiz("not_finite")
+    if deger <= 0:
+        raise HamToplamGecersiz("non_positive")
+    return deger
+
+
+def invoice_total_raw_error(sebep: str) -> dict:
+    """Gecersiz ham toplam icin deterministik hata sozlesmesi (PII icermez)."""
+    return {
+        "error": {
+            "code": "invalid_invoice_total_raw",
+            "reason": sebep,
+            "message": (
+                "Faturadaki gercek toplam (KDV dahil) zorunludur, sayisal ve "
+                "sifirdan buyuk olmalidir."
+            ),
+        }
+    }
+
+
+class MismatchSonucu(NamedTuple):
+    """Bant degerlendirmesinin sonucu."""
+    reddet: Optional[dict]          # None ise gecti
+    delta_percent: Optional[Decimal]
+    band: str                       # no_data | pass | confirmable | blocking
+
+
+def _ondalik(deger) -> Decimal:
+    """float/int/str -> Decimal. Binary float artefaktini `str` uzerinden keser."""
+    return Decimal(str(deger))
+
+
 def extraction_mismatch_contract(
     consumption_kwh: float,
     current_unit_price: float,
     current_energy_tl: float,
     current_vat_matrah_tl: float,
     current_vat_tl: float,
-    invoice_total_raw: float,
+    invoice_total_raw: Optional[Decimal],
     operator_confirmed_warnings: bool,
-) -> Optional[dict]:
+) -> MismatchSonucu:
     """
-    R2 gross-misread guard — sapma varsa hata sözleşmesini, yoksa None döner.
+    R2 gross-misread guard — TEK server-side helper.
 
-    Bantlar: >%40 hard block (onay olsa bile), %10-40 operatör onayı gerekir,
-    <%10 veya veri yok → geç (crash yok).
+        computed_total = current_vat_matrah_tl + current_vat_tl
+        delta_percent  = abs(computed_total - invoice_total_raw)
+                         / invoice_total_raw * 100
 
-    S5-R01 NOTU — BİLİNÇLİ İKİZ UYGULAMA:
-    Bu kural `/generate-pdf-simple` içinde de satır içi duruyor. O endpoint
-    owner tarafından DONDURULDU ("dokunulmayacaklar"), bu yüzden ortak
-    yardımcıya çekilemedi. İki kopyanın ayrışmaması
-    `test_s5_r01_offer_pdf.py::TestMismatchGuardParitesi` ile pinlenir.
+    Bantlar:
+        delta < %10        -> PASS
+        %10 <= delta <= %40 -> acik operator onayi olmadan RET
+        delta > %40        -> onay olsa bile MUTLAK RET
 
-    Neden buraya taşındı: persist edilmiş teklif PDF akışı artık
-    `/generate-pdf-simple` çağırmıyor (owner Bölüm 1.1). Guard yalnız orada
-    olsaydı sessizce DÜŞERDİ. Artık kapı PERSIST anında çalışır — sapmalı
-    teklif hiç kaydedilmez (öncekinden daha güvenli: eskiden teklif kaydediliyor,
-    yalnız PDF bloke oluyordu). PDF üretimi ise hâlâ %100 snapshot-bound'dur;
-    bu değerler PDF endpoint'ine ASLA gitmez.
+    `invoice_total_raw=None` YALNIZ `/generate-pdf-simple`in geriye donuk
+    uyumlulugu icindir (eski client'lar bu alani gondermeyebilir); o durumda
+    toplam bandi atlanir. `POST /offers` bu helper'a ASLA None gecirmez —
+    orada ham toplam parse_invoice_total_raw() ile zorunlu kilinir.
 
-    Çağrıldığı yerler:
-    - main.create_offer() → POST /offers (persist kapısı)
+    Cagrildigi yerler:
+    - main.create_offer() -> POST /offers (persist kapisi)
+    - main.generate_pdf_simple() -> POST /generate-pdf-simple (geriye donuk)
     """
     from .config import THRESHOLDS as _TH
-    _crit, _warn = _TH.Validation.CRITICAL_DELTA, _TH.Validation.WARNING_DELTA
+    _crit, _warn = _ondalik(_TH.Validation.CRITICAL_DELTA), _ondalik(_TH.Validation.WARNING_DELTA)
 
-    def _pct_delta(a, b):
-        if b is None or b <= 0:
+    def _pct_delta(a: Decimal, b: Decimal) -> Optional[Decimal]:
+        if b <= 0:
             return None
-        return abs(a - b) / b * 100.0
+        return abs(a - b) / b * Decimal(100)
 
     _blocking, _confirmable = [], []
+
+    # cross-check: tuketim x birim fiyat vs enerji bedeli
     _d_cross = None
     if consumption_kwh > 0 and current_unit_price > 0 and current_energy_tl > 0:
-        _d_cross = _pct_delta(consumption_kwh * current_unit_price, current_energy_tl)
-    _computed_total = current_vat_matrah_tl + current_vat_tl
+        _d_cross = _pct_delta(
+            _ondalik(consumption_kwh) * _ondalik(current_unit_price),
+            _ondalik(current_energy_tl),
+        )
+
+    # ASIL kapi: hesaplanan toplam vs HAM fatura toplami
+    _computed_total = _ondalik(current_vat_matrah_tl) + _ondalik(current_vat_tl)
     _d_total = None
-    if _computed_total > 0 and invoice_total_raw > 0:
+    if invoice_total_raw is not None and _computed_total > 0:
         _d_total = _pct_delta(_computed_total, invoice_total_raw)
 
     for _kind, _field, _d in (("cross", "energy_total", _d_cross),
@@ -1747,29 +1835,44 @@ def extraction_mismatch_contract(
         if _d is None:
             continue
         if _d > _crit:
-            _blocking.append({"field": _field, "delta_pct": round(_d, 1), "kind": _kind})
+            _blocking.append({"field": _field, "delta_pct": float(round(_d, 1)), "kind": _kind})
         elif _d >= _warn:
-            _confirmable.append({"field": _field, "delta_pct": round(_d, 1), "kind": _kind})
+            _confirmable.append({"field": _field, "delta_pct": float(round(_d, 1)), "kind": _kind})
 
     if _blocking:
-        return {"error": {
-            "code": "extraction_mismatch",
-            "blocking_errors": _blocking,
-            "confirmable_warnings": _confirmable,
-            "requires_operator_confirmation": False,
-            "message": "Tüketim/birim fiyat ile fatura toplamı arasında büyük sapma (>%40). "
-                       "Hatalı okuma/ondalık kayması olabilir; değerleri kontrol edin.",
-        }}
+        return MismatchSonucu(
+            reddet={"error": {
+                "code": "extraction_mismatch",
+                "blocking_errors": _blocking,
+                "confirmable_warnings": _confirmable,
+                "requires_operator_confirmation": False,
+                "message": "Tuketim/birim fiyat ile fatura toplami arasinda buyuk sapma (>%40). "
+                           "Hatali okuma/ondalik kaymasi olabilir; degerleri kontrol edin.",
+            }},
+            delta_percent=_d_total,
+            band="blocking",
+        )
     if _confirmable and not operator_confirmed_warnings:
-        return {"error": {
-            "code": "extraction_mismatch",
-            "blocking_errors": [],
-            "confirmable_warnings": _confirmable,
-            "requires_operator_confirmation": True,
-            "message": "Hesaplanan toplam ile fatura toplamı arasında fark var. "
-                       "Devam etmek için rakamları kontrol edip onaylayın.",
-        }}
-    return None
+        return MismatchSonucu(
+            reddet={"error": {
+                "code": "extraction_mismatch",
+                "blocking_errors": [],
+                "confirmable_warnings": _confirmable,
+                "requires_operator_confirmation": True,
+                "message": "Hesaplanan toplam ile fatura toplami arasinda fark var. "
+                           "Devam etmek icin rakamlari kontrol edip onaylayin.",
+            }},
+            delta_percent=_d_total,
+            band="confirmable",
+        )
+
+    if _d_total is None:
+        return MismatchSonucu(reddet=None, delta_percent=None, band="no_data")
+    return MismatchSonucu(
+        reddet=None,
+        delta_percent=_d_total,
+        band="confirmable" if _confirmable else "pass",
+    )
 
 
 @app.post("/offers", response_model=dict)
@@ -1778,28 +1881,86 @@ async def create_offer(
     calculation: CalculationResult,
     params: OfferParams,
     customer_id: Optional[int] = None,
-    # S5-R01: R2 guard girdileri. `customer_id` ile AYNI desen (query param) —
+    # S5-R01A: R2 guard girdileri. `customer_id` ile AYNI desen (query param) —
     # `OfferParams` (models.py) kapsam dışı olduğu için şemaya dokunulmadı.
-    # Varsayılanlar geriye dönük uyumludur: göndermeyene kapı uygulanmaz.
-    invoice_total_raw: float = 0,
+    #
+    # `str` olarak alınır (float DEĞİL): FastAPI float dönüşümü "NaN"/"Infinity"
+    # gibi değerleri sessizce kabul edebilir ve eksik/boş ayrımını kaybettirir.
+    # Ham metin alınıp parse_invoice_total_raw() ile AÇIKÇA doğrulanır.
+    invoice_total_raw: Optional[str] = None,
     operator_confirmed_warnings: bool = False,
     db: Session = Depends(get_db)
 ):
     """Teklifi kaydet ve arşivle"""
-    # ── R2 gross-misread guard: SAPMALI TEKLİF HİÇ KAYDEDİLMEZ ──
-    # Persist edilmiş teklif PDF akışı artık `/generate-pdf-simple`
-    # çağırmadığı için kapı buraya taşındı (bkz. extraction_mismatch_contract).
-    _mismatch = extraction_mismatch_contract(
+    # ═══ R2 gross-misread guard — FAIL-CLOSED, persist'ten ÖNCE ═══════════
+    # `db.add`/`flush`/`commit`/audit/PDF'den ÖNCE çalışır; rette hiçbir yan
+    # etki oluşmaz. R01'de burada pozitiflik kontrolü vardı ve `raw=0` /
+    # eksik değer kapıyı SESSİZCE atlıyordu (S5-R01A kök nedeni).
+
+    # 1) AI modu: server-authoritative kaynak extraction snapshot'ıdır.
+    _snapshot_ham: Optional[Decimal] = None
+    _fv = getattr(extraction, "invoice_total_with_vat_tl", None)
+    if _fv is not None and getattr(_fv, "value", None) is not None:
+        try:
+            _aday = Decimal(str(_fv.value))
+            if _aday.is_finite() and _aday > 0:
+                _snapshot_ham = _aday
+        except (InvalidOperation, ValueError):
+            _snapshot_ham = None
+
+    # 2) Client'ın gönderdiği değer (varsa) açıkça doğrulanır.
+    _client_ham: Optional[Decimal] = None
+    if invoice_total_raw is not None:
+        try:
+            _client_ham = parse_invoice_total_raw(invoice_total_raw)
+        except HamToplamGecersiz as _e:
+            return JSONResponse(status_code=422, content=invoice_total_raw_error(_e.sebep))
+
+    # 3) Otorite seçimi. Client, snapshot'tan FARKLI bir ham toplam göndererek
+    #    guard'ı düşüremez — çelişki fail-closed reddedilir.
+    if _snapshot_ham is not None:
+        if _client_ham is not None and abs(_client_ham - _snapshot_ham) > PARA_TOLERANSI:
+            return JSONResponse(status_code=422, content={"error": {
+                "code": "invoice_total_raw_conflict",
+                "message": ("Gönderilen fatura toplamı, faturadan çıkarılan brüt "
+                            "toplamla uyuşmuyor."),
+            }})
+        _ham, _kaynak = _snapshot_ham, "extraction"
+    else:
+        # Manuel mod: operatörün girdiği gerçek brüt toplam ZORUNLU.
+        # `computed_total` / `current_total` / teklif toplamı ile OTOMATİK
+        # DOLDURULMAZ — bu, guard'ı anlamsız kılardı.
+        if _client_ham is None:
+            return JSONResponse(status_code=422, content=invoice_total_raw_error("missing"))
+        _ham, _kaynak = _client_ham, "operator"
+
+    # 4) Bant değerlendirmesi (tek paylaşılan helper).
+    _sonuc = extraction_mismatch_contract(
         consumption_kwh=extraction.consumption_kwh.value or 0,
         current_unit_price=extraction.current_active_unit_price_tl_per_kwh.value or 0,
         current_energy_tl=calculation.current_energy_tl,
         current_vat_matrah_tl=calculation.current_vat_matrah_tl,
         current_vat_tl=calculation.current_vat_tl,
-        invoice_total_raw=invoice_total_raw,
+        invoice_total_raw=_ham,
         operator_confirmed_warnings=operator_confirmed_warnings,
     )
-    if _mismatch is not None:
-        return JSONResponse(status_code=422, content=_mismatch)
+    if _sonuc.reddet is not None:
+        return JSONResponse(status_code=422, content=_sonuc.reddet)
+
+    # 5) Geçerli ham toplam + onay provenance'ı IMMUTABLE snapshot'a yazılır.
+    #    `operator_confirmed_warnings` YALNIZ %10-40 bandında anlamlıdır;
+    #    başka sapma/teklif için yeniden kullanılabilir bir yetki DEĞİLDİR.
+    _snapshot_json = extraction.model_dump()
+    _snapshot_json["_r2_guard"] = {
+        "invoice_total_raw": str(_ham),
+        "source": _kaynak,
+        "delta_percent": (str(_sonuc.delta_percent.quantize(Decimal("0.001")))
+                          if _sonuc.delta_percent is not None else None),
+        "band": _sonuc.band,
+        "operator_confirmed_warnings": (
+            bool(operator_confirmed_warnings) if _sonuc.band == "confirmable" else False
+        ),
+    }
 
     offer = Offer(
         customer_id=customer_id,
@@ -1818,7 +1979,7 @@ async def create_offer(
         savings_amount=calculation.difference_incl_vat_tl,
         savings_ratio=calculation.savings_ratio,
         calculation_result=calculation.model_dump(),
-        extraction_result=extraction.model_dump(),
+        extraction_result=_snapshot_json,
         status="draft"
     )
     
@@ -2514,59 +2675,32 @@ async def generate_pdf_simple(
         )
 
     # ── R2 Katman 2: gross-misread guard (extraction mismatch) ──
-    # Bağımsız re-derive: ASIL kapı = hesaplanan toplam (matrah+kdv) vs HAM toplam (invoice_total_raw).
-    # cross-check (consumption×unit_price vs current_energy_tl) kural gereği tutulur ama frontend'de
-    # current_energy_tl türetildiği için pratikte ≈0 çıkar (testle belgelendi).
-    # Bantlar: >%40 hard block (onay olsa bile), %10-40 onay gerekir, <%10 / veri yok → geç (crash yok).
-    from .config import THRESHOLDS as _TH
-    _crit, _warn = _TH.Validation.CRITICAL_DELTA, _TH.Validation.WARNING_DELTA
+    # S5-R01A: bu blok ONCEDEN satir ici kopyaydi; artik POST /offers ile AYNI
+    # helper kullanilir (mantik iki endpoint arasinda KOPYALANMAZ).
+    #
+    # Geriye donuk uyumluluk: bu endpoint eski client'lar tarafindan da
+    # cagrilir ve `invoice_total_raw` gondermeyebilir. O durumda toplam bandi
+    # ATLANIR (onceki davranisla ayni). Persist eden `POST /offers` ise ham
+    # toplami ZORUNLU kilar — sifir/eksik bypass orada kapatildi.
+    _ham_simple: Optional[Decimal] = None
+    try:
+        _aday_simple = Decimal(str(invoice_total_raw))
+        if _aday_simple.is_finite() and _aday_simple > 0:
+            _ham_simple = _aday_simple
+    except (InvalidOperation, ValueError):
+        _ham_simple = None
 
-    def _pct_delta(a, b):
-        if b is None or b <= 0:
-            return None
-        return abs(a - b) / b * 100.0
-
-    _blocking, _confirmable = [], []
-    # Eksik girdi → kıyas atlanır (validator _check_energy_crosscheck semantiği ile uyumlu).
-    _d_cross = None
-    if consumption_kwh > 0 and current_unit_price > 0 and current_energy_tl > 0:
-        _d_cross = _pct_delta(consumption_kwh * current_unit_price, current_energy_tl)
-    _computed_total = current_vat_matrah_tl + current_vat_tl
-    _d_total = None
-    if _computed_total > 0 and invoice_total_raw > 0:
-        _d_total = _pct_delta(_computed_total, invoice_total_raw)
-    for _kind, _field, _d in (("cross", "energy_total", _d_cross), ("total", "invoice_total_raw", _d_total)):
-        if _d is None:
-            continue
-        if _d > _crit:
-            _blocking.append({"field": _field, "delta_pct": round(_d, 1), "kind": _kind})
-        elif _d >= _warn:
-            _confirmable.append({"field": _field, "delta_pct": round(_d, 1), "kind": _kind})
-
-    if _blocking:
-        return JSONResponse(
-            status_code=422,
-            content={"error": {
-                "code": "extraction_mismatch",
-                "blocking_errors": _blocking,
-                "confirmable_warnings": _confirmable,
-                "requires_operator_confirmation": False,
-                "message": "Tüketim/birim fiyat ile fatura toplamı arasında büyük sapma (>%40). "
-                           "Hatalı okuma/ondalık kayması olabilir; değerleri kontrol edin.",
-            }},
-        )
-    if _confirmable and not operator_confirmed_warnings:
-        return JSONResponse(
-            status_code=422,
-            content={"error": {
-                "code": "extraction_mismatch",
-                "blocking_errors": [],
-                "confirmable_warnings": _confirmable,
-                "requires_operator_confirmation": True,
-                "message": "Hesaplanan toplam ile fatura toplamı arasında fark var. "
-                           "Devam etmek için rakamları kontrol edip onaylayın.",
-            }},
-        )
+    _sonuc_simple = extraction_mismatch_contract(
+        consumption_kwh=consumption_kwh,
+        current_unit_price=current_unit_price,
+        current_energy_tl=current_energy_tl,
+        current_vat_matrah_tl=current_vat_matrah_tl,
+        current_vat_tl=current_vat_tl,
+        invoice_total_raw=_ham_simple,
+        operator_confirmed_warnings=operator_confirmed_warnings,
+    )
+    if _sonuc_simple.reddet is not None:
+        return JSONResponse(status_code=422, content=_sonuc_simple.reddet)
 
     import time as _time
     from .ptf_metrics import get_ptf_metrics as _get_pdf_metrics

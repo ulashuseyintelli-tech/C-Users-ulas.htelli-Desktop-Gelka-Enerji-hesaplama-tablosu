@@ -920,6 +920,13 @@ class TestMismatchGuardPersistKapisi:
     # gerçekten bağlı olduğu ise AST ile kanıtlanır.
 
     def test_gecis_vakalari_saf_yardimcida_dogrulanir(self):
+        """
+        S5-R01A: helper artik KESIN ondalik (Decimal) alir ve `MismatchSonucu`
+        doner. `0` ARTIK gecerli bir girdi DEGILDIR — `POST /offers` onu
+        parse_invoice_total_raw() ile daha kapiya gelmeden reddeder
+        (bkz. test_s5_r01a_raw_total_guard.py).
+        """
+        from decimal import Decimal
         from app.main import extraction_mismatch_contract
 
         ortak = dict(
@@ -928,15 +935,18 @@ class TestMismatchGuardPersistKapisi:
             current_vat_matrah_tl=HESAP_SONUCU["current_vat_matrah_tl"],
             current_vat_tl=HESAP_SONUCU["current_vat_tl"],
         )
-        # Sapma yok (2880 vs 2880) → geçer
+        # Sapma yok (2880 vs 2880) -> gecer
         assert extraction_mismatch_contract(
-            invoice_total_raw=2880.0, operator_confirmed_warnings=False, **ortak) is None
-        # %20 sapma + operatör onayı → geçer
+            invoice_total_raw=Decimal("2880"), operator_confirmed_warnings=False,
+            **ortak).reddet is None
+        # %20 sapma + operator onayi -> gecer
         assert extraction_mismatch_contract(
-            invoice_total_raw=2400.0, operator_confirmed_warnings=True, **ortak) is None
-        # Ham toplam gönderilmedi → kıyas atlanır (geriye dönük uyumlu)
-        assert extraction_mismatch_contract(
-            invoice_total_raw=0, operator_confirmed_warnings=False, **ortak) is None
+            invoice_total_raw=Decimal("2400"), operator_confirmed_warnings=True,
+            **ortak).reddet is None
+        # None YALNIZ `/generate-pdf-simple` geriye donuk uyumlulugu icindir.
+        atlandi = extraction_mismatch_contract(
+            invoice_total_raw=None, operator_confirmed_warnings=False, **ortak)
+        assert atlandi.reddet is None and atlandi.band == "no_data"
 
     def test_endpoint_kapiyi_snapshot_degerleriyle_cagiriyor(self):
         """
@@ -965,7 +975,9 @@ class TestMismatchGuardPersistKapisi:
         assert kwargs["current_vat_matrah_tl"] == "calculation.current_vat_matrah_tl"
         assert kwargs["current_vat_tl"] == "calculation.current_vat_tl"
         assert kwargs["consumption_kwh"].startswith("extraction.consumption_kwh")
-        assert kwargs["invoice_total_raw"] == "invoice_total_raw"
+        # S5-R01A: ham metin degil, parse_invoice_total_raw() ile DOGRULANMIS
+        # Decimal gecirilir.
+        assert kwargs["invoice_total_raw"] == "_ham"
         assert kwargs["operator_confirmed_warnings"] == "operator_confirmed_warnings"
 
     def test_guard_girdileri_pdf_endpointine_gitmiyor(self):
@@ -979,56 +991,24 @@ class TestMismatchGuardPersistKapisi:
         assert "invoice_total_raw" not in imza.parameters
         assert "operator_confirmed_warnings" not in imza.parameters
 
-    def test_iki_uygulama_ayni_verdikti_verir(self, client, db):
+    def test_parite_testi_r01ada_devrALINDI(self):
         """
-        PARİTE: kural hem `extraction_mismatch_contract` (POST /offers) hem de
-        `/generate-pdf-simple` içinde satır içi duruyor. İkinci endpoint owner
-        tarafından donduruldu, bu yüzden ortak yardımcıya çekilemedi — bu test
-        iki kopyanın AYRIŞMASINI yakalar.
+        DEVREDILDI — kapsam KAYBI yok.
+
+        R01'de bant mantigi iki endpoint'te KOPYA duruyordu ve bu test iki
+        kopyanin ayrismasini olcuyordu. S5-R01A ile mantik TEK helper'a
+        cekildi (`/generate-pdf-simple` de onu cagiriyor), dolayisiyla
+        "kopya parite" olcumu artik anlamsiz.
+
+        Yerine gecen ve DAHA GUCLU olan kanit:
+          tests/test_s5_r01a_raw_total_guard.py::TestTekHelper
+            - test_bant_mantigi_tek_yerde
+            - test_her_iki_endpoint_de_helperi_cagiriyor
+
+        Bu test o dosyanin varligini pinler; silinirse burasi kirilir.
         """
-        from app.main import extraction_mismatch_contract
-
-        def _yardimci(ham, onay):
-            return extraction_mismatch_contract(
-                consumption_kwh=1000.0, current_unit_price=2.0,
-                current_energy_tl=HESAP_SONUCU["current_energy_tl"],
-                current_vat_matrah_tl=HESAP_SONUCU["current_vat_matrah_tl"],
-                current_vat_tl=HESAP_SONUCU["current_vat_tl"],
-                invoice_total_raw=ham, operator_confirmed_warnings=onay,
-            )
-
-        def _simple(ham, onay):
-            return client.post("/generate-pdf-simple", data={
-                "consumption_kwh": 1000.0, "current_unit_price": 2.0,
-                "current_energy_tl": HESAP_SONUCU["current_energy_tl"],
-                "current_vat_matrah_tl": HESAP_SONUCU["current_vat_matrah_tl"],
-                "current_vat_tl": HESAP_SONUCU["current_vat_tl"],
-                "offer_energy_tl": HESAP_SONUCU["offer_energy_tl"],
-                "offer_total": HESAP_SONUCU["offer_total_with_vat_tl"],
-                "savings_ratio": HESAP_SONUCU["savings_ratio"],
-                "invoice_total_raw": ham,
-                "operator_confirmed_warnings": onay,
-            })
-
-        # YALNIZ REDDEDİLEN vakalar endpoint üzerinden karşılaştırılır: bunlar
-        # 422 ile render'dan ÖNCE döner. Sapma OLMAYAN vaka `/generate-pdf-simple`
-        # içinde gerçek reportlab render'ı tetikler (yavaş/askıda kalabilir) ve
-        # bu testin konusu değildir — o vaka yalnız yardımcı üzerinde doğrulanır.
-        for ham, onay in ((1000.0, False), (1000.0, True), (2400.0, False)):
-            beklenen = _yardimci(ham, onay)
-            assert beklenen is not None, f"yardımcı reddetmeliydi (ham={ham}, onay={onay})"
-
-            yanit = _simple(ham, onay)
-            assert yanit.status_code == 422, f"parite bozuk (ham={ham}, onay={onay})"
-            govde = yanit.json().get("error", {})
-            assert govde.get("code") == "extraction_mismatch", (
-                f"parite bozuk (ham={ham}, onay={onay})"
-            )
-            assert (
-                beklenen["error"]["requires_operator_confirmation"]
-                == govde["requires_operator_confirmation"]
-            ), f"onay şartı ayrışmış (ham={ham}, onay={onay})"
-
-        # Sapma yoksa yardımcı GEÇİRMELİ (endpoint'e gidilmez).
-        assert _yardimci(2880.0, False) is None
-        assert _yardimci(2400.0, True) is None, "onaylanan warning geçmeli"
+        devralan = Path(__file__).resolve().parent / "test_s5_r01a_raw_total_guard.py"
+        assert devralan.is_file(), "devralan R01A test dosyasi YOK — kapsam kaybi"
+        metin = devralan.read_text(encoding="utf-8")
+        assert "class TestTekHelper" in metin
+        assert "test_her_iki_endpoint_de_helperi_cagiriyor" in metin

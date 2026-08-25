@@ -923,6 +923,27 @@ function App() {
       // uretilir/indirilir.
       let uretilecekOfferId: number | null = null;
 
+      // ── S5-R01A: GERÇEK ham fatura toplamı (KDV dahil) ────────────────
+      // Guard'ın ground-truth'u. Manuel modda operatörün "Faturadaki TOPLAM
+      // (KDV Dahil)" alanına girdiği değer; AI modunda extraction'ın brüt
+      // toplamı. `0` veya boş = GİRİLMEDİ; sentinel olarak GÖNDERİLMEZ.
+      const hamAday = manualMode
+        ? manualValues.invoice_total_raw
+        : (result?.extraction as any)?.invoice_total_with_vat_tl?.value;
+      const hamFaturaToplami =
+        typeof hamAday === 'number' && Number.isFinite(hamAday) && hamAday > 0
+          ? hamAday
+          : undefined;
+
+      if (hamFaturaToplami === undefined) {
+        setError(
+          'Faturadaki gerçek TOPLAM (KDV dahil) girilmelidir. ' +
+          'Bu değer olmadan teklif kaydedilemez ve PDF üretilemez.'
+        );
+        setPdfLoading(false);
+        return;
+      }
+
       // Ortak hesaplama gövdesi — hem persist (POST /offers) hem PDF üretimi
       // AYNI ekrandaki nihai değerleri kullanır (owner kararı: Offer artık
       // kalıcı domain nesnesi, "1,01 gibi" katsayı ekranla birebir bağlanır).
@@ -953,10 +974,12 @@ function App() {
         weighted_ptf_tl_per_mwh: ptfPrice,
         yekdem_tl_per_mwh: liveCalculation.include_yekdem ? yekdemPrice : 0,
         agreement_multiplier: multiplier,
-        // R2: ham toplam — manuel YENİ alan, AI extraction; calculation.current_total KULLANILMAZ
-        invoice_total_raw: manualMode
-          ? (manualValues.invoice_total_raw || 0)
-          : ((result?.extraction as any)?.invoice_total_with_vat_tl?.value || 0),
+        // S5-R01A: ham toplam — manuel YENİ alan veya AI extraction.
+        // `|| 0` SENTINEL'İ KALDIRILDI: `0` "girilmedi" demektir ve sunucudaki
+        // sapma kapısını sessizce atlatıyordu. Girilmemişse `undefined` kalır
+        // ve aşağıda akış DURDURULUR. `calculation.current_total` ASLA
+        // buraya konulmaz — guard'ı anlamsız kılar.
+        invoice_total_raw: hamFaturaToplami,
         operator_confirmed_warnings: operatorConfirmed,
       };
 
@@ -1004,7 +1027,7 @@ function App() {
           // teklif HIC KAYDEDILMEZ (once kaydediliyor, yalniz PDF bloke
           // oluyordu). Bu degerler PDF endpoint'ine ASLA gitmez.
           {
-            invoice_total_raw: paramsForOffer.invoice_total_raw,
+            invoice_total_raw: hamFaturaToplami,
             operator_confirmed_warnings: paramsForOffer.operator_confirmed_warnings,
           }
         );
