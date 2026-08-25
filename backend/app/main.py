@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional, List
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Query, Header, Form, Request
@@ -1693,15 +1694,113 @@ async def delete_customer(customer_id: int, db: Session = Depends(get_db)):
 # Offer Archive Endpoints
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def extraction_mismatch_contract(
+    consumption_kwh: float,
+    current_unit_price: float,
+    current_energy_tl: float,
+    current_vat_matrah_tl: float,
+    current_vat_tl: float,
+    invoice_total_raw: float,
+    operator_confirmed_warnings: bool,
+) -> Optional[dict]:
+    """
+    R2 gross-misread guard — sapma varsa hata sözleşmesini, yoksa None döner.
+
+    Bantlar: >%40 hard block (onay olsa bile), %10-40 operatör onayı gerekir,
+    <%10 veya veri yok → geç (crash yok).
+
+    S5-R01 NOTU — BİLİNÇLİ İKİZ UYGULAMA:
+    Bu kural `/generate-pdf-simple` içinde de satır içi duruyor. O endpoint
+    owner tarafından DONDURULDU ("dokunulmayacaklar"), bu yüzden ortak
+    yardımcıya çekilemedi. İki kopyanın ayrışmaması
+    `test_s5_r01_offer_pdf.py::TestMismatchGuardParitesi` ile pinlenir.
+
+    Neden buraya taşındı: persist edilmiş teklif PDF akışı artık
+    `/generate-pdf-simple` çağırmıyor (owner Bölüm 1.1). Guard yalnız orada
+    olsaydı sessizce DÜŞERDİ. Artık kapı PERSIST anında çalışır — sapmalı
+    teklif hiç kaydedilmez (öncekinden daha güvenli: eskiden teklif kaydediliyor,
+    yalnız PDF bloke oluyordu). PDF üretimi ise hâlâ %100 snapshot-bound'dur;
+    bu değerler PDF endpoint'ine ASLA gitmez.
+
+    Çağrıldığı yerler:
+    - main.create_offer() → POST /offers (persist kapısı)
+    """
+    from .config import THRESHOLDS as _TH
+    _crit, _warn = _TH.Validation.CRITICAL_DELTA, _TH.Validation.WARNING_DELTA
+
+    def _pct_delta(a, b):
+        if b is None or b <= 0:
+            return None
+        return abs(a - b) / b * 100.0
+
+    _blocking, _confirmable = [], []
+    _d_cross = None
+    if consumption_kwh > 0 and current_unit_price > 0 and current_energy_tl > 0:
+        _d_cross = _pct_delta(consumption_kwh * current_unit_price, current_energy_tl)
+    _computed_total = current_vat_matrah_tl + current_vat_tl
+    _d_total = None
+    if _computed_total > 0 and invoice_total_raw > 0:
+        _d_total = _pct_delta(_computed_total, invoice_total_raw)
+
+    for _kind, _field, _d in (("cross", "energy_total", _d_cross),
+                              ("total", "invoice_total_raw", _d_total)):
+        if _d is None:
+            continue
+        if _d > _crit:
+            _blocking.append({"field": _field, "delta_pct": round(_d, 1), "kind": _kind})
+        elif _d >= _warn:
+            _confirmable.append({"field": _field, "delta_pct": round(_d, 1), "kind": _kind})
+
+    if _blocking:
+        return {"error": {
+            "code": "extraction_mismatch",
+            "blocking_errors": _blocking,
+            "confirmable_warnings": _confirmable,
+            "requires_operator_confirmation": False,
+            "message": "Tüketim/birim fiyat ile fatura toplamı arasında büyük sapma (>%40). "
+                       "Hatalı okuma/ondalık kayması olabilir; değerleri kontrol edin.",
+        }}
+    if _confirmable and not operator_confirmed_warnings:
+        return {"error": {
+            "code": "extraction_mismatch",
+            "blocking_errors": [],
+            "confirmable_warnings": _confirmable,
+            "requires_operator_confirmation": True,
+            "message": "Hesaplanan toplam ile fatura toplamı arasında fark var. "
+                       "Devam etmek için rakamları kontrol edip onaylayın.",
+        }}
+    return None
+
+
 @app.post("/offers", response_model=dict)
 async def create_offer(
     extraction: InvoiceExtraction,
     calculation: CalculationResult,
     params: OfferParams,
     customer_id: Optional[int] = None,
+    # S5-R01: R2 guard girdileri. `customer_id` ile AYNI desen (query param) —
+    # `OfferParams` (models.py) kapsam dışı olduğu için şemaya dokunulmadı.
+    # Varsayılanlar geriye dönük uyumludur: göndermeyene kapı uygulanmaz.
+    invoice_total_raw: float = 0,
+    operator_confirmed_warnings: bool = False,
     db: Session = Depends(get_db)
 ):
     """Teklifi kaydet ve arşivle"""
+    # ── R2 gross-misread guard: SAPMALI TEKLİF HİÇ KAYDEDİLMEZ ──
+    # Persist edilmiş teklif PDF akışı artık `/generate-pdf-simple`
+    # çağırmadığı için kapı buraya taşındı (bkz. extraction_mismatch_contract).
+    _mismatch = extraction_mismatch_contract(
+        consumption_kwh=extraction.consumption_kwh.value or 0,
+        current_unit_price=extraction.current_active_unit_price_tl_per_kwh.value or 0,
+        current_energy_tl=calculation.current_energy_tl,
+        current_vat_matrah_tl=calculation.current_vat_matrah_tl,
+        current_vat_tl=calculation.current_vat_tl,
+        invoice_total_raw=invoice_total_raw,
+        operator_confirmed_warnings=operator_confirmed_warnings,
+    )
+    if _mismatch is not None:
+        return JSONResponse(status_code=422, content=_mismatch)
+
     offer = Offer(
         customer_id=customer_id,
         vendor=extraction.vendor,
@@ -1945,6 +2044,148 @@ async def update_offer_status(
 # PDF/HTML Generation Endpoints
 # ═══════════════════════════════════════════════════════════════════════════════
 
+class _TeklifPdfUretimiSuruyor(Exception):
+    """Aynı teklif için başka bir istek hâlihazırda PDF üretiyor."""
+
+
+# ── S5-R01: teklif PDF üretim kilidi ────────────────────────────────────────
+# Kilit sahipliği dosyanın VARLIĞINDAN DEĞİL, işletim sisteminin verdiği
+# byte-range kilidinden gelir. Bu ayrım kritiktir: `O_CREAT|O_EXCL` sentinel
+# dosyası kullanan ilk tasarımda backend hard-kill edilirse dosya kalıcı
+# olarak kalıyor ve o teklif sonsuza dek 409 döndürüyordu.
+#
+# `msvcrt.locking` (Windows) ve `fcntl.flock` (POSIX) STANDART KÜTÜPHANEDİR —
+# yeni bağımlılık yok, uydurma kilit sistemi yok. Process normal çıksa da
+# TerminateProcess/SIGKILL ile öldürülse de çekirdek handle'ı kapatır ve
+# kilit OTOMATİK serbest kalır. Bu yüzden yaşa bakan (stale-timeout) silme
+# mantığına ve startup reaper'a GEREK YOKTUR — ikisi de yazılmamıştır.
+#
+# Kilit dosyası BİLEREK SİLİNMEZ: silmek, başka bir process dosyayı açıkken
+# yarış yaratır ve hiçbir fayda sağlamaz. Artakalan boş dosya zararsızdır;
+# aktif OS kilidi yoksa sonraki çağrı sorunsuz ilerler.
+if os.name == "nt":
+    import msvcrt
+
+    def _os_kilidi_dene(fd: int) -> None:
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # tutuluyorsa OSError
+
+    def _os_kilidi_birak(fd: int) -> None:
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+else:
+    import fcntl
+
+    def _os_kilidi_dene(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # tutuluyorsa OSError
+
+    def _os_kilidi_birak(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
+
+@contextmanager
+def _teklif_pdf_uretim_kilidi(offer_id: int):
+    """
+    Teklif PDF üretimi için CROSS-PROCESS güvenli kilit.
+
+    Packaged backend `workers=1` ile tek process çalışır (run_server.py) fakat
+    PDF render'ı ThreadPoolExecutor ile çok thread'lidir; kilit hem thread hem
+    process sınırını kapsar.
+
+    Kilit alınamazsa üretim YAPILMAZ; çağıran deterministik "üretim sürüyor"
+    yanıtı alır. Sahiplik OS kilidindedir — bkz. modül içi açıklama.
+
+    Çağrıldığı yerler:
+    - main.generate_pdf_for_offer() → POST /offers/{id}/generate-pdf
+    """
+    kilit_dizini = Path(settings.storage_dir) / "offers" / str(offer_id)
+    kilit_dizini.mkdir(parents=True, exist_ok=True)
+    kilit_yolu = str(kilit_dizini / ".generate.lock")
+
+    # O_EXCL YOK: dosyanın önceden var olması sahiplik anlamına GELMEZ.
+    fd = os.open(kilit_yolu, os.O_CREAT | os.O_RDWR)
+    try:
+        try:
+            _os_kilidi_dene(fd)
+        except OSError:
+            raise _TeklifPdfUretimiSuruyor(offer_id)
+
+        try:
+            yield
+        finally:
+            try:
+                _os_kilidi_birak(fd)
+            except OSError:
+                logger.warning(f"PDF üretim kilidi bırakılamadı: {kilit_yolu}")
+    finally:
+        # Handle kapanınca OS kilidi de kesin olarak serbest kalır.
+        os.close(fd)
+
+
+def _teklif_pdf_artifact_gecerli(pdf_ref: str) -> bool:
+    """
+    `pdf_ref`in işaret ettiği artifact'ın GERÇEKTEN var ve boş olmadığını
+    doğrular. Yalnız DB'deki referansın varlığına güvenilmez — referans var
+    fakat dosya yoksa bu bir veri/storage tutarsızlığıdır.
+
+    Çağrıldığı yerler:
+    - main.generate_pdf_for_offer() → POST /offers/{id}/generate-pdf
+    """
+    from .services.storage import get_storage
+    from .services.storage_local import LocalStorage
+
+    storage = get_storage()
+    if isinstance(storage, LocalStorage):
+        yol = storage.get_local_path(pdf_ref)
+        if yol is None:  # containment ihlali → geçersiz say
+            return False
+        return os.path.isfile(yol) and os.path.getsize(yol) > 0
+    return storage.exists(pdf_ref)
+
+
+def _teklif_pdf_orphan_temizle(pdf_ref: str) -> None:
+    """
+    DB commit başarısız olduğunda, bu request'in yayımladığı dosyayı geri
+    alır. Böylece "dosya var ama DB'de referansı yok" orphan'ı kalmaz.
+
+    Çağrıldığı yerler:
+    - main.generate_pdf_for_offer() → POST /offers/{id}/generate-pdf
+    """
+    try:
+        from .services.storage import get_storage
+        get_storage().delete(pdf_ref)
+    except Exception:
+        logger.warning(f"Orphan PDF temizlenemedi: {pdf_ref}")
+
+
+def _guvenli_yerel_pdf_yolu(ref: str) -> str:
+    """
+    Bir storage referansını izinli storage kökü altında containment
+    kontrolünden geçirip mutlak yerel yola çevirir.
+
+    `Path.resolve()` `..`, absolute escape ve Windows symlink/junction/
+    reparse point'lerini çözer; karşılaştırma `relative_to` ile yapılır
+    (string prefix DEĞİL — aksi hâlde `storage_evil` gibi kardeş dizinler
+    kabul edilirdi). Kök ve referans aynı normalizasyondan geçtiği için
+    case-alias da kabul edilmez.
+
+    Raises:
+        ValueError: referans storage kökünün dışındaysa.
+
+    Çağrıldığı yerler:
+    - main.download_offer_pdf() → GET /offers/{id}/download (legacy fallback)
+    """
+    from .services.storage import get_storage
+    from .services.storage_local import LocalStorage
+
+    storage = get_storage()
+    if isinstance(storage, LocalStorage):
+        return storage.resolve_local_path(ref)
+    # Storage backend local olmasa bile legacy ref'ler yerel diskte olabilir;
+    # aynı containment kuralı storage köküne karşı uygulanır.
+    return LocalStorage(base_dir=settings.storage_dir).resolve_local_path(ref)
+
+
 @app.post("/offers/{offer_id}/generate-pdf")
 async def generate_pdf_for_offer(
     offer_id: int,
@@ -1953,61 +2194,127 @@ async def generate_pdf_for_offer(
 ):
     """
     Kayıtlı teklif için PDF oluştur ve storage'a kaydet.
-    
+
+    S5-R01 sözleşmesi:
+    - PDF YALNIZ persist edilmiş snapshot'tan üretilir; request gövdesi
+      alınmaz, istemciden gelen hiçbir hesap değeri kullanılmaz.
+    - Gerçek idempotency: geçerli `pdf_ref` varsa generator İKİNCİ KEZ
+      ÇAĞRILMAZ, mevcut sonuç döner.
+    - `pdf_ref` var fakat fiziksel dosya yoksa sessizce yeniden üretilmez;
+      deterministik fail-closed 409 döner (remediation gerekir).
+    - Eşzamanlı iki istek yalnız TEK fiziksel üretim/publish oluşturur.
+    - Dosya atomik yayımlanmadan `pdf_ref` commit edilmez; DB commit
+      başarısızsa yayımlanan dosya orphan olarak temizlenir.
+
     PDF storage backend'e kaydedilir:
     - Local: ./storage/offers/{offer_id}/offer.pdf
     - S3: s3://bucket/offers/{offer_id}/offer.pdf
-    
+
     Returns:
-        {offer_id, pdf_ref, message, download_url}
+        {offer_id, pdf_ref, message, download_url, regenerated}
     """
     offer = db.query(Offer).filter(Offer.id == offer_id).first()
     if not offer:
         raise HTTPException(status_code=404, detail="Teklif bulunamadı")
-    
+
+    def _mevcut_sonuc(ref: str) -> dict:
+        return {
+            "offer_id": offer.id,
+            "pdf_ref": ref,
+            "message": "PDF zaten mevcut",
+            "download_url": f"/offers/{offer.id}/download",
+            "regenerated": False,
+        }
+
+    # ── Idempotency kapısı (kilit ALINMADAN önce ucuz yol) ────────────────
+    if offer.pdf_ref:
+        if _teklif_pdf_artifact_gecerli(offer.pdf_ref):
+            return _mevcut_sonuc(offer.pdf_ref)
+        # Referans var, dosya yok → SESSİZ yeniden üretim YASAK.
+        logger.error(
+            f"pdf_ref mevcut fakat artifact bulunamadı (offer {offer.id}) — "
+            f"veri/storage tutarsızlığı"
+        )
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "pdf_artifact_missing",
+                "message": (
+                    "Teklife bağlı PDF kaydı var fakat dosya bulunamadı. "
+                    "Bu bir veri/storage tutarsızlığıdır ve düzeltme gerektirir."
+                ),
+                "offer_id": offer.id,
+            },
+        )
+
     if not offer.extraction_result or not offer.calculation_result:
         raise HTTPException(
             status_code=400,
             detail="Teklif verisi eksik (extraction_result veya calculation_result)"
         )
-    
-    # Reconstruct extraction and calculation from stored JSON
-    extraction = InvoiceExtraction(**offer.extraction_result)
-    calculation = CalculationResult(**offer.calculation_result)
-    params = OfferParams(
-        weighted_ptf_tl_per_mwh=offer.weighted_ptf,
-        yekdem_tl_per_mwh=offer.yekdem,
-        agreement_multiplier=offer.agreement_multiplier
-    )
-    
-    customer_name = offer.customer.name if offer.customer else None
-    customer_company = offer.customer.company if offer.customer else None
-    
+
     try:
-        # Generate and store PDF (uses storage backend)
-        from .pdf_generator import generate_and_store_offer_pdf
-        
-        pdf_ref = generate_and_store_offer_pdf(
-            extraction=extraction,
-            calculation=calculation,
-            params=params,
-            offer_id=offer.id,
-            customer_name=customer_name,
-            customer_company=customer_company
+        with _teklif_pdf_uretim_kilidi(offer.id):
+            # Kilidi aldıktan sonra yeniden oku: bu istek kilidi beklerken
+            # başka bir istek üretimi tamamlamış olabilir.
+            db.refresh(offer)
+            if offer.pdf_ref and _teklif_pdf_artifact_gecerli(offer.pdf_ref):
+                return _mevcut_sonuc(offer.pdf_ref)
+
+            # Snapshot kilit altında OKUNUR ve yerel nesnelere alınır; üretim
+            # boyunca kullanılan değerler bu andan sonra değişmez.
+            extraction = InvoiceExtraction(**offer.extraction_result)
+            calculation = CalculationResult(**offer.calculation_result)
+            params = OfferParams(
+                weighted_ptf_tl_per_mwh=offer.weighted_ptf,
+                yekdem_tl_per_mwh=offer.yekdem,
+                agreement_multiplier=offer.agreement_multiplier
+            )
+            customer_name = offer.customer.name if offer.customer else None
+            customer_company = offer.customer.company if offer.customer else None
+
+            from .pdf_generator import generate_and_store_offer_pdf
+
+            # Dosya burada ATOMİK olarak yayımlanır (LocalStorage.put_bytes).
+            pdf_ref = generate_and_store_offer_pdf(
+                extraction=extraction,
+                calculation=calculation,
+                params=params,
+                offer_id=offer.id,
+                customer_name=customer_name,
+                customer_company=customer_company
+            )
+
+            # Dosya tamamen yayımlandıktan SONRA DB commit edilir.
+            try:
+                offer.pdf_ref = pdf_ref
+                db.commit()
+            except Exception:
+                db.rollback()
+                # File publish başarılı, DB commit başarısız → orphan temizle.
+                _teklif_pdf_orphan_temizle(pdf_ref)
+                raise
+
+            logger.info(f"PDF generated and stored: {pdf_ref}")
+
+            return {
+                "offer_id": offer.id,
+                "pdf_ref": pdf_ref,
+                "message": "PDF başarıyla oluşturuldu",
+                "download_url": f"/offers/{offer.id}/download",
+                "regenerated": True,
+            }
+    except _TeklifPdfUretimiSuruyor:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "generation_in_progress",
+                "message": "Bu teklif için PDF üretimi şu anda sürüyor",
+                "offer_id": offer.id,
+            },
         )
-        
-        # Update offer with PDF ref
-        offer.pdf_ref = pdf_ref
-        db.commit()
-        
-        logger.info(f"PDF generated and stored: {pdf_ref}")
-        
-        return {
-            "offer_id": offer.id,
-            "pdf_ref": pdf_ref,
-            "message": "PDF başarıyla oluşturuldu",
-            "download_url": f"/offers/{offer.id}/download"
-        }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception(f"PDF generation failed for offer {offer_id}")
         raise HTTPException(status_code=500, detail=f"PDF oluşturma hatası: {str(e)}")
@@ -2067,27 +2374,38 @@ async def download_offer_pdf(
     if isinstance(storage, LocalStorage):
         try:
             local_path = storage.resolve_local_path(ref)
-        except ValueError as e:
+        except ValueError:
+            # S5-R01: fiziksel yol client'a SIZDIRILMAZ; ayrıntı yalnız
+            # sunucu logunda kalır.
             logger.error(f"Path traversal attempt: {ref}")
-            raise HTTPException(status_code=400, detail=str(e))
-        
-        if not os.path.exists(local_path):
+            raise HTTPException(status_code=400, detail="Geçersiz PDF referansı")
+
+        if not os.path.isfile(local_path):
             raise HTTPException(status_code=404, detail="PDF dosyası bulunamadı")
-        
+
         return FileResponse(
             path=local_path,
             filename=filename,
             media_type=content_type
         )
-    
-    # 3) Fallback: local path olarak dene (eski PDF'ler için)
-    if os.path.exists(ref):
+
+    # 3) Fallback: eski PDF'ler yerel diskte olabilir.
+    # S5-R01: bu dal önceden `os.path.exists(ref)` ile HİÇBİR containment
+    # kontrolü yapmadan dosya servis ediyordu. Artık legacy ref de canonical
+    # key ile AYNI kuraldan geçer.
+    try:
+        legacy_path = _guvenli_yerel_pdf_yolu(ref)
+    except ValueError:
+        logger.error(f"Path traversal attempt (legacy fallback): {ref}")
+        raise HTTPException(status_code=400, detail="Geçersiz PDF referansı")
+
+    if os.path.isfile(legacy_path):
         return FileResponse(
-            path=ref,
+            path=legacy_path,
             filename=filename,
             media_type=content_type
         )
-    
+
     raise HTTPException(status_code=404, detail="PDF dosyası bulunamadı")
 
 

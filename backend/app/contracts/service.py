@@ -342,6 +342,134 @@ def resolve_candidate(
     return candidate
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# S5-R01 — FINALIZE FAIL-CLOSED ZORUNLU HUKUKİ ALAN KAPISI
+#
+# Taslak (DRAFT) oluşturma bu alanlar eksikken SERBESTTİR; kullanıcı vergi
+# levhası / imza sirküleri olmadan da sözleşme hazırlamaya başlayabilir.
+# Ancak FINALIZE kararı server-authoritative ve fail-closed'dır.
+#
+# Değerler client'ın gönderdiği `complete_fields`ten veya snapshot'ın
+# "hazırım" iddiasından DEĞİL, doğrudan CustomerLegalProfile /
+# CustomerAuthorizedRepresentative kayıtlarından okunur.
+#
+# PII: bu modüldeki kontroller yalnız ALAN ADI döndürür. TCKN
+# (`national_id`) dâhil hiçbir değer response'a yazılmaz veya loglanmaz.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+REQUIRED_FINALIZE_FIELD_NAMES: tuple[str, ...] = (
+    "legal_name",
+    "tax_number",
+    "tax_office",
+    "registered_address",
+    "representative_full_name",
+    "representative_national_id",
+)
+
+# Legal profile üzerinde birebir aynı adla duran alanlar.
+_LEGAL_PROFILE_REQUIRED_FIELDS = (
+    "legal_name",
+    "tax_number",
+    "tax_office",
+    "registered_address",
+)
+
+
+def _alan_dolu(deger) -> bool:
+    """Alanın 'güvenilir biçimde tamamlanmış' sayılması: None/boş/yalnız boşluk olmamalı."""
+    return bool(deger is not None and str(deger).strip())
+
+
+def missing_fields_from_records(legal_profile, representative) -> list[str]:
+    """
+    Zaten yüklenmiş kayıtlardan eksik zorunlu alan ADLARINI hesaplar.
+
+    SAF fonksiyon — hiç sorgu yapmaz. Böylece hem tek sözleşme yolu
+    (`missing_required_legal_fields`) hem de listenin N+1'siz toplu sorgu
+    yolu AYNI doğrulama mantığını kullanır; kural iki yerde tekrarlanmaz.
+
+    `None` kayıt = o kaydın TÜM alanları eksik.
+
+    Çağrıldığı yerler:
+    - contracts.service.missing_required_legal_fields() → tek sözleşme yolu
+    - contracts.router.list_contracts() → GET /api/contracts (toplu sorgu yolu)
+    """
+    eksik: list[str] = []
+    for alan in _LEGAL_PROFILE_REQUIRED_FIELDS:
+        if legal_profile is None or not _alan_dolu(getattr(legal_profile, alan, None)):
+            eksik.append(alan)
+    if representative is None or not _alan_dolu(getattr(representative, "full_name", None)):
+        eksik.append("representative_full_name")
+    if representative is None or not _alan_dolu(getattr(representative, "national_id", None)):
+        eksik.append("representative_national_id")
+    return eksik
+
+
+def missing_required_legal_fields(db: Session, contract: db_models.Contract) -> list[str]:
+    """
+    Finalize için zorunlu hukuki alanlardan EKSİK olanların ADLARINI döndürür.
+
+    Kaynak SERVER-AUTHORITATIVE'dir: `contract.legal_profile_id` ve
+    `contract.authorized_representative_id` üzerinden ilgili DB kayıtları
+    okunur. Bağlantı yoksa o kaydın tüm alanları eksik sayılır.
+
+    Belgelerin sisteme yüklenmiş olması tek başına şart değildir (owner
+    madde 7): zorunlu veriler elle de girilmiş olabilir — önemli olan
+    değerlerin kalıcı kayıtta dolu olmasıdır.
+
+    Dönüş: eksik alan adları listesi (boşsa alanlar tamam). PII içermez.
+
+    Çağrıldığı yerler:
+    - contracts.router.finalize_contract() → POST /contracts/{id}/finalize (fail-closed kapı)
+    - contracts.router.create_contract_draft() → POST /contracts/drafts (taslak uyarısı)
+    - contracts.router.get_contract() → GET /contracts/{id} (taslak uyarısı)
+    """
+    legal_profile = (
+        db.query(db_models.CustomerLegalProfile)
+        .filter(db_models.CustomerLegalProfile.id == contract.legal_profile_id)
+        .first()
+        if contract.legal_profile_id
+        else None
+    )
+    representative = (
+        db.query(db_models.CustomerAuthorizedRepresentative)
+        .filter(db_models.CustomerAuthorizedRepresentative.id == contract.authorized_representative_id)
+        .first()
+        if contract.authorized_representative_id
+        else None
+    )
+    return missing_fields_from_records(legal_profile, representative)
+
+
+def snapshot_missing_required_fields(snapshot: Optional[dict]) -> list[str]:
+    """
+    Finalize'da PDF'e RENDER EDİLECEK snapshot'ın zorunlu alanları taşıyıp
+    taşımadığını denetler.
+
+    DB kaydı dolu fakat snapshot boşsa önizleme bayattır (legal profile
+    sonradan bağlanmış olabilir) ve üretilecek PDF hukuki alanları boş
+    gösterirdi. Bu yüzden iki kapı da geçilmelidir.
+
+    Dönüş: eksik alan adları listesi. PII içermez.
+
+    Çağrıldığı yerler:
+    - contracts.router.finalize_contract() → POST /contracts/{id}/finalize
+    """
+    if not snapshot:
+        return list(REQUIRED_FINALIZE_FIELD_NAMES)
+
+    eksik: list[str] = []
+    for alan in _LEGAL_PROFILE_REQUIRED_FIELDS:
+        if not _alan_dolu(snapshot.get(alan)):
+            eksik.append(alan)
+    temsilci = snapshot.get("representative") or {}
+    if not _alan_dolu(temsilci.get("full_name")):
+        eksik.append("representative_full_name")
+    if not _alan_dolu(temsilci.get("national_id")):
+        eksik.append("representative_national_id")
+    return eksik
+
+
 def has_unresolved_conflicts(db: Session, document_ids: list[int]) -> bool:
     """Finalize öncesi zorunlu kontrol: çözülmemiş conflict veya karar verilmemiş zorunlu alan var mı."""
     unresolved = (

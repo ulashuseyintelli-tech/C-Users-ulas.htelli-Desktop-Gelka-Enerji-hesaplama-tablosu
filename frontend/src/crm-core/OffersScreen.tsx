@@ -6,10 +6,14 @@
 // "Sözleşmeye dönüştü mü" sorusunun otoritesi Contract tablosudur
 // (has_contract, backend'de hesaplanır) — Offer.status TEK BAŞINA
 // güvenilir değildir (best-effort senkron, bkz. api.ts OfferListItem).
+// S5-R01 — Liste ticari alanlarla zenginleştirildi (Tedarikçi/Dönem/Tüketim/
+// Mevcut Tutar/Tasarruf/Tasarruf Oranı) ve satırdan teklif detayı açılabilir.
+// Tüm değerler `GET /offers` snapshot'ından gelir; ekranda HESAP YAPILMAZ.
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { listOffers, updateOfferStatus, OfferListItem } from '../api';
 import { QuickCrmActions } from './QuickCrmActions';
+import { OfferDetailModal } from './OfferDetailModal';
 
 const STATUS_LABELS: Record<string, string> = {
   draft: 'Taslak',
@@ -66,12 +70,25 @@ function formatCurrency(value: number): string {
   return new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY', maximumFractionDigits: 0 }).format(value);
 }
 
+function formatKwh(value: number | null | undefined): string {
+  if (value === null || value === undefined) return '—';
+  return new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 0 }).format(value);
+}
+
+// Backend `savings_ratio`yu KESİR olarak saklar (calculator.py: 0..1).
+function formatRatio(value: number | null | undefined): string {
+  if (value === null || value === undefined) return '—';
+  return `%${(value * 100).toFixed(1)}`;
+}
+
 export function OffersScreen() {
   const [offers, setOffers] = useState<OfferListItem[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [updatingId, setUpdatingId] = useState<number | null>(null);
+  // S5-R01: acik teklif detay modali (null = kapali)
+  const [detailOfferId, setDetailOfferId] = useState<number | null>(null);
 
   const load = useCallback(async (status: string) => {
     setLoading(true);
@@ -147,11 +164,18 @@ export function OffersScreen() {
             <thead>
               <tr className="border-b border-gray-200 text-left text-gray-500">
                 <th className="px-4 py-2 font-medium">Firma</th>
+                <th className="px-4 py-2 font-medium">Tedarikçi</th>
+                <th className="px-4 py-2 font-medium">Dönem</th>
+                <th className="px-4 py-2 font-medium text-right">Tüketim (kWh)</th>
+                <th className="px-4 py-2 font-medium text-right">Mevcut Tutar</th>
+                <th className="px-4 py-2 font-medium text-right">Teklif Tutarı</th>
+                <th className="px-4 py-2 font-medium text-right">Tasarruf</th>
+                <th className="px-4 py-2 font-medium text-right">Tasarruf Oranı</th>
+                <th className="px-4 py-2 font-medium text-right">Katsayı</th>
                 <th className="px-4 py-2 font-medium">Tarih</th>
-                <th className="px-4 py-2 font-medium">Teklif Tutarı</th>
-                <th className="px-4 py-2 font-medium">Katsayı</th>
                 <th className="px-4 py-2 font-medium">Durum</th>
                 <th className="px-4 py-2 font-medium">Sözleşmeye Dönüştü mü?</th>
+                <th className="px-4 py-2 font-medium">Detay</th>
                 <th className="px-4 py-2 font-medium">Aksiyon</th>
                 <th className="px-4 py-2 font-medium">CRM</th>
               </tr>
@@ -160,9 +184,15 @@ export function OffersScreen() {
               {offers.map((o) => (
                 <tr key={o.id} className="border-b border-gray-100 last:border-0">
                   <td className="px-4 py-2 font-medium text-gray-900">{o.customer_name || 'Müşterisiz'}</td>
+                  <td className="px-4 py-2 text-gray-600">{o.vendor || '—'}</td>
+                  <td className="px-4 py-2 text-gray-600">{o.invoice_period || '—'}</td>
+                  <td className="px-4 py-2 text-gray-600 text-right">{formatKwh(o.consumption_kwh)}</td>
+                  <td className="px-4 py-2 text-gray-600 text-right">{formatCurrency(o.current_total)}</td>
+                  <td className="px-4 py-2 text-gray-900 font-medium text-right">{formatCurrency(o.offer_total)}</td>
+                  <td className="px-4 py-2 text-green-700 text-right">{formatCurrency(o.savings_amount)}</td>
+                  <td className="px-4 py-2 text-green-700 text-right">{formatRatio(o.savings_ratio)}</td>
+                  <td className="px-4 py-2 text-gray-600 text-right">{o.agreement_multiplier.toFixed(2)}</td>
                   <td className="px-4 py-2 text-gray-600">{formatDateTr(o.created_at)}</td>
-                  <td className="px-4 py-2 text-gray-600">{formatCurrency(o.offer_total)}</td>
-                  <td className="px-4 py-2 text-gray-600">{o.agreement_multiplier.toFixed(2)}</td>
                   <td className="px-4 py-2">
                     <span
                       className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
@@ -178,6 +208,15 @@ export function OffersScreen() {
                     ) : (
                       <span className="text-gray-400">Hayır</span>
                     )}
+                  </td>
+                  <td className="px-4 py-2">
+                    <button
+                      type="button"
+                      onClick={() => setDetailOfferId(o.id)}
+                      className="btn-secondary text-xs px-2 py-1"
+                    >
+                      Detay
+                    </button>
                   </td>
                   <td className="px-4 py-2">
                     <div className="flex flex-wrap gap-1.5">
@@ -206,6 +245,10 @@ export function OffersScreen() {
           </table>
         )}
       </div>
+
+      {detailOfferId !== null && (
+        <OfferDetailModal offerId={detailOfferId} onClose={() => setDetailOfferId(null)} />
+      )}
     </div>
   );
 }

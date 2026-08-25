@@ -122,6 +122,56 @@ def _make_offer(db, customer_id=None, agreement_multiplier=1.01, extraction_resu
     return o
 
 
+
+def _make_legal(db, customer_id=None, tenant_id="default"):
+    """
+    S5-R01: finalize icin zorunlu hukuki kayitlar (legal profile + temsilci).
+
+    Degerler SENTETIKTIR; gercek TCKN/vergi no degildir.
+    """
+    from app.database import CustomerLegalProfile, CustomerAuthorizedRepresentative
+    profil = CustomerLegalProfile(
+        tenant_id=tenant_id,
+        customer_id=customer_id,
+        legal_name="Sentetik Enerji Sanayi Ltd. Sti.",
+        tax_number="0000000000",
+        tax_office="Sentetik VD",
+        registered_address="Sentetik Mah. Test Cad. No:1 Istanbul",
+    )
+    db.add(profil)
+    db.flush()
+    temsilci = CustomerAuthorizedRepresentative(
+        tenant_id=tenant_id,
+        customer_id=customer_id,
+        legal_profile_id=profil.id,
+        full_name="Sentetik Yetkili",
+        national_id="00000000000",
+    )
+    db.add(temsilci)
+    db.flush()
+    return profil, temsilci
+
+
+def _legal_draft_payload(db, offer, customer_id=None):
+    """
+    S5-R01: finalize fail-closed kapisi zorunlu hukuki alanlari sart kosar.
+    Finalize'a kadar giden testler artik taslaga GERCEK legal profile +
+    temsilci baglamalidir. Eksik alanla finalize REDDEDILIR (422) -- bu
+    kasitli davranis degisikligidir, testin duzeltilmesi gereken bir
+    kusuru degildir.
+    """
+    profil, temsilci = _make_legal(db, customer_id=customer_id)
+    db.commit()
+    payload = {
+        "offer_id": offer.id,
+        "legal_profile_id": profil.id,
+        "authorized_representative_id": temsilci.id,
+    }
+    if customer_id is not None:
+        payload["customer_id"] = customer_id
+    return payload
+
+
 def _make_document(db, document_type, customer_id=None, tenant_id="default", sha_seed=None):
     from app.database import UploadedReferenceDocument
     seed = sha_seed or f"{document_type}-{customer_id}-{tenant_id}"
@@ -1145,7 +1195,7 @@ class TestContractLifecycleAPI:
         service.detect_conflicts_for_customer_documents(db, [doc1.id, doc2.id])
 
         draft = client.post(
-            "/api/contracts/drafts", json={"offer_id": offer.id, "customer_id": customer.id}
+            "/api/contracts/drafts", json=_legal_draft_payload(db, offer, customer.id)
         ).json()
         client.post(f"/api/contracts/{draft['id']}/preview", json={"start_date": "2026-01-01", "duration_months": 12})
 
@@ -1156,7 +1206,7 @@ class TestContractLifecycleAPI:
     def test_finalize_success_then_immutable(self, client, db):
         offer = _make_offer(db, agreement_multiplier=1.01)
         db.commit()
-        draft = client.post("/api/contracts/drafts", json={"offer_id": offer.id}).json()
+        draft = client.post("/api/contracts/drafts", json=_legal_draft_payload(db, offer)).json()
         client.post(f"/api/contracts/{draft['id']}/preview", json={"start_date": "2026-01-01", "duration_months": 12})
 
         fixed_bytes = b"%PDF-fake-contract-bytes"
@@ -1197,7 +1247,7 @@ class TestContractLifecycleAPI:
         from app.database import Offer
         offer = _make_offer(db, agreement_multiplier=1.01)
         db.commit()
-        draft = client.post("/api/contracts/drafts", json={"offer_id": offer.id}).json()
+        draft = client.post("/api/contracts/drafts", json=_legal_draft_payload(db, offer)).json()
         client.post(f"/api/contracts/{draft['id']}/preview", json={"start_date": "2026-01-01", "duration_months": 12})
 
         with patch("app.contracts.pdf_service.html_to_pdf_bytes_sync", return_value=b"%PDF-fake"):
@@ -1214,14 +1264,14 @@ class TestContractLifecycleAPI:
         """
         offer = _make_offer(db, agreement_multiplier=1.01)
         db.commit()
-        draft1 = client.post("/api/contracts/drafts", json={"offer_id": offer.id}).json()
+        draft1 = client.post("/api/contracts/drafts", json=_legal_draft_payload(db, offer)).json()
         client.post(f"/api/contracts/{draft1['id']}/preview", json={"start_date": "2026-01-01", "duration_months": 12})
         with patch("app.contracts.pdf_service.html_to_pdf_bytes_sync", return_value=b"%PDF-fake"):
             client.post(f"/api/contracts/{draft1['id']}/finalize")
         db.refresh(offer)
         assert offer.status == "completed"
 
-        resp2 = client.post("/api/contracts/drafts", json={"offer_id": offer.id})
+        resp2 = client.post("/api/contracts/drafts", json=_legal_draft_payload(db, offer))
         assert resp2.status_code == 200  # engellenmedi
 
         db.refresh(offer)
@@ -1239,7 +1289,7 @@ class TestContractLifecycleAPI:
     def test_download_after_finalize_streams_pdf_bytes(self, client, db):
         offer = _make_offer(db, agreement_multiplier=1.01)
         db.commit()
-        draft = client.post("/api/contracts/drafts", json={"offer_id": offer.id}).json()
+        draft = client.post("/api/contracts/drafts", json=_legal_draft_payload(db, offer)).json()
         client.post(f"/api/contracts/{draft['id']}/preview", json={"start_date": "2026-01-01", "duration_months": 12})
 
         fixed_bytes = b"%PDF-fake-contract-bytes"
@@ -1451,7 +1501,7 @@ class TestFinalizeConcurrencyAndIdempotencyAPI:
         """
         offer = _make_offer(db, agreement_multiplier=1.01)
         db.commit()
-        draft = client.post("/api/contracts/drafts", json={"offer_id": offer.id}).json()
+        draft = client.post("/api/contracts/drafts", json=_legal_draft_payload(db, offer)).json()
         client.post(f"/api/contracts/{draft['id']}/preview", json={"start_date": "2026-01-01", "duration_months": 12})
 
         render_call_count = {"n": 0}
@@ -1480,7 +1530,7 @@ class TestFinalizeConcurrencyAndIdempotencyAPI:
     def test_repeated_finalize_call_is_idempotent(self, client, db):
         offer = _make_offer(db, agreement_multiplier=1.01)
         db.commit()
-        draft = client.post("/api/contracts/drafts", json={"offer_id": offer.id}).json()
+        draft = client.post("/api/contracts/drafts", json=_legal_draft_payload(db, offer)).json()
         client.post(f"/api/contracts/{draft['id']}/preview", json={"start_date": "2026-01-01", "duration_months": 12})
 
         with patch("app.contracts.pdf_service.html_to_pdf_bytes_sync", return_value=b"%PDF-idempotent"):
@@ -1494,7 +1544,7 @@ class TestFinalizeConcurrencyAndIdempotencyAPI:
         """'pdf_sha256 ile indirilen dosyanın hash'i eşleşsin' — storage bytes ↔ persisted hash kanıtı."""
         offer = _make_offer(db, agreement_multiplier=1.01)
         db.commit()
-        draft = client.post("/api/contracts/drafts", json={"offer_id": offer.id}).json()
+        draft = client.post("/api/contracts/drafts", json=_legal_draft_payload(db, offer)).json()
         client.post(f"/api/contracts/{draft['id']}/preview", json={"start_date": "2026-01-01", "duration_months": 12})
 
         fixed_bytes = b"%PDF-hash-parity-check"
@@ -1633,7 +1683,7 @@ class TestOfferLifecycleFailureIsolation:
         """Contract finalize BAŞARISI offer-lifecycle yan etkisine bağımlı DEĞİL — istemci her zaman success görür."""
         offer = _make_offer(db, agreement_multiplier=1.01)
         db.commit()
-        draft = client.post("/api/contracts/drafts", json={"offer_id": offer.id}).json()
+        draft = client.post("/api/contracts/drafts", json=_legal_draft_payload(db, offer)).json()
         client.post(f"/api/contracts/{draft['id']}/preview", json={"start_date": "2026-01-01", "duration_months": 12})
 
         with patch("app.contracts.pdf_service.html_to_pdf_bytes_sync", return_value=b"%PDF-lifecycle-fail-test"), \

@@ -231,6 +231,19 @@ class ContractOut(BaseModel):
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     created_at: str
+    # S5-R01: finalize için EKSİK olan zorunlu hukuki alanların ADLARI.
+    #
+    # Taslak eksik bilgiyle oluşturulabilir; bu alan kullanıcıya neyin
+    # eksik olduğunu gösterir. Değer SERVER-AUTHORITATIVE'dir:
+    # CustomerLegalProfile / CustomerAuthorizedRepresentative DB
+    # kayıtlarından hesaplanır — client payload'ı veya preview snapshot
+    # iddiası kaynak KABUL EDİLMEZ. Finalize kapısı da AYNI kaynağı
+    # kullanır (contracts.service.missing_required_legal_fields).
+    #
+    # PII YOK: yalnız alan ADLARI döner; TCKN, vergi numarası veya başka
+    # hiçbir değer bu alana yazılmaz/loglanmaz. Alanlar tamamlandığında
+    # boş liste döner.
+    missing_required_fields: list[str] = []
     # S1 CRM Core Sözleşmeler ekranı için (Firma/Katsayı kolonları) —
     # PII değil (customer_name zaten GET /customers'da genel, agreement_
     # multiplier fiyatlandırma bilgisi). Opsiyonel: eski çağıranları bozmaz.

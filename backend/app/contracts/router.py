@@ -438,9 +438,13 @@ def create_contract_draft(
 
     service.mark_offer_contracting(db, offer)
 
+    # S5-R01: taslak eksik bilgiyle olusturulabilir; kullaniciya NEYIN eksik
+    # oldugu ayni server-authoritative kaynaktan bildirilir (finalize kapisi da
+    # bunu kullanir). Yalniz alan ADLARI doner — PII yok.
     return ContractOut(
         id=contract.id, customer_id=contract.customer_id, offer_id=contract.offer_id, contract_number=contract.contract_number,
         status=contract.status, start_date=None, end_date=None, created_at=contract.created_at.isoformat(),
+        missing_required_fields=service.missing_required_legal_fields(db, contract),
     )
 
 
@@ -505,6 +509,41 @@ def finalize_contract(
         return _idempotent_response(contract)
     if not contract.extraction_snapshot_json:
         raise HTTPException(status_code=409, detail={"error": "preview_required", "message": "Önce önizleme yapılmalı"})
+
+    # ── S5-R01: FAIL-CLOSED ZORUNLU HUKUKİ ALAN KAPISI ────────────────────
+    # Taslak eksik bilgiyle oluşturulabilir; finalize edilemez. Kapı CAS
+    # claim'inden ÖNCE uygulanır: reddedilen finalize contract state'i,
+    # belgeleri veya audit'i KISMEN İLERLETMEZ (owner madde 10).
+    # Kaynak DB kayıtlarıdır — client'ın "hazır" iddiasına güvenilmez
+    # (owner madde 8). Belge yüklenmiş olması tek başına şart değildir
+    # (owner madde 7); `document_ids` boş olması kapıyı ATLATAMAZ (madde 5).
+    eksik_alanlar = service.missing_required_legal_fields(db, contract)
+    if eksik_alanlar:
+        # PII yok: yalnız alan ADLARI döner/loglanır (owner madde 9).
+        logger.warning(
+            "Finalize reddedildi (contract=%s): eksik zorunlu alanlar=%s",
+            contract.id, ",".join(eksik_alanlar),
+        )
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "missing_required_fields",
+                "message": "Zorunlu hukuki alanlar eksik — sözleşme finalize edilemez",
+                "missing_fields": eksik_alanlar,
+            },
+        )
+
+    # DB dolu fakat önizleme bayatsa üretilecek PDF alanları boş gösterirdi.
+    bayat_alanlar = service.snapshot_missing_required_fields(contract.extraction_snapshot_json)
+    if bayat_alanlar:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "stale_preview",
+                "message": "Önizleme güncel değil — lütfen önizlemeyi yenileyin",
+                "missing_fields": bayat_alanlar,
+            },
+        )
 
     # Belgeler arası çözülmemiş çelişki varsa finalize engellenir.
     documents = (
@@ -608,6 +647,27 @@ def list_contracts(
         .filter(db_models.Offer.id.in_(offer_ids)).all()
     } if offer_ids else {}
 
+    # S5-R01: `missing_required_fields` listede de GERÇEK değeri taşımalı —
+    # varsayılan boş liste dönmek "eksik yok" YALANI olurdu. Aynı N+1'siz
+    # desenle iki toplu sorgu daha yapılır; doğrulama mantığı tekrarlanmaz,
+    # service.missing_fields_from_records() paylaşılır.
+    profil_ids = {c.legal_profile_id for c in contracts if c.legal_profile_id is not None}
+    temsilci_ids = {
+        c.authorized_representative_id
+        for c in contracts
+        if c.authorized_representative_id is not None
+    }
+    profiller = {
+        p.id: p
+        for p in db.query(db_models.CustomerLegalProfile)
+        .filter(db_models.CustomerLegalProfile.id.in_(profil_ids)).all()
+    } if profil_ids else {}
+    temsilciler = {
+        t.id: t
+        for t in db.query(db_models.CustomerAuthorizedRepresentative)
+        .filter(db_models.CustomerAuthorizedRepresentative.id.in_(temsilci_ids)).all()
+    } if temsilci_ids else {}
+
     return [
         ContractOut(
             id=c.id, customer_id=c.customer_id, offer_id=c.offer_id, contract_number=c.contract_number,
@@ -615,6 +675,10 @@ def list_contracts(
             end_date=c.end_date.isoformat() if c.end_date else None, created_at=c.created_at.isoformat(),
             customer_name=customer_names.get(c.customer_id) if c.customer_id is not None else None,
             agreement_multiplier=offer_multipliers.get(c.offer_id),
+            missing_required_fields=service.missing_fields_from_records(
+                profiller.get(c.legal_profile_id),
+                temsilciler.get(c.authorized_representative_id),
+            ),
         )
         for c in contracts
     ]
@@ -637,6 +701,7 @@ def get_contract(
         end_date=contract.end_date.isoformat() if contract.end_date else None, created_at=contract.created_at.isoformat(),
         customer_name=contract.customer.name if contract.customer else None,
         agreement_multiplier=offer.agreement_multiplier if offer else None,
+        missing_required_fields=service.missing_required_legal_fields(db, contract),
     )
 
 

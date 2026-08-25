@@ -249,8 +249,17 @@ export const ContractWizardModal: React.FC<ContractWizardModalProps> = ({ open, 
   // belgeye özgü zorunlu alanlar (örn. yalnız imza sirkülerinde bulunan T.C.
   // no) review adımında elle giriş satırı olarak sunulur (bkz. reviewRows).
   const handleUploadAndProcess = useCallback(async () => {
+    // S5-R01: BELGESİZ DEVAM SERBEST. Önceden burada sert bir kapı vardı
+    // ("En az bir belge yüklenmelidir") ve vergi levhası/imza sirküleri
+    // olmayan kullanıcı sözleşme taslağı hazırlamaya HİÇ başlayamıyordu.
+    // Belge yoksa yükleme/extraction adımları tümüyle atlanır ve doğrudan
+    // inceleme adımına geçilir; inceleme adımı zaten sıfır candidate ile
+    // zorunlu alanların tamamı için elle giriş satırı üretir.
+    // Nihai kapı sunucudadır: finalize eksik alanla REDDEDİLİR.
     if (!taxCertFile && !signatureCircularFile) {
-      setError('En az bir belge (vergi levhası veya imza sirküleri) yüklenmelidir.');
+      setError(null);
+      setCandidates([]);
+      setStep('review');
       return;
     }
     setError(null);
@@ -441,7 +450,7 @@ export const ContractWizardModal: React.FC<ContractWizardModalProps> = ({ open, 
         {step === 'upload' && (
           <div className="space-y-4">
             <p className="text-sm text-gray-600">Sözleşme taraflarını ve Ek Protokol bilgilerini otomatik doldurmak için vergi levhası ve/veya imza sirküleri belgesini yükleyin.</p>
-            <p className="text-xs text-gray-400 -mt-2">Tek belge ile de devam edebilirsiniz — yüklemediğiniz belgeye ait zorunlu bilgileri bir sonraki adımda elle girebilirsiniz.</p>
+            <p className="text-xs text-gray-400 -mt-2">Belge yüklemek zorunlu değildir — hiç belge olmadan da devam edip zorunlu bilgileri bir sonraki adımda elle girebilirsiniz. Sözleşmeyi finalize etmek için bu bilgilerin tamamlanmış olması gerekir.</p>
             {(invoiceSeed?.legal_name || invoiceSeed?.tax_number || invoiceSeed?.facility_address) && (
               <div className="flex items-start gap-2 rounded-md bg-blue-50 border border-blue-200 p-3 text-xs text-blue-800">
                 <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
@@ -465,10 +474,13 @@ export const ContractWizardModal: React.FC<ContractWizardModalProps> = ({ open, 
               <button
                 type="button"
                 onClick={handleUploadAndProcess}
-                disabled={(!taxCertFile && !signatureCircularFile) || loading}
+                disabled={loading}
                 className="btn-primary flex items-center gap-2"
               >
-                <Upload className="w-4 h-4" /> Yükle ve Devam Et
+                <Upload className="w-4 h-4" />{' '}
+                {taxCertFile || signatureCircularFile
+                  ? 'Yükle ve Devam Et'
+                  : 'Belgesiz Devam Et'}
               </button>
             </div>
           </div>
@@ -489,13 +501,27 @@ export const ContractWizardModal: React.FC<ContractWizardModalProps> = ({ open, 
                 <span>Belgeler arasında çelişki tespit edildi. Devam etmeden önce her çelişkili alan için doğru değeri seçin.</span>
               </div>
             )}
+            {/* S5-R01: Eksik zorunlu alan artık TASLAK oluşturmayı ENGELLEMEZ.
+                Vergi levhası / imza sirküleri henüz yokken de sözleşme
+                hazırlanmaya başlanabilir. Eksik alanlar burada uyarı olarak
+                gösterilir; nihai kapı sunucudadır — finalize sırasında backend
+                aynı alanları yeniden doğrular ve eksikse reddeder. */}
             {!hasUnresolvedConflicts && (
-              <div className={`rounded-md border p-3 text-sm ${requiredFieldsReady ? 'border-green-200 bg-green-50 text-green-800' : 'border-gray-200 bg-gray-50 text-gray-700'}`}>
+              <div className={`rounded-md border p-3 text-sm ${requiredFieldsReady ? 'border-green-200 bg-green-50 text-green-800' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>
                 <span className="font-medium">
                   Zorunlu alanlar: {REQUIRED_FIELD_NAMES.length - missingRequiredFieldNames.length}/{REQUIRED_FIELD_NAMES.length} onaylandı
                 </span>
                 {missingRequiredFieldNames.length > 0 && (
-                  <span> — eksik: {missingRequiredFieldNames.map(n => FIELD_LABELS[n] || n).join(', ')}</span>
+                  <>
+                    <span> — eksik: {missingRequiredFieldNames.map(n => FIELD_LABELS[n] || n).join(', ')}</span>
+                    <div className="mt-1.5 flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                      <span>
+                        Taslak olarak devam edebilirsiniz. Sözleşmeyi <strong>finalize etmek</strong> için
+                        bu alanların tamamlanması gerekir.
+                      </span>
+                    </div>
+                  </>
                 )}
               </div>
             )}
@@ -524,10 +550,14 @@ export const ContractWizardModal: React.FC<ContractWizardModalProps> = ({ open, 
             </div>
             <div className="flex justify-between pt-2">
               <button type="button" onClick={() => setStep('upload')} className="btn-secondary">Geri</button>
+              {/* S5-R01: `!requiredFieldsReady` koşulu KALDIRILDI — eksik vergi
+                  levhası / imza sirküleri taslak oluşturmayı bloke etmez.
+                  Çözülmemiş ÇELİŞKİ hâlâ engeldir (yanlış değerle taslak
+                  üretmek veri bütünlüğünü bozar). */}
               <button
                 type="button"
                 onClick={handleConfirmReview}
-                disabled={hasUnresolvedConflicts || !requiredFieldsReady || loading}
+                disabled={hasUnresolvedConflicts || loading}
                 className="btn-primary flex items-center gap-2"
               >
                 {loading && <Loader2 className="w-4 h-4 animate-spin" />} Devam Et

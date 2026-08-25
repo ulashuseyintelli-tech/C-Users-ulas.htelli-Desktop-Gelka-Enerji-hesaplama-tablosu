@@ -1,6 +1,6 @@
 ﻿import { useState, useCallback, useMemo, useEffect } from 'react';
 import { Upload, FileText, Zap, TrendingDown, AlertCircle, CheckCircle, Loader2, RefreshCw, Download, Settings, FileSignature, Users, Database } from 'lucide-react';
-import { fullProcess, downloadPdf, FullProcessResponse, pricingAnalyze, pricingGetTemplates, pricingGetPeriods, pricingDownloadPdf, pricingDownloadExcel, PricingAnalyzeResponse, normalizeInvoicePeriod, API_BASE, TemplateItem, getVersion, VersionInfo, PdfMismatchError, PdfMismatchContract, createOffer, createCustomer, OfferCalculationPayload } from './api';
+import { fullProcess, generateOfferPdf, downloadOfferPdf, FullProcessResponse, pricingAnalyze, pricingGetTemplates, pricingGetPeriods, pricingDownloadPdf, pricingDownloadExcel, PricingAnalyzeResponse, normalizeInvoicePeriod, API_BASE, TemplateItem, getVersion, VersionInfo, PdfMismatchError, PdfMismatchContract, createOffer, createCustomer, OfferCalculationPayload } from './api';
 import { ContractWizardModal } from './contracts/ContractWizardModal';
 import AdminPanel from './AdminPanel';
 import ReconPage from './recon/ReconPage';
@@ -877,6 +877,9 @@ function App() {
 
   const handleDownloadPdf = async () => {
     if (!liveCalculation) return;
+    // S5-R01: yeniden giris korumasi — ayni kullanici aksiyonu IKINCI bir
+    // teklif kaydi olusturmamali (butonlar zaten disabled, bu ikinci kat).
+    if (pdfLoading || offerPersisting) return;
     // P0 guard: PTF zorunlu — boş/0 ise çöp teklif PDF'i üretme.
     if (!ptfPrice || ptfPrice <= 0) {
       setError("Teklif PTF değeri zorunludur ve 0'dan büyük olmalıdır.");
@@ -914,18 +917,11 @@ function App() {
     
     setPdfLoading(true);
     try {
-      const tariffLabel = distributionTariffKey 
-        ? activeTariffs.find(t => t.key === distributionTariffKey)?.label 
-        : manualValues.tariff_group || 'Sanayi';
-      
-      const companySlug = customerInfo.company_name
-        ? customerInfo.company_name.trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_çÇğĞıİöÖşŞüÜ]/g, '')
-        : '';
-      const now = new Date();
-      const offerId = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}`;
-      const fileName = companySlug
-        ? `teklif_${companySlug}_${offerId}.pdf`
-        : `teklif_${offerId}.pdf`;
+      // S5-R01: dosya adi artik SUNUCU tarafindan belirlenir
+      // (`teklif_{offer.id}.pdf`); istemci tarafinda ad uretilmez.
+      // Teklif bir kez persist edilir; PDF yalnizca donen gercek offer.id ile
+      // uretilir/indirilir.
+      let uretilecekOfferId: number | null = null;
 
       // Ortak hesaplama gövdesi — hem persist (POST /offers) hem PDF üretimi
       // AYNI ekrandaki nihai değerleri kullanır (owner kararı: Offer artık
@@ -1003,25 +999,35 @@ function App() {
             vat_rate: vatRate,
             btv_rate: btvRate,
           },
-          customerIdForOffer
+          customerIdForOffer,
+          // S5-R01: R2 sapma kapisi artik PERSIST aninda calisir. Sapmali
+          // teklif HIC KAYDEDILMEZ (once kaydediliyor, yalniz PDF bloke
+          // oluyordu). Bu degerler PDF endpoint'ine ASLA gitmez.
+          {
+            invoice_total_raw: paramsForOffer.invoice_total_raw,
+            operator_confirmed_warnings: paramsForOffer.operator_confirmed_warnings,
+          }
         );
+        uretilecekOfferId = persisted.id;
         setPersistedOfferId(persisted.id);
         setPersistedCustomerId(customerIdForOffer);
       } finally {
         setOfferPersisting(false);
       }
 
-      await downloadPdf(
-        extraction,
-        calcForPdf,
-        paramsForOffer,
-        fileName,
-        customerInfo.company_name || undefined,
-        customerInfo.contact_person || undefined,
-        customerInfo.offer_date || undefined,
-        customerInfo.offer_validity_days || 15,
-        tariffLabel || 'Sanayi'
-      );
+      // ── S5-R01: PERSIST EDILMIS TEKLIF PDF ZINCIRI ──────────────────
+      // `/generate-pdf-simple` bu akista ARTIK CAGRILMIYOR: teklif kimligi
+      // tasimiyor, istemciden gelen hesap degerlerine guveniyor ve `pdf_ref`
+      // yazmiyordu. Yerine offer-bound zincir kullanilir:
+      //   POST /offers/{id}/generate-pdf  -> sunucudaki snapshot'tan uretir
+      //   GET  /offers/{id}/download      -> uretilen dosyayi indirir
+      // Hata halinde `/generate-pdf-simple` FALLBACK'i YAPILMAZ.
+      if (uretilecekOfferId === null) {
+        throw new Error('Teklif kaydedilemedi; PDF uretilmedi.');
+      }
+      // Backend idempotenttir: gecerli bir PDF zaten varsa yeniden uretmez.
+      await generateOfferPdf(uretilecekOfferId);
+      await downloadOfferPdf(uretilecekOfferId);
       setMismatchInfo(null);  // başarı → uyarı durumunu temizle
     } catch (err: any) {
       console.error('PDF Download Error:', err);
