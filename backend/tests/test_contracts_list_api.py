@@ -216,6 +216,10 @@ class TestListContracts:
             "id", "customer_id", "offer_id", "contract_number", "status",
             "start_date", "end_date", "created_at",
             "customer_name", "agreement_multiplier",
+            # S5-R01: taslak eksik hukuki alanlarini gosterir (yalniz alan
+            # ADLARI, PII yok). Listede de GERCEK deger doner -- varsayilan
+            # bos liste dondurmek "eksik yok" yalani olurdu.
+            "missing_required_fields",
         }
 
     def test_customer_name_and_agreement_multiplier_populated(self, db, client):

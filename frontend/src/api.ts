@@ -237,14 +237,40 @@ export async function createOffer(
     vat_rate?: number;
     btv_rate?: number;
   },
-  customerId?: number
+  customerId?: number,
+  // S5-R01: R2 gross-misread guard girdileri. Persist edilmiş teklif PDF
+  // akışı artık `/generate-pdf-simple` çağırmadığı için (owner Bölüm 1.1)
+  // sapma kapısı PERSIST anına taşındı; sapmalı teklif hiç KAYDEDİLMEZ.
+  // `customer_id` ile aynı desen: query param (backend `OfferParams` şeması
+  // kapsam dışı olduğu için gövdeye eklenmedi).
+  guard?: { invoice_total_raw?: number; operator_confirmed_warnings?: boolean }
 ): Promise<CreateOfferResponse> {
-  const response = await api.post(
-    '/offers',
-    { extraction, calculation, params },
-    { params: customerId ? { customer_id: customerId } : undefined }
-  );
-  return response.data;
+  try {
+    const response = await api.post(
+      '/offers',
+      { extraction, calculation, params },
+      {
+        params: {
+          ...(customerId ? { customer_id: customerId } : {}),
+          ...(guard?.invoice_total_raw !== undefined
+            ? { invoice_total_raw: guard.invoice_total_raw }
+            : {}),
+          ...(guard?.operator_confirmed_warnings
+            ? { operator_confirmed_warnings: true }
+            : {}),
+        },
+      }
+    );
+    return response.data;
+  } catch (err: any) {
+    // Sapma sözleşmesi `/generate-pdf-simple` ile BİREBİR aynı şekildedir;
+    // App.tsx'teki mevcut PdfMismatchError akışı değişmeden çalışır.
+    const govde = err?.response?.data;
+    if (govde?.error?.code === 'extraction_mismatch') {
+      throw new PdfMismatchError(govde.error as PdfMismatchContract);
+    }
+    throw err;
+  }
 }
 
 export interface StatsResponse {
@@ -389,6 +415,83 @@ export interface OfferDetail extends Omit<OfferListItem, 'customer_name'> {
 export async function getOffer(offerId: number): Promise<OfferDetail> {
   const response = await api.get(`/offers/${offerId}`);
   return response.data;
+}
+
+// ── S5-R01: Kayıtlı teklif PDF'i ────────────────────────────────────────────
+// Persist edilmiş teklif PDF'i YALNIZ offer-bound zincirle üretilir/indirilir:
+//   POST /offers/{id}/generate-pdf   → sunucudaki snapshot'tan üretir
+//   GET  /offers/{id}/download       → üretilmiş dosyayı indirir
+// `/generate-pdf-simple` bu akışta KULLANILMAZ: teklif kimliği taşımaz,
+// istemciden gelen hesap değerlerine güvenir ve `pdf_ref` yazmaz.
+
+export interface OfferPdfGenerateResult {
+  offer_id: number;
+  message: string;
+  /** Sunucunun verdiği göreli indirme yolu (`/offers/{id}/download`). */
+  download_url: string;
+  /**
+   * true  → bu istek PDF'i fiilen üretti
+   * false → PDF zaten mevcuttu ve idempotent döndürüldü (generator ikinci
+   *         kez ÇAĞRILMADI)
+   */
+  regenerated: boolean;
+}
+// NOT: Backend yanıtında `pdf_ref` (fiziksel dosya yolu) de bulunur; burada
+// BİLEREK tip dışı bırakılmıştır. Frontend bu değeri render etmez, loglamaz
+// ve download URL'si olarak birleştirmez (owner S5-R01 madde 4).
+
+/**
+ * Kayıtlı teklif için PDF üretir.
+ *
+ * Request GÖVDESİ YOKTUR — hiçbir hesap değeri gönderilmez; PDF sunucuda
+ * saklanan `extraction_result` / `calculation_result` snapshot'ından üretilir.
+ * Backend idempotenttir: geçerli bir PDF zaten varsa yeniden üretmez.
+ *
+ * Çağrıldığı yerler:
+ * - CrmCore/OffersScreen.tsx → Teklif detayı "PDF Oluştur" aksiyonu [S5-R01]
+ */
+export async function generateOfferPdf(offerId: number): Promise<OfferPdfGenerateResult> {
+  const response = await api.post(`/offers/${offerId}/generate-pdf`);
+  return response.data;
+}
+
+/**
+ * Üretilmiş teklif PDF'ini indirir.
+ *
+ * İndirme adresi HER ZAMAN teklif kimliğinden kurulur; `pdf_ref` (fiziksel
+ * yol) kullanılmaz. Electron'da mevcut `download:file` IPC kanalı üzerinden
+ * kaydedilir (URL doğrulaması + kaydet penceresi orada uygulanır); tarayıcıda
+ * blob olarak indirilir.
+ *
+ * Çağrıldığı yerler:
+ * - CrmCore/OffersScreen.tsx → Teklif detayı "PDF İndir" aksiyonu [S5-R01]
+ */
+export async function downloadOfferPdf(offerId: number): Promise<void> {
+  const fileName = `teklif_${offerId}.pdf`;
+
+  if (window.electronAPI?.isElectron) {
+    const sonuc = await window.electronAPI.downloadFile(
+      `${API_BASE}/offers/${offerId}/download`,
+      fileName,
+    );
+    if (!sonuc.ok && !sonuc.canceled) {
+      throw new Error(sonuc.error || 'PDF indirilemedi.');
+    }
+    return;
+  }
+
+  const response = await api.get(`/offers/${offerId}/download`, { responseType: 'blob' });
+  const blobUrl = URL.createObjectURL(response.data as Blob);
+  try {
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } finally {
+    URL.revokeObjectURL(blobUrl);
+  }
 }
 
 /**
