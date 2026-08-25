@@ -1561,15 +1561,25 @@ class TestFinalizeConcurrencyAndIdempotencyAPI:
         uca doğrular (mock değil) — draft->preview->finalize->download,
         hash parity ve idempotent tekrar-finalize dahil. Chromium yoksa atlanır.
         """
+        # S5-R02A: R01'in fail-closed finalize kapisi geldikten sonra bu test
+        # hukuki veri olmadan taslak aciyor, kapinin 422'sini "Playwright yok"
+        # saniyor ve YANLIS TESHISLE sessizce skip'e dusuyordu. Artik taslak
+        # gecerli hukuki kayitlarla acilir; yalniz GERCEK Chromium yoklugu
+        # skip nedeni olabilir ve o da 422 degil 500/exception uretir.
         offer = _make_offer(db, agreement_multiplier=1.01)
         db.commit()
-        draft = client.post("/api/contracts/drafts", json={"offer_id": offer.id}).json()
+        draft = client.post("/api/contracts/drafts", json=_legal_draft_payload(db, offer)).json()
         client.post(f"/api/contracts/{draft['id']}/preview", json={"start_date": "2026-01-01", "duration_months": 12})
 
         try:
             finalize_resp = client.post(f"/api/contracts/{draft['id']}/finalize")
         except Exception as exc:  # noqa: BLE001
             pytest.skip(f"Playwright/Chromium bu ortamda kullanılamıyor: {exc}")
+        if finalize_resp.status_code == 422:
+            pytest.fail(
+                "finalize 422 dondu — bu Chromium yoklugu DEGIL, taslagin eksik "
+                "kurulmasidir (sessiz kapsam kaybi): " + finalize_resp.text
+            )
         if finalize_resp.status_code != 200:
             pytest.skip(f"Playwright/Chromium bu ortamda kullanılamıyor (status={finalize_resp.status_code}): {finalize_resp.text}")
 

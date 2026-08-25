@@ -84,12 +84,95 @@ class TestBackendContract:
         assert "application/pdf" in resp.headers["content-type"]
 
     def test_200_has_content_disposition(self, client):
-        """200 response must have Content-Disposition: attachment header."""
+        """
+        200 response must have Content-Disposition: attachment header.
+
+        S5-R02A: `b3e0957` bu basligi sessizce `inline` yapmis ve bu testi
+        guncellememisti; hata 2026-03-03'ten beri DETERMINISTIK olarak
+        dusuyordu. Owner karari (R02A Bolum 0, Karar B) ile `attachment`
+        sozlesmesi geri getirildi — assertion GEVSETILMEDI.
+        """
         resp = client.post("/generate-pdf-simple", data=_pdf_form_data())
         assert resp.status_code == 200
         cd = resp.headers.get("content-disposition", "")
         assert "attachment" in cd
+        assert "inline" not in cd, "indirme endpoint'i `inline` DONMEMELI"
         assert "filename=" in cd
+
+    def test_filename_beklenen_ve_guvenli(self, client):
+        """Filename deterministik, beklenen bicimde ve yalniz guvenli karakterler."""
+        import re
+
+        resp = client.post("/generate-pdf-simple", data=_pdf_form_data())
+        assert resp.status_code == 200
+        cd = resp.headers["content-disposition"]
+        m = re.search(r'filename="([^"]+)"', cd)
+        assert m, f"filename cikarilamadi: {cd!r}"
+        ad = m.group(1)
+        assert ad.startswith("teklif_") and ad.endswith(".pdf")
+        govde = ad[len("teklif_"):-len(".pdf")]
+        assert re.fullmatch(r"[A-Za-z0-9_\-]*", govde), f"guvensiz karakter: {ad!r}"
+
+    def test_crlf_header_injection_mumkun_degil(self, client):
+        """
+        `invoice_period` uzerinden CR/LF enjekte edilemez: sanitize yalnizca
+        [A-Za-z0-9_-] birakir, bu yuzden basliga yeni satir/ek alan sizamaz.
+        """
+        kotu = "2026-01" + chr(13) + chr(10) + "X-Injected: evil" + chr(13) + chr(10) + "Set-Cookie: a=b"
+        veri = _pdf_form_data()
+        veri["invoice_period"] = kotu
+        resp = client.post("/generate-pdf-simple", data=veri)
+        assert resp.status_code == 200
+        cd = resp.headers["content-disposition"]
+        # Asil sozlesme: baslik TEK SATIR kalir ve ENJEKTE EDILMIS BASLIK
+        # olusmaz. Sanitize CR/LF'i `_` yaptigi icin saldirganin metni dosya
+        # adinda GUVENLI karakterler olarak kalabilir — bu zararsizdir.
+        import re as _re2
+
+        assert chr(13) not in cd and chr(10) not in cd
+        assert "x-injected" not in {k.lower() for k in resp.headers}
+        assert "set-cookie" not in {k.lower() for k in resp.headers}
+        m = _re2.search(r'filename="([^"]+)"', cd)
+        assert m, f"filename cikarilamadi: {cd!r}"
+        govde = m.group(1)[len("teklif_"):-len(".pdf")]
+        assert _re2.fullmatch(r"[A-Za-z0-9_\-]*", govde), f"guvensiz karakter: {govde!r}"
+
+    def test_govde_ve_status_degismedi(self, client):
+        """`attachment` degisikligi PDF govdesini veya status kodunu etkilemez."""
+        resp = client.post("/generate-pdf-simple", data=_pdf_form_data())
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "application/pdf"
+        assert resp.content[:5] == b"%PDF-"
+        # NOT: bu pakette PDF generator MOCK'lanmistir (kisa sahte govde);
+        # bu yuzden keyfi bir boyut esigi degil, govdenin BOS OLMADIGI ve
+        # `attachment` degisikliginden ETKILENMEDIGI dogrulanir.
+        assert len(resp.content) > 0
+
+    def test_mutation_inline_geri_gelirse_kirilir(self):
+        """
+        MUTATION KAPISI (AST): `/generate-pdf-simple` yanit basliginda
+        `inline` yeniden belirirse bu test kirilir. Naif substring taramasi
+        DEGIL — kaynak AST'si uzerinde ilgili fonksiyon govdesi denetlenir.
+        """
+        import ast
+        from pathlib import Path
+
+        kaynak = (Path(__file__).resolve().parents[1] / "app" / "main.py").read_text(
+            encoding="utf-8"
+        )
+        agac = ast.parse(kaynak)
+        fn = next(
+            d for d in ast.walk(agac)
+            if isinstance(d, (ast.AsyncFunctionDef, ast.FunctionDef))
+            and d.name == "generate_pdf_simple"
+        )
+        basliklar = [
+            ast.unparse(n) for n in ast.walk(fn)
+            if isinstance(n, ast.JoinedStr) and "Content-Disposition" not in ast.unparse(n)
+        ]
+        birlesik = " ".join(basliklar)
+        assert "attachment; filename=" in birlesik, "attachment sozlesmesi kayboldu"
+        assert "inline; filename=" not in birlesik, "`inline` GERILEMESI geri gelmis"
 
     def test_200_has_x_request_id(self, client):
         """200 response must include X-Request-Id header."""

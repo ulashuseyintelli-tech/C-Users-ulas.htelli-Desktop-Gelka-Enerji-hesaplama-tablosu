@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import socket
 import sqlite3
 import subprocess
@@ -321,13 +322,42 @@ class CanliSunucu:
                 if p.is_file() and (p.suffix == ".tmp" or p.suffix == ".pdf")]
 
 
+
+def _alembic_yolu() -> Path:
+    """
+    Alembic betigini KOSAN YORUMLAYICIYA gore bulur.
+
+    S5-R02 BULGUSU: burasi onceden `BACKEND/.venv/Scripts/alembic.exe` gibi
+    KAYNAK AGACINA GORELI bir yol ariyordu. Izole bir git worktree'de (venv
+    yok) bu dosya bulunmuyor ve 18 entegrasyon testi SESSIZCE skip'e
+    dusuyordu — yani kapsam ortama gore kayboluyordu.
+
+    Dogru capa, testleri fiilen calistiran yorumlayicinin Scripts/bin
+    dizinidir; venv'in kaynak agacinda nerede durdugu onemsizdir.
+
+    Bulunamazsa SKIP DEGIL, SETUP FAILURE uretilir: sessiz kapsam kaybi
+    bir daha olusamaz (owner Bolum 8).
+    """
+    adaylar = [
+        Path(sys.executable).parent / "alembic.exe",   # Windows venv
+        Path(sys.executable).parent / "alembic",       # POSIX venv
+    ]
+    yoldan = shutil.which("alembic")
+    if yoldan:
+        adaylar.append(Path(yoldan))
+    for aday in adaylar:
+        if aday.exists():
+            return aday
+    raise RuntimeError(
+        "alembic betigi bulunamadi (SETUP FAILURE, skip DEGIL). Arananlar: "
+        + ", ".join(str(a) for a in adaylar)
+    )
+
 @pytest.fixture(scope="module")
 def sunucu(tmp_path_factory):
     kok = tmp_path_factory.mktemp("s5r01a_http")
     (kok / "storage").mkdir()
-    alembic = BACKEND / ".venv" / "Scripts" / "alembic.exe"
-    if not alembic.exists():
-        pytest.skip("alembic betiği bu ortamda yok")
+    alembic = _alembic_yolu()
     ortam = dict(os.environ, DATABASE_URL=f"sqlite:///{(kok / 'uat.db').as_posix()}")
     sonuc = subprocess.run([str(alembic), "upgrade", "head"], cwd=str(BACKEND),
                            env=ortam, capture_output=True)

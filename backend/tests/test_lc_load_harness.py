@@ -7,6 +7,11 @@ Validates: R1 (1.1–1.7), GNK-1, GNK-2, GNK-3
 from __future__ import annotations
 
 import asyncio
+# S5-R02A: `asyncio.get_event_loop().run_until_complete(...)` deseni
+# KALDIRILDI. Bu deprecated cagri, baska bir testin `asyncio.run()`'i
+# policy loop'unu kapattiktan sonra RuntimeError firlatir — yani test
+# SIRASINA gore kirilan bir state-leak'ti (owner Bolum 8). `asyncio.run()`
+# her cagrida kendi izole loop'unu kurar/kapatir; siradan bagimsizdir.
 import random
 
 import pytest
@@ -113,7 +118,7 @@ class TestDeterminism:
             rng = random.Random(42)
             target = _make_failing_target(rng, failure_rate=0.3)
             harness = LoadHarness(seed=42, scale_factor=0.5, concurrency=5)
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 harness.run_profile(profile, target)
             )
             summaries.append({
@@ -136,7 +141,7 @@ class TestDeterminism:
             rng = random.Random(seed)
             target = _make_failing_target(rng, failure_rate=0.5)
             harness = LoadHarness(seed=seed, scale_factor=0.5, concurrency=5)
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 harness.run_profile(profile, target)
             )
             results.append(result.failed_requests)
@@ -154,7 +159,7 @@ class TestSmokeProfile:
         """Smoke: baseline profile with noop target → all success, 0 errors."""
         profile = LoadProfile(ProfileType.BASELINE, target_rps=100.0, duration_seconds=1.0)
         harness = LoadHarness(seed=DEFAULT_SEED, scale_factor=0.5, concurrency=5)
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             harness.run_profile(profile, _noop_target)
         )
 
@@ -170,7 +175,7 @@ class TestSmokeProfile:
         """Smoke: burst profile fires all requests concurrently."""
         profile = LoadProfile(ProfileType.BURST, target_rps=1000.0, duration_seconds=0.5)
         harness = LoadHarness(seed=DEFAULT_SEED, scale_factor=0.5, concurrency=10)
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             harness.run_profile(profile, _noop_target)
         )
 
@@ -182,7 +187,7 @@ class TestSmokeProfile:
         """CircuitOpenError is counted in circuit_open_count."""
         profile = LoadProfile(ProfileType.BASELINE, target_rps=50.0, duration_seconds=1.0)
         harness = LoadHarness(seed=1, scale_factor=0.5, concurrency=5)
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             harness.run_profile(profile, _circuit_open_target)
         )
 
@@ -196,7 +201,7 @@ class TestSmokeProfile:
         import json
         profile = LoadProfile(ProfileType.BASELINE, target_rps=50.0, duration_seconds=0.5)
         harness = LoadHarness(seed=1, scale_factor=0.5, concurrency=3)
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             harness.run_profile(profile, _noop_target)
         )
 
@@ -220,7 +225,7 @@ class TestMinRequestEnforcement:
         """Even with tiny scale, baseline runs at least 200 requests."""
         profile = DEFAULT_PROFILES[ProfileType.BASELINE]
         harness = LoadHarness(seed=1, scale_factor=0.01, concurrency=20)
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             harness.run_profile(profile, _noop_target)
         )
         assert result.executed_requests >= 200
@@ -229,7 +234,7 @@ class TestMinRequestEnforcement:
         """Even with tiny scale, stress runs at least 500 requests."""
         profile = DEFAULT_PROFILES[ProfileType.STRESS]
         harness = LoadHarness(seed=1, scale_factor=0.01, concurrency=50)
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             harness.run_profile(profile, _noop_target)
         )
         assert result.executed_requests >= 500

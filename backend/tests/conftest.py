@@ -50,17 +50,35 @@ if _backend_root not in sys.path:
 
 from hypothesis import settings, HealthCheck
 
-# CI profile: no example database → no stale example → no Flaky errors
+# S5-R02A: `deadline=None` + `derandomize=True`
+#
+# deadline=None — DOGRULUK DUVAR SAATINDEN AYRILDI (owner Bolum 7).
+#   Hypothesis'in varsayilan 200ms deadline'i her ORNEGIN duvar saatini
+#   olcer. Tam regresyonun CPU rekabeti altinda hangi ornegin 200ms'i
+#   astigi kosudan kosuya degisiyordu; "gezinen" hatalarin mekanizmasi
+#   buydu (olculen ornek: 253.43ms > 200ms). Deadline bir dogruluk
+#   assertion'i DEGILDIR; kaldirilmasi hicbir assertion'i gevsetmez.
+#   Gercek performans olcumu ayri benchmark sozlesmesinin isidir.
+#
+# derandomize=True — AYNI girdi kumesi her kosuda AYNI ornekleri uretir;
+#   uc ardisik tam regresyonun ayni test kimligi kumesinde ayni sonucu
+#   vermesi boylece mekanik olarak karsilastirilabilir. Ornek cesitliligi
+#   kaybolmaz (strateji uzayi ayni), yalniz kosular arasi kararsizlik
+#   kalkar.
 settings.register_profile(
     "ci",
     database=None,
+    deadline=None,
+    derandomize=True,
     suppress_health_check=[HealthCheck.too_slow],
 )
 
-# Default profile: no database (prevents Flaky errors from stale examples)
+# Default profile: ayni sozlesme (bkz. yukaridaki gerekce)
 settings.register_profile(
     "default",
     database=None,
+    deadline=None,
+    derandomize=True,
     suppress_health_check=[HealthCheck.too_slow],
 )
 

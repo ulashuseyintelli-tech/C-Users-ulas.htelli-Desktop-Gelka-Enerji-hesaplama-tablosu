@@ -1,6 +1,6 @@
 {
   "_fixture_metadata": {
-    "excel_source": "Cansu Saatlik Tuketim Ocak-Nisan 2026.xlsx",
+    "excel_source": "tests/sentetik_tuketim_fixture.py (sentetik, deterministik)",
     "gelka_margin_multiplier": 1.05,
     "invoice_markup_factor": 1.2,
     "notes": "Deterministic synthetic PTF/YEKDEM seed. Numbers are reproducible: reference_energy_cost = sum(consumption × PTF / 1000) + total_kwh × YEKDEM / 1000. declared_total_tl = round(ref × invoice_markup_factor, 2). gelka_estimate = round(ref × gelka_margin_multiplier, 2).",
@@ -18,13 +18,13 @@
         "total_hours": 744,
         "yekdem_source": "monthly_yekdem_prices"
       },
-      "gelka_estimate_tl": 694053.87,
-      "potential_savings_tl": 99150.55,
+      "gelka_estimate_tl": 27888.84,
+      "potential_savings_tl": 3984.12,
       "quote_block_reason": null,
       "quote_blocked": false,
-      "reference_energy_cost_tl": 661003.68,
+      "reference_energy_cost_tl": 26560.8,
       "supplier_markup_pct": 20.0,
-      "supplier_markup_tl": 132200.74
+      "supplier_markup_tl": 5312.16
     },
     "2026-02": {
       "cost_inputs": {
@@ -35,13 +35,13 @@
         "total_hours": 672,
         "yekdem_source": "monthly_yekdem_prices"
       },
-      "gelka_estimate_tl": 696614.84,
-      "potential_savings_tl": 99516.4,
+      "gelka_estimate_tl": 26989.2,
+      "potential_savings_tl": 3855.6,
       "quote_block_reason": null,
       "quote_blocked": false,
-      "reference_energy_cost_tl": 663442.7,
+      "reference_energy_cost_tl": 25704.0,
       "supplier_markup_pct": 20.0,
-      "supplier_markup_tl": 132688.54
+      "supplier_markup_tl": 5140.8
     },
     "2026-03": {
       "cost_inputs": {
@@ -52,13 +52,13 @@
         "total_hours": 744,
         "yekdem_source": "monthly_yekdem_prices"
       },
-      "gelka_estimate_tl": 670077.34,
-      "potential_savings_tl": 95725.33,
+      "gelka_estimate_tl": 25896.78,
+      "potential_savings_tl": 3699.54,
       "quote_block_reason": null,
       "quote_blocked": false,
-      "reference_energy_cost_tl": 638168.89,
+      "reference_energy_cost_tl": 24663.6,
       "supplier_markup_pct": 20.0,
-      "supplier_markup_tl": 127633.78
+      "supplier_markup_tl": 4932.72
     },
     "2026-04": {
       "cost_inputs": {
@@ -69,30 +69,30 @@
         "total_hours": 553,
         "yekdem_source": "monthly_yekdem_prices"
       },
-      "gelka_estimate_tl": 668503.29,
-      "potential_savings_tl": 95500.47,
+      "gelka_estimate_tl": 29613.15,
+      "potential_savings_tl": 4230.45,
       "quote_block_reason": null,
       "quote_blocked": false,
-      "reference_energy_cost_tl": 636669.8,
+      "reference_energy_cost_tl": 28203.0,
       "supplier_markup_pct": 20.0,
-      "supplier_markup_tl": 127333.96
+      "supplier_markup_tl": 5640.6
     }
   },
   "status": "ok",
   "summary": {
     "annual_projection": {
-      "annualized_potential_savings_tl": 1169678.25,
-      "annualized_reference_cost_tl": 7797855.21,
-      "annualized_supplier_markup_tl": 1559571.06,
+      "annualized_potential_savings_tl": 47309.13,
+      "annualized_reference_cost_tl": 315394.2,
+      "annualized_supplier_markup_tl": 63078.84,
       "based_on_periods": 4,
       "label": "tahmini yıllık projeksiyon"
     },
     "partial_period_count": 0,
-    "total_gelka_estimate_tl": 2729249.34,
+    "total_gelka_estimate_tl": 110387.97,
     "total_period_count": 4,
-    "total_potential_savings_tl": 389892.75,
-    "total_reference_energy_cost_tl": 2599285.07,
-    "total_supplier_markup_tl": 519857.02,
+    "total_potential_savings_tl": 15769.71,
+    "total_reference_energy_cost_tl": 105131.4,
+    "total_supplier_markup_tl": 21026.28,
     "valid_period_count": 4
   }
 }

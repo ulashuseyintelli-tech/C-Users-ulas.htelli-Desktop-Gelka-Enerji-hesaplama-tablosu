@@ -11,6 +11,8 @@ Converts implicit correctness assumptions into enforced, testable properties.
 """
 import random
 
+import asyncio
+
 import pytest
 from hypothesis import given, settings, HealthCheck
 from hypothesis import strategies as st
@@ -29,6 +31,7 @@ from backend.app.testing.lc_config import (
     FM_EXPECTS_CB_OPEN,
     DEFAULT_SEED,
 )
+from backend.app.testing.load_harness import DEFAULT_PROFILES, ProfileType
 from backend.app.testing.scenario_runner import (
     ScenarioRunner,
     InjectionConfig,
@@ -43,12 +46,37 @@ def compensated_divergence_ms(t1: int, t2: int, max_clock_skew_ms: int = 50) -> 
     return max(0, abs(t1 - t2) - max_clock_skew_ms)
 
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# S5-R02A — DOGRULUK TESTLERI DUVAR SAATINDEN BAGIMSIZ OLMALI (Bolum 7)
+#
+# Varsayilan BASELINE profili istekler arasina RPS hedefine gore `sleep`
+# koyar; her senaryo ~6 sn suruyor ve hypothesis deadline'ini asiyordu.
+# BURST profili tum istekleri gecikmesiz acar — istek SAYISI ve seed ayni
+# kaldigi icin determinizm iddiasi AYNEN korunur, yalnizca duvar saati
+# bagimliligi kalkar. Urun kodu DEGISTIRILMEDI; `InjectionConfig` zaten
+# `profile`/`scale_factor` kabul ediyor.
+# ═══════════════════════════════════════════════════════════════════════════
+
+HIZLI_PROFIL = DEFAULT_PROFILES[ProfileType.BURST]
+HIZLI_SCALE = 0.1
+
 def _run_fm(fault_type: FaultType, failure_rate: float = 1.0, seed: int = DEFAULT_SEED):
+    """
+    S5-R02A: `run_scenario` artik (a) `async` ve (b) `request_count`
+    parametresi ALMIYOR — istek sayisi runner'in kendi yapilandirmasindan
+    gelir. Bu yardimci eski imzayla cagiriyordu ve testler `TypeError` ile
+    DETERMINISTIK olarak dusuyordu; "flaky" olarak etiketlenmeleri yanlisti.
+
+    Repoda async pytest plugin'i YOK; bu yuzden coroutine burada
+    `asyncio.run()` ile sonuclandirilir (aksi halde test sessizce skip olurdu).
+    """
     runner = ScenarioRunner()
     injection = InjectionConfig(
         enabled=True, fault_type=fault_type, failure_rate=failure_rate, seed=seed,
+        profile=HIZLI_PROFIL, scale_factor=HIZLI_SCALE,
     )
-    return runner.run_scenario(f"inv-{fault_type.value}", injection, request_count=200)
+    return asyncio.run(runner.run_scenario(f"inv-{fault_type.value}", injection))
 
 
 # ---------------------------------------------------------------------------
@@ -136,9 +164,10 @@ class TestDeterminismHard:
         """Two independent ScenarioRunner instances with same input → identical output."""
         r1 = ScenarioRunner()
         r2 = ScenarioRunner()
-        inj = InjectionConfig(enabled=True, fault_type=fault_type, failure_rate=rate, seed=seed)
-        res1 = r1.run_scenario("det-a", inj, request_count=100)
-        res2 = r2.run_scenario("det-b", inj, request_count=100)
+        inj = InjectionConfig(enabled=True, fault_type=fault_type, failure_rate=rate,
+                              seed=seed, profile=HIZLI_PROFIL, scale_factor=HIZLI_SCALE)
+        res1 = asyncio.run(r1.run_scenario("det-a", inj))
+        res2 = asyncio.run(r2.run_scenario("det-b", inj))
         assert res1.outcomes == res2.outcomes
         assert res1.cb_opened == res2.cb_opened
         assert res1.metadata["actual_failure_rate"] == res2.metadata["actual_failure_rate"]
