@@ -199,7 +199,17 @@ class TestRealScenarioSanityCheck:
                   f"{row.net_margin_tl:>12,.2f} {row.loss_hours:>10} "
                   f"{row.total_loss_tl:>12,.2f}")
 
-        assert len(rows) == 9  # 1.02–1.10
+        # S5-R02A: `515d4c2` izgarayi 1.02-1.10 (9) -> 1.01-1.15 (15) yapti;
+        # bu test guncellenmemisti. Paylasilan sozlesme dogrulayicisi
+        # kullanilir (yalniz satir sayisi DEGIL: baslangic/bitis/adim/
+        # benzersizlik/siralama/off-by-one/mekanik iliski).
+        from tests.test_multiplier_simulator import (
+            dogrula_katsayi_izgarasi,
+            dogrula_satir_mekanigi,
+        )
+
+        dogrula_katsayi_izgarasi(rows)
+        dogrula_satir_mekanigi(rows)
         # Revenue monoton artan
         for i in range(1, len(rows)):
             assert rows[i].total_sales_tl > rows[i - 1].total_sales_tl

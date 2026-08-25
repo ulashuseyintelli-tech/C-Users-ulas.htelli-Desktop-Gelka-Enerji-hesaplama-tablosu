@@ -63,7 +63,7 @@ YEKDEM_TL_PER_MWH = 400.0
 GELKA_MULTIPLIER = Decimal("1.05")
 INVOICE_MARKUP_FACTOR = Decimal("1.20")
 
-EXCEL_PATH = Path(__file__).parent.parent.parent / "Cansu Saatlik Tuketim Ocak-Nisan 2026.xlsx"
+# S5-R02A: kisi-adli EXCEL_PATH kaldirildi — kaynak sentetik fixture'dir.
 GOLDEN_PATH = Path(__file__).parent / "fixtures" / "cansu_v2_golden_snapshot.json"
 
 REGENERATE_FLAG = "RECON_V2_GOLDEN_REGEN"
@@ -112,11 +112,16 @@ def _compute_invoice_total(reference_cost_tl: Decimal) -> Decimal:
     return _round_currency_tl_half_up(reference_cost_tl * INVOICE_MARKUP_FACTOR)
 
 
+# S5-R02A: kaynak artik SENTETIK (owner Bolum 2/6) — kisi adli gercek
+# workbook bagimliligi ve "dosya yoksa skip" yolu kaldirildi. Golden
+# snapshot resmi regen mekanizmasiyla (RECON_V2_GOLDEN_REGEN=1) sentetik
+# kaynaktan yeniden uretildi.
+from tests.sentetik_tuketim_fixture import build_sentetik_workbook_bytes
+
+
 @pytest.fixture(scope="module")
 def excel_bytes():
-    if not EXCEL_PATH.exists():
-        pytest.skip(f"Cansu Excel not found: {EXCEL_PATH}")
-    return EXCEL_PATH.read_bytes()
+    return build_sentetik_workbook_bytes()
 
 
 @pytest.fixture(scope="module")
@@ -219,7 +224,7 @@ def _build_v2_snapshot(payload: dict) -> dict:
             "yekdem_tl_per_mwh": YEKDEM_TL_PER_MWH,
             "gelka_margin_multiplier": float(GELKA_MULTIPLIER),
             "invoice_markup_factor": float(INVOICE_MARKUP_FACTOR),
-            "excel_source": "Cansu Saatlik Tuketim Ocak-Nisan 2026.xlsx",
+            "excel_source": "tests/sentetik_tuketim_fixture.py (sentetik, deterministik)",
             "notes": (
                 "Deterministic synthetic PTF/YEKDEM seed. Numbers are reproducible: "
                 "reference_energy_cost = sum(consumption × PTF / 1000) "
@@ -438,8 +443,12 @@ class TestV1FieldsUnchanged:
         cansu_golden_snapshot.json. Read that and confirm v2 pipeline still
         reproduces those numbers (regression guard for v1 alignment).
         """
-        v1_golden_path = Path(__file__).parent / "fixtures" / "cansu_golden_snapshot.json"
-        v1_golden = json.loads(v1_golden_path.read_text(encoding="utf-8"))
+        # S5-R02A: v1 beklentisi de SENTETIK manifestten gelir (eski donmus
+        # JSON gercek dosyanin degerlerini iceriyordu). v1<->v2 hiza kapisi
+        # AYNEN korunur: v2 pipeline'inin parse ettigi kayitlar, v1
+        # classifier'dan gecince analitik beklentiyle birebir uyusmali.
+        from tests.sentetik_tuketim_fixture import beklenen_manifest
+        v1_golden = beklenen_manifest()
 
         from app.recon.classifier import classify_period_records
         groups = split_by_month(parse_result.records)

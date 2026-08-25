@@ -48,23 +48,35 @@ from app.recon.splitter import split_by_month, validate_period_completeness
 # Fixtures
 # ═══════════════════════════════════════════════════════════════════════════════
 
-EXCEL_PATH = Path(__file__).parent.parent.parent / "Cansu Saatlik Tuketim Ocak-Nisan 2026.xlsx"
-GOLDEN_PATH = Path(__file__).parent / "fixtures" / "cansu_golden_snapshot.json"
+# ═══════════════════════════════════════════════════════════════════════════
+# S5-R02A: KAYNAK ARTIK SENTETİK (owner Bölüm 2/6).
+#
+# Önceden bu paket repo kökünde İZLENMEYEN, KİŞİ ADLI gerçek bir müşteri
+# Excel'ini okuyordu; dosya yoksa 25+ test SESSİZCE skip'e düşüyordu ve
+# kişi adlı gerçek veri test bağımlılığıydı. Artık:
+#   - Kaynak: tests/sentetik_tuketim_fixture.py (bellekte, deterministik,
+#     PII'siz; gerçek workbook'tan hücre/satır KOPYALANMADI)
+#   - Beklentiler: donmuş JSON yerine üretim manifestinden ANALİTİK olarak
+#     türetilir (daha güçlü regresyon kapısı; skip yolu tamamen kalktı).
+# Eski `fixtures/cansu_golden_snapshot.json` DEĞİŞTİRİLMEDİ; bu paket onu
+# artık okumuyor.
+# ═══════════════════════════════════════════════════════════════════════════
+from tests.sentetik_tuketim_fixture import (
+    beklenen_manifest,
+    build_sentetik_workbook_bytes,
+)
 
 
 @pytest.fixture(scope="module")
 def cansu_parse_result():
-    """Parse the real Cansu Excel file once for all tests."""
-    if not EXCEL_PATH.exists():
-        pytest.skip(f"Cansu Excel not found: {EXCEL_PATH}")
-    data = EXCEL_PATH.read_bytes()
-    return parse_excel(data)
+    """Sentetik workbook'u GERÇEK parser'dan geçir (skip yolu YOK)."""
+    return parse_excel(build_sentetik_workbook_bytes())
 
 
 @pytest.fixture(scope="module")
 def golden_snapshot():
-    """Load frozen golden snapshot."""
-    return json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
+    """Analitik beklenti manifesti (donmuş dosya değil)."""
+    return beklenen_manifest()
 
 
 @pytest.fixture(scope="module")

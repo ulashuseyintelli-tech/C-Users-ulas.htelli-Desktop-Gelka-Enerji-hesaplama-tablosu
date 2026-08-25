@@ -9,6 +9,8 @@ Monotonluk garantileri:
 - multiplier↑ → loss_hours↓ (azalmayan)
 """
 
+from decimal import Decimal
+
 import pytest
 from app.pricing.models import ImbalanceParams
 from app.pricing.excel_parser import ParsedMarketRecord, ParsedConsumptionRecord
@@ -53,18 +55,94 @@ DEFAULT_PARAMS = ImbalanceParams(
 # Task 14: run_simulation() Testleri
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════════════════════════════
+# S5-R02A — KATSAYI IZGARASI SOZLESMESI
+#
+# `515d4c2` (2026-05-12) run_simulation() varsayilanlarini
+# `1.02 -> 1.10` (9 satir) yerine `1.01 -> 1.15` (15 satir) yapti fakat bu
+# testleri guncellemedi; hata o tarihten beri DETERMINISTIK olarak dusuyordu.
+#
+# Asagidaki dogrulama YALNIZ satir sayisini kontrol ETMEZ: baslangic, bitis,
+# adim, benzersizlik, siralama, off-by-one ve satir-bazli mekanik iliski
+# ayri ayri pinlenir. Urun varsayilanlari DEGISTIRILMEDI.
+# ═══════════════════════════════════════════════════════════════════════════
+
+IZGARA_BASLANGIC = Decimal("1.01")
+IZGARA_BITIS = Decimal("1.15")
+IZGARA_ADIM = Decimal("0.01")
+IZGARA_SATIR = 15
+
+
+def dogrula_katsayi_izgarasi(rows):
+    """Katsayi izgarasinin TAM sozlesmesini dogrular (owner R02A Bolum 4)."""
+    katsayilar = [Decimal(str(r.multiplier)).quantize(Decimal("0.01")) for r in rows]
+
+    assert len(rows) == IZGARA_SATIR, f"satir sayisi {len(rows)} != {IZGARA_SATIR}"
+    assert katsayilar[0] == IZGARA_BASLANGIC, f"ilk deger {katsayilar[0]}"
+    assert katsayilar[-1] == IZGARA_BITIS, f"son deger {katsayilar[-1]}"
+    assert len(set(katsayilar)) == IZGARA_SATIR, "duplicate katsayi var"
+    assert katsayilar == sorted(katsayilar), "katsayilar artan sirali degil"
+
+    farklar = {katsayilar[i + 1] - katsayilar[i] for i in range(len(katsayilar) - 1)}
+    assert farklar == {IZGARA_ADIM}, f"adim tutarsiz: {farklar}"
+
+    # Off-by-one korumasi: izgara kapali aralik [1.01, 1.15]
+    beklenen = [IZGARA_BASLANGIC + IZGARA_ADIM * i for i in range(IZGARA_SATIR)]
+    assert katsayilar == beklenen, "izgara beklenen kapali araliktan sapiyor"
+    assert IZGARA_BITIS in katsayilar, "ust sinir DAHIL olmali"
+    assert IZGARA_BASLANGIC - IZGARA_ADIM not in katsayilar
+    assert IZGARA_BITIS + IZGARA_ADIM not in katsayilar
+
+
+def dogrula_satir_mekanigi(rows):
+    """Her satirin hesaplama sonuclarinin mekanik iliskisi."""
+    # TOLERANS GEREKCESI: `total_sales_tl`, `total_cost_tl` ve
+    # `gross_margin_tl` alanlarinin HER BIRI bagimsiz olarak kurusa
+    # yuvarlanir. Bu yuzden `sales - cost` ile `gross` arasindaki fark
+    # yapisal olarak 0.01'e kadar (artı float gurultusu) cikabilir; olculen
+    # gercek sapma 0.0100000000348 idi. Tolerans bu yuvarlama tabanina gore
+    # secildi — assertion GEVSETILMEDI, dogru olcege getirildi.
+    YUVARLAMA_TOLERANSI = 0.02
+
+    for r in rows:
+        # Brut marj = satis - maliyet (bagimsiz kurus yuvarlamasi payi ile)
+        assert abs((r.total_sales_tl - r.total_cost_tl) - r.gross_margin_tl) <= YUVARLAMA_TOLERANSI, (
+            f"x{r.multiplier}: brut marj satis-maliyet ile uyusmuyor"
+        )
+        # `net_margin_tl` cost engine'den gelir ve bayi komisyonuna EK olarak
+        # dengesizlik maliyetlerini de icerir; bu yuzden `gross - komisyon`
+        # esitligi BEKLENMEZ. Gecerli mekanik iliski: net <= brut.
+        assert r.net_margin_tl <= r.gross_margin_tl + YUVARLAMA_TOLERANSI, (
+            f"x{r.multiplier}: net marj brut marji asamaz"
+        )
+        assert r.dealer_commission_tl >= 0.0
+        assert r.loss_hours >= 0
+        assert r.total_loss_tl <= 1e-9, f"x{r.multiplier}: zarar pozitif olamaz"
+
+    # Monotonluk — kaynak docstring'inde BELGELENMIS degismezler
+    # (multiplier_simulator.py: "multiplier^ -> revenue^ (kesin artan)",
+    #  "multiplier^ -> loss_hours (azalmayan)").
+    for a, b in zip(rows, rows[1:]):
+        assert b.total_sales_tl > a.total_sales_tl, (
+            f"x{a.multiplier}->x{b.multiplier}: satis artmadi"
+        )
+        assert b.loss_hours <= a.loss_hours, (
+            f"x{a.multiplier}->x{b.multiplier}: zarar saati arttı"
+        )
+
 class TestRunSimulation:
     """run_simulation() fonksiyonu testleri."""
 
     def test_basic_simulation_returns_correct_count(self):
-        """Varsayılan aralık (1.02–1.10, adım 0.01) → 9 satır."""
+        """Varsayilan izgara (1.01-1.15, adim 0.01) -> 15 satir + TAM sozlesme."""
         market, consumption = _build_test_data()
         rows = run_simulation(
             market, consumption,
             yekdem_tl_per_mwh=370.0,
             imbalance_params=DEFAULT_PARAMS,
         )
-        assert len(rows) == 9  # 1.02, 1.03, ..., 1.10
+        dogrula_katsayi_izgarasi(rows)
+        dogrula_satir_mekanigi(rows)
 
     def test_custom_range(self):
         """Özel aralık: 1.05–1.08, adım 0.01 → 4 satır."""

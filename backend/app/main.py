@@ -2901,7 +2901,14 @@ async def generate_pdf_simple(
             content=pdf_bytes,
             media_type="application/pdf",
             headers={
-                "Content-Disposition": f'inline; filename="{safe_filename}"',
+                # S5-R02A: `inline` GERILEMEYDI. Bu endpoint'in islevi PDF
+                # INDIRMEDIR ve kod tabanindaki diger tum PDF indirme
+                # endpoint'leri (`pdf_api`, `pricing/router`,
+                # `/offers/{id}/download`) `attachment` kullanir. Owner
+                # karari (R02A Bolum 0, Karar B) ile sozlesme geri getirildi.
+                # `safe_filename` yalniz [a-zA-Z0-9_-] icerir; CR/LF header
+                # injection mumkun degildir (bkz. yukaridaki sanitize).
+                "Content-Disposition": f'attachment; filename="{safe_filename}"',
                 "Content-Length": str(len(pdf_bytes)),
                 "Cache-Control": "no-store, max-age=0",
                 "Pragma": "no-cache",
