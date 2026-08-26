@@ -1,11 +1,14 @@
 """
 PDF/HTML Teklif Çıktısı Generator
 
-Jinja2 template + PDF rendering:
-- Primary: WeasyPrint (requires Cairo/Pango on system)
-- Fallback: Playwright/Chromium (works everywhere, including Windows)
-
-Auto-fallback: If WeasyPrint fails, Playwright is used automatically.
+Jinja2 template + PDF rendering — S5-R03A MOTOR SÖZLEŞMESİ:
+- PRIMARY: ReportLab (saf Python; paketli/frozen çalışma zamanının
+  kanonik motoru — bkz. generate_offer_pdf_bytes)
+- OPTIONAL FALLBACK: Playwright/Chromium (yalnız browser binary'si
+  gerçekten bulunabiliyorsa; sync API asla asyncio loop içinde çağrılmaz)
+- WeasyPrint: NOT QUALIFIED / NOT RELIED UPON (GTK/native runtime
+  gerektirir; paketlenmez, yalnız kurulu+çalışır olduğu ortamda son
+  çare olarak denenir)
 """
 import os
 import logging
@@ -29,11 +32,14 @@ try:
     from weasyprint import HTML, CSS
     WEASYPRINT_AVAILABLE = True
     logger.info("WeasyPrint available for PDF generation")
-except ImportError as e:
-    logger.warning(f"WeasyPrint not available: {e}. Will use Playwright fallback.")
-except OSError as e:
-    # Cairo/Pango DLL issues on Windows
-    logger.warning(f"WeasyPrint system dependency error: {e}. Will use Playwright fallback.")
+except ImportError:
+    # S5-R03A: opsiyonel motor; ReportLab birincildir. Exception metni
+    # KASITLI olarak loglanmaz (DLL adi/fiziksel yol sizintisi yasak).
+    logger.warning("WeasyPrint kurulu degil (opsiyonel motor; ReportLab birincildir).")
+except OSError:
+    # Cairo/Pango DLL issues on Windows — ayrintilar (DLL adi/yol)
+    # KASITLI olarak bastirilir (S5-R03A sizinti sozlesmesi).
+    logger.warning("WeasyPrint sistem bagimliligi eksik (opsiyonel motor; ayrintilar bastirildi).")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ReportLab - Fallback for Windows (pure Python, no system dependencies)
@@ -1022,13 +1028,21 @@ def generate_and_store_offer_pdf(
         Storage reference (local path or s3://bucket/key)
     """
     from .services.storage import get_storage
-    
+
     # Generate PDF bytes
     pdf_bytes = generate_offer_pdf_bytes(
         extraction, calculation, params,
         customer_name, customer_company, offer_id
     )
-    
+
+    # S5-R03A: PDF olusmadan hicbir sey publish/commit EDILMEZ. Motor bos
+    # ya da PDF-olmayan bytes dondururse dosya yayimlanmaz, cagiran
+    # (main.py) pdf_ref YAZMAZ — aksi halde bir sonraki istek
+    # `pdf_artifact_missing`/gecersiz-artifact fail-closed durumuna
+    # kalici olarak duser ve elle remediation gerekirdi.
+    if not pdf_bytes or len(pdf_bytes) < 10 or not pdf_bytes.startswith(b"%PDF"):
+        raise RuntimeError("uretilen cikti gecerli bir PDF degil; publish iptal edildi")
+
     # Store to backend
     storage = get_storage()
     pdf_ref = storage.put_bytes(

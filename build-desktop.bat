@@ -215,6 +215,20 @@ for /d %%D in (".venv\Lib\site-packages\playwright\driver\package\.local-browser
 :: kacmisti - GERCEK paketlenmis exe'yle (Step 7 pozitif matris) YAKALANDI:
 :: schema kapisi 351d314819d5'e BASARIYLA ulastiktan HEMEN SONRA app.main
 :: import zincirinde ModuleNotFoundError.
+::
+:: S5-R03A — --collect-submodules reportlab: paketli PDF motoru (PRIMARY=
+:: ReportLab, app/pdf_generator.py). S5-R03 RC1 HARD STOP kok nedeni: bu
+:: zincir reportlab'i TOPLAMIYORDU (RC exe PYZ'sinde 0 modul; kurulu
+:: v1.0.6'da 97 modul) — packaged'da REPORTLAB_AVAILABLE=False kaliyor ve
+:: teklif PDF uretimi oluyordu. MINIMUM KUME KARARI: collect-submodules
+:: (yalniz moduller) YETERLI — v1.0.6 paritesi resource=0 (CArchive'de
+:: reportlab data girdisi yok), kod reportlab/fonts dizinini KULLANMIYOR
+:: (TTF sistem fontundan: C:/Windows/Fonts/arial.ttf, yoksa base-14
+:: Helvetica metrikleri _fontdata_* PYTHON modullerinden gelir), C
+:: extension yok (rl_accel saf-Python fallback). --collect-all (data
+:: dahil) BILEREK secilmedi. Dogrulama: scripts/packaged_pdf_smoke.py
+:: PYZ envanterini + gercek uretimi mekanik kontrol eder; bu flag
+:: kaldirilirsa smoke FAIL olur.
 %PYINSTALLER_EXE% --onefile --name gelka-backend ^
     --add-data "app;app" ^
     --add-data "prompts;prompts" ^
@@ -235,6 +249,7 @@ for /d %%D in (".venv\Lib\site-packages\playwright\driver\package\.local-browser
     --collect-submodules sqlalchemy ^
     --collect-submodules playwright ^
     --collect-submodules PIL ^
+    --collect-submodules reportlab ^
     --hidden-import pydantic_settings ^
     --hidden-import dotenv ^
     --hidden-import multipart ^
