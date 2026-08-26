@@ -131,3 +131,39 @@ def _reset_ops_guard_singletons():
             ogm._rate_limit_guard.reset()
     except Exception:
         pass
+
+# ── S5-R02B: AnyIO backend pini ──────────────────────────────────────────────
+# 88 async test (8 dosya) repoda async plugin etkin olmadigi icin OTEDEN BERI
+# hic kosmuyordu. `pytest.mark.anyio` ile aktive edildiler. Bu fixture
+# PARAMETRESIZ oldugu icin:
+#   - backend EXACT `asyncio`dur (trio'ya parametrizasyon IMKANSIZ),
+#   - test kimlikleri `[asyncio]` soneki ALMAZ (exact 88 kimlik korunur),
+#   - her test anyio runner'inin kurdugu TAZE event loop'ta calisir ve loop
+#     test bitiminde kapatilir (testler arasi loop/task tasinmaz).
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+# ── S5-R02B: SESSIZ ASYNC SKIP NOBETCISI (mutation kapisi) ──────────────────
+# pytest, marker'siz bir `async def` testi plugin yoksa SESSIZCE skip eder —
+# 88 test yillarca boyle kayboldu. Bu hook o durumu FAIL-CLOSED yapar:
+# anyio marker'i olmayan herhangi bir coroutine test toplanirsa kosu
+# UsageError ile KESILIR. `pytest.mark.anyio` kaldirilirsa veya yeni bir
+# async test marker'siz eklenirse kosu yesil olamaz.
+
+def pytest_collection_modifyitems(config, items):
+    import inspect as _inspect
+
+    markersiz = []
+    for item in items:
+        fn = getattr(item, "function", None)
+        if fn is not None and _inspect.iscoroutinefunction(fn):
+            if item.get_closest_marker("anyio") is None:
+                markersiz.append(item.nodeid)
+    if markersiz:
+        raise pytest.UsageError(
+            "SESSIZ ASYNC SKIP ENGELLENDI: su coroutine testler anyio "
+            "marker'i tasimiyor ve plugin'siz sessizce atlanirdi: "
+            + ", ".join(markersiz)
+        )

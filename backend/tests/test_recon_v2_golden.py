@@ -129,8 +129,7 @@ def parse_result(excel_bytes):
     return parse_excel(excel_bytes)
 
 
-@pytest.fixture(scope="module")
-def reference_costs_by_period(parse_result):
+def _reference_costs(parse_result):
     """Pre-compute reference costs by closed form so we can build invoices."""
     period_groups = split_by_month(parse_result.records)
     refs: dict[str, Decimal] = {}
@@ -144,6 +143,12 @@ def reference_costs_by_period(parse_result):
         yekdem_part = total_kwh * Decimal(str(YEKDEM_TL_PER_MWH)) / Decimal("1000")
         refs[period] = ptf_part + yekdem_part
     return refs
+
+
+@pytest.fixture(scope="module")
+def reference_costs_by_period(parse_result):
+    """Pre-compute reference costs by closed form so we can build invoices."""
+    return _reference_costs(parse_result)
 
 
 @pytest.fixture()
@@ -254,26 +259,62 @@ def _build_v2_snapshot(payload: dict) -> dict:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.skipif(
-    os.environ.get(REGENERATE_FLAG) != "1",
-    reason=f"Set {REGENERATE_FLAG}=1 to regenerate the golden snapshot.",
-)
-def test_regenerate_v2_golden_snapshot(happy_path_response):
-    """Overwrite cansu_v2_golden_snapshot.json from the live response.
+# ═══════════════════════════════════════════════════════════════════════════
+# S5-R02B: REGEN ARTIK BIR TEST DEGIL (owner Bolum 8).
+#
+# Onceki `test_regenerate_v2_golden_snapshot` varsayilanda skipif'ti ve her
+# tam kosuya 1 kalici skip ekliyordu; regen bir DOGRULAMA degil, bir YAZMA
+# islemidir. Artik acik opt-in yardimci komuttur:
+#
+#     python -m tests.regen_v2_golden
+#
+# Golden ESITLIGI ise asagidaki normal testlerle her kosuda dogrulanir.
+# `regenerate_v2_golden_snapshot()` fonksiyonunu o komut kullanir.
+# ═══════════════════════════════════════════════════════════════════════════
+def regenerate_v2_golden_snapshot() -> str:
+    """Golden snapshot'i sentetik kaynaktan yeniden uretir (TEST DEGIL).
 
-    Skipped by default. Activate with `RECON_V2_GOLDEN_REGEN=1`.
-    Always fails after writing, forcing a manual review + commit.
+    Fixture zincirinin (excel/seed/referans maliyet) birebir esdegeri burada
+    acikca kurulur — pipeline ve deterministik seed AYNIDIR.
     """
-    new_snapshot = _build_v2_snapshot(happy_path_response)
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from app.database import Base
+    import app.pricing.schemas  # noqa: F401
+
+    veri = build_sentetik_workbook_bytes()
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine)
+    db = sessionmaker(bind=engine)()
+    try:
+        parse_result = parse_excel(veri)
+        gruplar = split_by_month(parse_result.records)
+        _seed_deterministic(records=parse_result.records,
+                            periods=sorted(gruplar.keys()), db=db)
+        refler = _reference_costs(parse_result)
+        invoices = [
+            InvoiceInput(period=p_, declared_total_tl=_compute_invoice_total(r_))
+            for p_, r_ in refler.items()
+        ]
+        request = ReconRequest(
+            invoices=invoices,
+            comparison=ComparisonConfig(gelka_margin_multiplier=GELKA_MULTIPLIER),
+        )
+        yanit = _run_pipeline(veri, request, db).model_dump(mode="json")
+    finally:
+        db.close()
+        engine.dispose()
+    new_snapshot = _build_v2_snapshot(yanit)
     GOLDEN_PATH.write_text(
         json.dumps(new_snapshot, indent=2, ensure_ascii=False, sort_keys=True),
         encoding="utf-8",
     )
-    pytest.fail(
-        f"Golden snapshot regenerated at {GOLDEN_PATH}. "
-        f"Review the diff, commit if intentional, then re-run tests "
-        f"WITHOUT {REGENERATE_FLAG} set."
-    )
+    return str(GOLDEN_PATH)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

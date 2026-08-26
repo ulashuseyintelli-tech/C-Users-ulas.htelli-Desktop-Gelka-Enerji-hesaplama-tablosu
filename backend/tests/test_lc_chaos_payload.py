@@ -1,4 +1,5 @@
 """
+
 PR-5 CH-2: Ordering + Partial Payload chaos tests.
 
 Tests that out-of-order events and truncated payloads:
@@ -17,6 +18,14 @@ from backend.app.testing.stress_report import StressReport, FailDiagnostic, buil
 from backend.app.testing.scenario_runner import ScenarioRunner, InjectionConfig
 from backend.app.testing.lc_config import FaultType, DEFAULT_SEED, ProfileType
 from backend.app.testing.load_harness import LoadProfile, DEFAULT_PROFILES
+
+# S5-R02B: Bu dosyadaki async testler repoda async plugin etkin olmadigi
+# icin OTEDEN BERI hic kosmuyordu ("async def function and no async plugin"
+# skip'i — sessiz kapsam kaybi). Mevcut anyio pytest eklentisiyle aktive
+# edildi; backend conftest'teki parametresiz `anyio_backend` fixture'i ile
+# EXACT asyncio'ya pinlidir (trio parametrizasyonu YOK, kimlikler soneksiz).
+pytestmark = pytest.mark.anyio
+
 
 
 # ---------------------------------------------------------------------------

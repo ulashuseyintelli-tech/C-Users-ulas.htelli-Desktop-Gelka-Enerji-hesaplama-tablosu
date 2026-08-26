@@ -1,4 +1,5 @@
 """
+
 Task 8: Write-path safety tests [R7].
 
 Validates DW-1 policy: write operations SHALL NOT retry under stress.
@@ -31,6 +32,14 @@ from backend.app.testing.stress_report import (
     compute_write_path_safe,
     generate_metrics_table,
 )
+
+# S5-R02B: Bu dosyadaki async testler repoda async plugin etkin olmadigi
+# icin OTEDEN BERI hic kosmuyordu ("async def function and no async plugin"
+# skip'i — sessiz kapsam kaybi). Mevcut anyio pytest eklentisiyle aktive
+# edildi; backend conftest'teki parametresiz `anyio_backend` fixture'i ile
+# EXACT asyncio'ya pinlidir (trio parametrizasyonu YOK, kimlikler soneksiz).
+pytestmark = pytest.mark.anyio
+
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────

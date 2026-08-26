@@ -1,4 +1,5 @@
 """
+
 PR-3 + Task 6.1: Multi-instance CB divergence tests.
 
 PR-3 base (preserved): TestMultiInstanceDivergence, TestDivergencePBT, TestCbStateTransitions
@@ -38,6 +39,14 @@ from backend.app.testing.scenario_runner import (
     ScenarioRunner,
 )
 from backend.app.testing.stress_report import TuningRecommendation
+
+# S5-R02B: Bu dosyadaki async testler repoda async plugin etkin olmadigi
+# icin OTEDEN BERI hic kosmuyordu ("async def function and no async plugin"
+# skip'i — sessiz kapsam kaybi). Mevcut anyio pytest eklentisiyle aktive
+# edildi; backend conftest'teki parametresiz `anyio_backend` fixture'i ile
+# EXACT asyncio'ya pinlidir (trio parametrizasyonu YOK, kimlikler soneksiz).
+pytestmark = pytest.mark.anyio
+
 
 
 # ---------------------------------------------------------------------------

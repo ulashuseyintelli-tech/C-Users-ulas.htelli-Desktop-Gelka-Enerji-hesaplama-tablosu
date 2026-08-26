@@ -1,4 +1,5 @@
 """
+
 Task 3.1: ScenarioRunner unit tests.
 
 Tests:
@@ -30,6 +31,14 @@ from backend.app.testing.scenario_runner import (
 )
 from backend.app.testing.fault_injection import FaultInjector
 from backend.app.testing.metrics_capture import MetricDelta
+
+# S5-R02B: Bu dosyadaki async testler repoda async plugin etkin olmadigi
+# icin OTEDEN BERI hic kosmuyordu ("async def function and no async plugin"
+# skip'i — sessiz kapsam kaybi). Mevcut anyio pytest eklentisiyle aktive
+# edildi; backend conftest'teki parametresiz `anyio_backend` fixture'i ile
+# EXACT asyncio'ya pinlidir (trio parametrizasyonu YOK, kimlikler soneksiz).
+pytestmark = pytest.mark.anyio
+
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
