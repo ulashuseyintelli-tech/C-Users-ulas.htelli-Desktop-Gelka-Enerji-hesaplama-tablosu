@@ -1,4 +1,5 @@
 """
+
 Task 12: Integration & Final Validation [R10].
 
 End-to-end pipeline tests + deterministic compliance checks.
@@ -44,6 +45,14 @@ from backend.app.testing.stress_report import (
     generate_metrics_table,
     _extract_retry_count,
 )
+
+# S5-R02B: Bu dosyadaki async testler repoda async plugin etkin olmadigi
+# icin OTEDEN BERI hic kosmuyordu ("async def function and no async plugin"
+# skip'i — sessiz kapsam kaybi). Mevcut anyio pytest eklentisiyle aktive
+# edildi; backend conftest'teki parametresiz `anyio_backend` fixture'i ile
+# EXACT asyncio'ya pinlidir (trio parametrizasyonu YOK, kimlikler soneksiz).
+pytestmark = pytest.mark.anyio
+
 
 
 # ── Constants ────────────────────────────────────────────────────────────

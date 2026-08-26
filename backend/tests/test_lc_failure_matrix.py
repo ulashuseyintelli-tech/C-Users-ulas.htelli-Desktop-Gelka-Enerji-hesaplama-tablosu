@@ -1,4 +1,5 @@
 """
+
 Task 5.1: Failure Matrix tests (FM-1..FM-5) — spec-aligned R4 AC1-AC5.
 
 FM-1: %10 DB_TIMEOUT  → retry↑, CB CLOSED          [R4 AC1]
@@ -41,6 +42,14 @@ from backend.app.testing.scenario_runner import (
     ScenarioResult,
     ScenarioRunner,
 )
+
+# S5-R02B: Bu dosyadaki async testler repoda async plugin etkin olmadigi
+# icin OTEDEN BERI hic kosmuyordu ("async def function and no async plugin"
+# skip'i — sessiz kapsam kaybi). Mevcut anyio pytest eklentisiyle aktive
+# edildi; backend conftest'teki parametresiz `anyio_backend` fixture'i ile
+# EXACT asyncio'ya pinlidir (trio parametrizasyonu YOK, kimlikler soneksiz).
+pytestmark = pytest.mark.anyio
+
 
 
 # ── Shared helpers ───────────────────────────────────────────────────────
@@ -331,8 +340,16 @@ class TestFM5LatencyIncrease:
     No prod code changes — pure test-level simulation.
     """
 
-    _BASE_LATENCY = 0.005   # 5ms baseline sleep — large enough to dominate scheduling jitter
-    _SLOW_FACTOR = 3.0      # 3× slowdown → 15ms sleep, clearly separable from 5ms
+    # S5-R02B: 5ms taban Windows'un ~15.6ms zamanlayici COZUNURLUGUNUN
+    # ALTINDAYDI — `asyncio.sleep(0.005)` cogu zaman ~15ms bekler ve olculen
+    # p95'ler gurultu tabaninda yuzer (ilk gercek kosuda baseline=17.98ms,
+    # slow=26.76ms; oran 1.4887 ve 1.5 esiginin %0.75 altinda). Bu test hic
+    # kosmadigi icin yapisal sinirdaligi hic gorulmemisti. Duzeltme ESIGI
+    # degil SINYALI buyutur: taban timer cozunurlugunun guvenli ustune
+    # cekildi; 1.5 orani ve 3ms mutlak-fark alt siniri AYNEN korunuyor
+    # (beklenen oran ~ (120+g)/(40+g) >= 2.1, g=jitter).
+    _BASE_LATENCY = 0.040   # 40ms taban — Windows timer tabaninin ~2.5 kati
+    _SLOW_FACTOR = 3.0      # 3x yavaslatma -> 120ms, 40ms'den net ayrisir
     _SEED = DEFAULT_SEED
     _CONCURRENCY = 30       # moderate concurrency: fast enough for CI, stable for determinism
     # Use a small profile for CI speed

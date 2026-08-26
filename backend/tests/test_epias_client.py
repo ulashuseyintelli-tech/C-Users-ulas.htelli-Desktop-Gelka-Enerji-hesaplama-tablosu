@@ -1,4 +1,5 @@
 """
+
 EPİAŞ Client Tests
 
 Test matrisi:
@@ -26,6 +27,14 @@ from app.epias_client import (
     fetch_ptf_from_epias,
     get_epias_client,
 )
+
+# S5-R02B: Bu dosyadaki async testler repoda async plugin etkin olmadigi
+# icin OTEDEN BERI hic kosmuyordu ("async def function and no async plugin"
+# skip'i — sessiz kapsam kaybi). Mevcut anyio pytest eklentisiyle aktive
+# edildi; backend conftest'teki parametresiz `anyio_backend` fixture'i ile
+# EXACT asyncio'ya pinlidir (trio parametrizasyonu YOK, kimlikler soneksiz).
+pytestmark = pytest.mark.anyio
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

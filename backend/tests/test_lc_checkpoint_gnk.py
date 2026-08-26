@@ -1,4 +1,5 @@
 """
+
 Task 4: GNK Checkpoint — LC temel altyapı doğrulaması.
 
 Hard-locks GNK-1 (diagnostic payload contract), GNK-2 (determinism),
@@ -39,6 +40,14 @@ from backend.app.testing.scenario_runner import (
     ScenarioRunner,
 )
 from backend.app.testing.stress_report import FailDiagnostic
+
+# S5-R02B: Bu dosyadaki async testler repoda async plugin etkin olmadigi
+# icin OTEDEN BERI hic kosmuyordu ("async def function and no async plugin"
+# skip'i — sessiz kapsam kaybi). Mevcut anyio pytest eklentisiyle aktive
+# edildi; backend conftest'teki parametresiz `anyio_backend` fixture'i ile
+# EXACT asyncio'ya pinlidir (trio parametrizasyonu YOK, kimlikler soneksiz).
+pytestmark = pytest.mark.anyio
+
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
