@@ -2436,15 +2436,63 @@ async def generate_pdf_for_offer(
 
             from .pdf_generator import generate_and_store_offer_pdf
 
-            # Dosya burada ATOMİK olarak yayımlanır (LocalStorage.put_bytes).
-            pdf_ref = generate_and_store_offer_pdf(
-                extraction=extraction,
-                calculation=calculation,
-                params=params,
-                offer_id=offer.id,
-                customer_name=customer_name,
-                customer_company=customer_company
-            )
+            # S5-R03A: uretim SENKRON bir istir (ReportLab CPU isi; Playwright
+            # fallback'i ise sync API kullanir ve calisan asyncio loop icinde
+            # CAGRILAMAZ). Bu yuzden uretim, /generate-pdf-simple ile AYNI
+            # "pdf-render" executor havuzunda kosturulur — event-loop hicbir
+            # motor yolunda bloke olmaz. OS byte-range kilidi process-bazlidir;
+            # kilit ana coroutine'de tutulurken uretimin executor thread'inde
+            # kosmasi kilit semantigini DEGISTIRMEZ (eszamanli istek 409 alir).
+            def _uret() -> str:
+                # Dosya burada ATOMİK olarak yayımlanır (LocalStorage.put_bytes).
+                return generate_and_store_offer_pdf(
+                    extraction=extraction,
+                    calculation=calculation,
+                    params=params,
+                    offer_id=offer.id,
+                    customer_name=customer_name,
+                    customer_company=customer_company
+                )
+
+            # S5-R03A (adversarial doğrulama düzeltmesi): offers üretimi de
+            # /generate-pdf-simple ile AYNI _pdf_semaphore iznini TÜKETİR —
+            # paylaşılan havuzu izinsiz işgal etmek simple'ın 429 backpressure
+            # sözleşmesini sessizce bypass ederdi (izin==thread invaryantı).
+            try:
+                await asyncio.wait_for(_pdf_semaphore.acquire(), timeout=2.0)
+            except asyncio.TimeoutError:
+                raise HTTPException(
+                    status_code=429,
+                    detail={
+                        "error": "too_many_requests",
+                        "message": "Sunucu meşgul. Lütfen birkaç saniye bekleyin.",
+                        "offer_id": offer.id,
+                    },
+                    headers={"Retry-After": "5"},
+                )
+            # Üretim _PDF_RENDER_TIMEOUT ile sınırlanır: asılı bir üretim
+            # per-offer kilidi + havuz thread'ini SÜRESİZ tutamaz. Timeout'ta
+            # kilit with-bloğu çıkışında bırakılır ve pdf_ref YAZILMAZ; geç
+            # biten thread'in publish'i zararsızdır (sonraki istek aynı
+            # anahtara atomik os.replace ile üretir; pdf_ref VAR + dosya YOK
+            # tuzağı bu yönde oluşamaz).
+            try:
+                pdf_ref = await asyncio.wait_for(
+                    asyncio.get_running_loop().run_in_executor(_pdf_executor, _uret),
+                    timeout=_PDF_RENDER_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                logger.error(f"PDF render timeout ({_PDF_RENDER_TIMEOUT}s) for offer {offer.id}")
+                raise HTTPException(
+                    status_code=504,
+                    detail={
+                        "error": "render_timeout",
+                        "message": "PDF oluşturma zaman aşımına uğradı.",
+                        "offer_id": offer.id,
+                    },
+                )
+            finally:
+                _pdf_semaphore.release()
 
             # Dosya tamamen yayımlandıktan SONRA DB commit edilir.
             try:
@@ -2476,9 +2524,16 @@ async def generate_pdf_for_offer(
         )
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
+        # S5-R03A: ic exception ayrintisi/fiziksel yol RESPONSE'a SIZDIRILMAZ
+        # (tam detay yalniz sunucu loguna yazilir). Basarisizlikta pdf_ref
+        # yazilmamis, orphan/temp birakilmamistir (bkz. generate_and_store_
+        # offer_pdf %PDF kapisi + _teklif_pdf_orphan_temizle).
         logger.exception(f"PDF generation failed for offer {offer_id}")
-        raise HTTPException(status_code=500, detail=f"PDF oluşturma hatası: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="PDF oluşturma hatası: sunucu tarafında beklenmeyen bir hata oluştu.",
+        )
 
 
 @app.get("/offers/{offer_id}/download")
