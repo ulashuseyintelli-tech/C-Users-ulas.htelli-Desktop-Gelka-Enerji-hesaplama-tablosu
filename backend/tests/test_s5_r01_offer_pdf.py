@@ -351,7 +351,14 @@ class TestIdempotency:
     def test_pdf_ref_var_dosya_yok_ise_fail_closed(self, client, db):
         """
         Veri/storage tutarsızlığı: SESSİZ yeniden üretim YASAK.
+
+        S5-R03B: `pdf_ref` artık RELATIVE/portable anahtar (mutlak yol
+        DEĞİL) — fiziksel dosyaya doğrudan `os.remove(ref)` ile
+        erişilemez; test, uygulamanın kendisinin kullandığı AYNI
+        `get_storage().resolve_local_path()` ile fiziksel yolu çözer.
         """
+        from app.services.storage import get_storage
+
         offer = _teklif(db)
         cagrilar: list = []
 
@@ -359,7 +366,8 @@ class TestIdempotency:
                    side_effect=_sahte_uretici_fabrikasi(cagrilar)):
             ilk = client.post(f"/offers/{offer.id}/generate-pdf")
             assert ilk.status_code == 200
-            os.remove(ilk.json()["pdf_ref"])  # dosya kayboldu
+            fiziksel_yol = get_storage().resolve_local_path(ilk.json()["pdf_ref"])
+            os.remove(fiziksel_yol)  # dosya kayboldu
 
             sonra = client.post(f"/offers/{offer.id}/generate-pdf")
 
@@ -368,11 +376,14 @@ class TestIdempotency:
         assert len(cagrilar) == 1, "tutarsızlıkta yeniden üretim YAPILMAMALI"
 
     def test_bos_dosya_gecerli_sayilmaz(self, client, db):
+        """S5-R03B: `pdf_ref` relative — fiziksel yol storage'dan çözülür."""
+        from app.services.storage import get_storage
+
         offer = _teklif(db)
         with patch("app.pdf_generator.generate_and_store_offer_pdf",
                    side_effect=_sahte_uretici_fabrikasi([])):
             ref = client.post(f"/offers/{offer.id}/generate-pdf").json()["pdf_ref"]
-        Path(ref).write_bytes(b"")
+        Path(get_storage().resolve_local_path(ref)).write_bytes(b"")
 
         r = client.post(f"/offers/{offer.id}/generate-pdf")
         assert r.status_code == 409

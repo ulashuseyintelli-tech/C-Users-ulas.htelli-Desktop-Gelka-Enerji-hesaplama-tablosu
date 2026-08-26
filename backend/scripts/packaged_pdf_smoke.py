@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-S5-R03A — Paketli GERÇEK PDF smoke (owner Bölüm 8).
+S5-R03A/R03B — Paketli GERÇEK PDF + durable-storage smoke (owner Bölüm 8/12).
 
 Gerçek paketlenmiş gelka-backend.exe'ye karşı, disposable sentetik canonical
-DB ile uçtan uca teklif-PDF zincirini mekanik olarak doğrular:
+DB ile uçtan uca teklif-PDF zincirini VE durable-storage yönlendirmesini
+mekanik olarak doğrular:
 
   1. Exe PYZ envanterinde ReportLab modülleri (build'den collection
      kaldırılırsa BURADA FAIL — mutation kapısı M1'in packaged yarısı)
@@ -18,6 +19,11 @@ DB ile uçtan uca teklif-PDF zincirini mekanik olarak doğrular:
   7. Access-log kanalı CANLI (pozitif kontrol: '"POST /offers' satırı) VE
      /generate-pdf-simple runtime çağrısı 0
   8. Kullanılan motor ReportLab (log/audit kanıtı; Playwright'a düşüş YOK)
+  9. S5-R03B: pdf_ref RELATIVE/portable (mutlak yol DEĞİL) — API response'ta
+     ne durable ne "install root" fiziksel yolu görünür
+  10. S5-R03B: STORAGE_DIR env'i ile geçirilen durable kök GERÇEKTEN
+      kullanılıyor; "install root" (exe.parent) CWD-göreli `./storage`
+      konumunda SIFIR yeni PDF oluşuyor — uçtan uca upgrade-safe kanıtı
 
 Kullanım (opt-in komut; pytest regresyonuna DAHİL DEĞİLDİR — packaged exe
 gerektirir):
@@ -27,8 +33,9 @@ gerektirir):
 loglar buraya yazılır. Production'a HİÇBİR koşulda dokunmaz.
 
 Çağrıldığı yerler:
-- S5-R03A Bölüm 8 packaged smoke (elle / release qualification)
-- backend/tests/test_s5_r03a_pdf_engine.py yalnız varlığını/pinini referanslar
+- S5-R03A/R03B Bölüm 8/12 packaged smoke (elle / release qualification)
+- backend/tests/test_s5_r03a_pdf_engine.py, test_s5_r03b_durable_storage.py
+  yalnız varlığını/pinini referanslar
 """
 from __future__ import annotations
 
@@ -220,6 +227,17 @@ def main() -> int:
         _kontrol(ilk.get("regenerated") is True, "ilk cagri regenerated=true")
         _kontrol(bool(ilk.get("pdf_ref")), "pdf_ref publish sonrasi yazildi")
 
+        # S5-R03B: pdf_ref RELATIVE/portable olmali — sürücü harfi/mutlak
+        # yol response'a SIZMAMALI (adversarial doğrulanmış sözleşme).
+        pdf_ref_deger = ilk.get("pdf_ref", "")
+        _kontrol(
+            not (
+                pdf_ref_deger[1:3] == ":\\" or pdf_ref_deger[1:3] == ":/"
+                or pdf_ref_deger.startswith("/") or pdf_ref_deger.startswith("\\")
+            ),
+            f"pdf_ref RELATIVE/portable ({pdf_ref_deger!r})",
+        )
+
         # 3) download → gerçek PDF
         durum, pdf = _http("GET", f"/offers/{offer_id}/download")
         _kontrol(durum == 200, f"download ({durum})")
@@ -254,6 +272,24 @@ def main() -> int:
         _kontrol(not tmpler, f".tmp artigi 0 ({tmpler})")
         kilit_yolu = storage / "offers" / str(offer_id) / ".generate.lock"
         _kontrol(kilit_yolu.exists(), ".generate.lock mevcut (tasarim geregi silinmez)")
+
+        # S5-R03B Bolum 12 — "Install root'ta yeni PDF 0": exe.parent, CWD
+        # (spawn cwd: + frozen os.chdir) oldugu icin STORAGE_DIR override
+        # EDILMESEYDI backend'in dusecegi CWD-goreli './storage' konumu
+        # TAM OLARAK budur. Bu smoke STORAGE_DIR'i ACIKCA verdigi icin
+        # (yukarida `ortam["STORAGE_DIR"] = str(storage)`) burada SIFIR
+        # yeni dosya olusmalidir — durable-root yonlendirmesinin GERCEK
+        # paketli binary'de calistiginin uctan uca kaniti.
+        install_root_storage = exe.parent / "storage"
+        if install_root_storage.is_dir():
+            yeni_pdfler = list(install_root_storage.rglob("*.pdf"))
+            _kontrol(
+                yeni_pdfler == [],
+                f"install-root ('{install_root_storage}') konumunda yeni PDF 0 "
+                f"(bulunan: {yeni_pdfler})",
+            )
+        else:
+            _kontrol(True, "install-root storage dizini hic olusmadi (beklenen)")
     finally:
         # PyInstaller onefile: proc.pid BOOTLOADER'dir; yalniz onu oldurmek
         # child server'i ORPHAN birakir ve portu tutmaya devam eder (gercek
@@ -297,7 +333,7 @@ def main() -> int:
     _kontrol("Playwright PDF generation" not in log, "Playwright'a dusus yok")
     _kontrol("Traceback" not in log, "log'da beklenmeyen traceback yok")
 
-    print("SMOKE OK: paketli ReportLab PDF zinciri dogrulandi")
+    print("SMOKE OK: paketli ReportLab PDF zinciri + durable-storage yonlendirmesi dogrulandi")
     return 0
 
 

@@ -18,6 +18,8 @@ const {
   MODE_CANONICAL,
   MODE_FRESH_INSTALL,
   MODE_FAIL_CLOSED_MISSING_RESCUE,
+  resolveDurableStorageDir,
+  resolveLegacyStorageDir,
 } = require('./dbRouting');
 
 let gecti = 0;
@@ -113,6 +115,48 @@ test('resolveDatabaseRouting YAN ETKISIZ — dizin/dosya OLUSTURMAZ', () => {
   const { userDataDir, resourcesPath } = mkArena();
   resolveDatabaseRouting({ userDataDir, resourcesPath });
   assert.ok(!fs.existsSync(path.join(userDataDir, 'database')), 'fonksiyon dizin olusturdu');
+});
+
+// ── S5-R03B: durable storage kok yonlendirmesi ──────────────────────────
+test('durable storage kok = userData/storage (DB ile SIMETRIK)', () => {
+  const p = resolveDurableStorageDir('C:\\Users\\x\\AppData\\Roaming\\gelka-enerji');
+  assert.strictEqual(
+    p,
+    path.join('C:\\Users\\x\\AppData\\Roaming\\gelka-enerji', 'storage')
+  );
+});
+
+test('legacy storage kok = resourcesPath/backend/storage', () => {
+  const p = resolveLegacyStorageDir('C:\\inst\\resources');
+  assert.strictEqual(p, path.join('C:\\inst\\resources', 'backend', 'storage'));
+});
+
+test('durable storage kok formulu kullanici adi icerigine bagli DEGIL', () => {
+  const varyantlar = ['ulastelli', 'Mehmet Ali', 'Şükrü Öztürk', 'user with spaces'];
+  const sonuclar = new Set(
+    varyantlar.map((ad) => {
+      const kok = `C:\\Users\\${ad}\\AppData\\Roaming\\gelka-enerji`;
+      return resolveDurableStorageDir(kok).replace(kok, '<KOK>');
+    })
+  );
+  assert.strictEqual(sonuclar.size, 1, 'formul kullanici adina gore degisti');
+});
+
+test('durable ve legacy storage kokleri FARKLI dizinlerdir (DB routing ile ayni ikili yapi)', () => {
+  const { userDataDir, resourcesPath } = mkArena();
+  const durable = resolveDurableStorageDir(userDataDir);
+  const legacy = resolveLegacyStorageDir(resourcesPath);
+  assert.notStrictEqual(durable, legacy);
+  assert.ok(durable.startsWith(userDataDir));
+  assert.ok(legacy.startsWith(resourcesPath));
+});
+
+test('resolveDurableStorageDir/resolveLegacyStorageDir YAN ETKISIZ — dizin OLUSTURMAZ', () => {
+  const { userDataDir, resourcesPath } = mkArena();
+  resolveDurableStorageDir(userDataDir);
+  resolveLegacyStorageDir(resourcesPath);
+  assert.ok(!fs.existsSync(path.join(userDataDir, 'storage')), 'fonksiyon dizin olusturdu');
+  assert.ok(!fs.existsSync(path.join(resourcesPath, 'backend', 'storage')), 'fonksiyon dizin olusturdu');
 });
 
 // ── sonuc ─────────────────────────────────────────────────────────────

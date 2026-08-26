@@ -152,12 +152,31 @@ function startBackend() {
       fs.mkdirSync(path.dirname(routing.canonicalPath), { recursive: true });
     }
 
+    // S5-R03B: durable PDF/belge storage kökü — DB ile SIMETRIK olarak
+    // userData altında (`<userData>/storage`). resources/backend/storage
+    // (eski/CWD-göreli varsayılan) upgrade sırasında installer'ın
+    // `uninstallOldVersion` adımıyla SESSİZCE silinir (bkz. installer.nsh);
+    // rescue/backup mekanizması yalnız .db'yi kapsar, storage'ı KAPSAMAZ.
+    // Dizin burada best-effort oluşturulur — GERÇEK fail-closed containment/
+    // reparse-point denetimi backend tarafında (LocalStorage.__init__,
+    // app/services/storage_local.py) yapılır; Electron'un mkdir'i başarısız
+    // olsa bile backend kendi mkdir'ini dener ve gerekirse orada patlar.
+    const durableStorageDir = dbRouting.resolveDurableStorageDir(app.getPath('userData'));
+    try {
+      if (!fs.existsSync(durableStorageDir)) {
+        fs.mkdirSync(durableStorageDir, { recursive: true });
+      }
+    } catch (e) {
+      logBackend(`[UYARI] durable storage dizini oluşturulamadı: ${e.message}`);
+    }
+
     const backendDir = path.join(process.resourcesPath, 'backend');
     const backendExe = path.join(backendDir, 'gelka-backend.exe');
     logBackend(`Backend exe: ${backendExe}`);
     logBackend(`Backend dir: ${backendDir}`);
     logBackend(`Exe exists: ${fs.existsSync(backendExe)}`);
     logBackend(`DATABASE_URL: ${routing.url}`);
+    logBackend(`STORAGE_DIR: ${durableStorageDir}`);
     backendProcess = spawn(backendExe,
       ['--host', '127.0.0.1', '--port', String(BACKEND_PORT)],
       {
@@ -168,15 +187,20 @@ function startBackend() {
         // .local-browsers) kullan. Dev branch'ine BİLEREK eklenmedi — dev ortamı
         // hâlâ kullanıcı cache'ini kullanmaya devam eder (regresyon yok).
         //
-        // KORUNAN ANAHTARLAR (PDSMR-R3 STEP 2, PDSMR-R3B STEP 5): DATABASE_URL,
-        // ENV, GELKA_PACKAGED_RUNTIME — üçü de ...machineLocalEnv'DEN SONRA
-        // literal olarak verilir, böylece machine-local.env (kullanıcının
-        // kendi makinesinde, elle düzenlenebilir bir dosya) bunları ASLA
-        // EZEMEZ. DATABASE_URL zaten böyleydi (run_server.py
-        // os.environ.setdefault kullanır); ENV/GELKA_PACKAGED_RUNTIME de
-        // AYNI ilkeyle eklendi — backend/app/database.py::init_db()
-        // GELKA_PACKAGED_RUNTIME'ı create_all() SESSİZ-YOK-SAYMA (fail-open,
-        // PDSMR-R2I bulgusu) sinyali olarak KOŞULSUZ kabul eder.
+        // KORUNAN ANAHTARLAR (PDSMR-R3 STEP 2, PDSMR-R3B STEP 5, S5-R03B):
+        // DATABASE_URL, ENV, GELKA_PACKAGED_RUNTIME, STORAGE_DIR — dördü de
+        // ...machineLocalEnv'DEN SONRA literal olarak verilir, böylece
+        // machine-local.env (kullanıcının kendi makinesinde, elle
+        // düzenlenebilir bir dosya) bunları ASLA EZEMEZ. DATABASE_URL zaten
+        // böyleydi (run_server.py os.environ.setdefault kullanır);
+        // ENV/GELKA_PACKAGED_RUNTIME de AYNI ilkeyle eklendi —
+        // backend/app/database.py::init_db() GELKA_PACKAGED_RUNTIME'ı
+        // create_all() SESSİZ-YOK-SAYMA (fail-open, PDSMR-R2I bulgusu)
+        // sinyali olarak KOŞULSUZ kabul eder. STORAGE_DIR de AYNI korumayı
+        // alır — aksi hâlde machine-local.env'e elle yazılan keyfi bir
+        // STORAGE_DIR, containment kökünü kullanıcı kontrolüne bırakırdı
+        // (S5-R03B Bölüm 6: "kalıcı storage kökü tahmin edilerek
+        // seçilmeyecek" ilkesiyle çelişirdi).
         // ENV='desktop' (PDSMR-R3B STEP 5 — ÖNCEDEN 'staging' idi, YANILTICIYDI):
         // paketlenmiş masaüstü uygulamasının GERÇEK/DÜRÜST değeri — bkz.
         // backend/.env.production ve incident_service.py::VALID_ENVIRONMENTS
@@ -188,6 +212,7 @@ function startBackend() {
           DATABASE_URL: routing.url,
           ENV: 'desktop',
           GELKA_PACKAGED_RUNTIME: '1',
+          STORAGE_DIR: durableStorageDir,
         },
         stdio: ['pipe', 'pipe', 'pipe'],
       }

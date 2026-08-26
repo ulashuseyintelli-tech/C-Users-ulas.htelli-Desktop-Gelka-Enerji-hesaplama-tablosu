@@ -2661,22 +2661,42 @@ async def generate_pdf_direct(
     customer_name: Optional[str] = None,
     customer_company: Optional[str] = None
 ):
-    """Kaydetmeden direkt PDF oluştur"""
+    """
+    Kaydetmeden direkt PDF oluştur.
+
+    S5-R03B Bölüm 9 — UNREACHABLE (dead-code) bulgusu: frontend/src altında
+    bu endpoint'e HİÇBİR çağrı yok; gerçek yol `/generate-pdf-simple`'dır.
+    Owner talimatınca SİLİNMEDİ (ayrı deprecation bulgusu olarak raporlandı),
+    yalnız güvenlik açığı kapatıldı: `str(e)` client response'a SIZIYORDU
+    (DLL/absolute-path/stack ayrıntısı dahil olabilir — customer_name/company
+    request body'den DOĞRUDAN geliyor, exception mesajına yansıyabilir).
+
+    Çağrıldığı yerler: YOK (frontend'de referans sıfır; runtime graph'ta
+    ölü uç — bkz. S5-R03B kapanış raporu).
+    """
     try:
         pdf_path = generate_offer_pdf(
             extraction, calculation, params,
             customer_name=customer_name,
             customer_company=customer_company
         )
-        
+
         return FileResponse(
             pdf_path,
             media_type="application/pdf",
             filename="teklif.pdf"
         )
     except Exception as e:
-        logger.error(f"PDF generation error: {e}")
-        raise HTTPException(status_code=500, detail=f"PDF oluşturma hatası: {str(e)}")
+        # S5-R03B: sunucu logu da PII/path açısından sanitize — yalnız
+        # exception TİPİ + kısa korelasyon kimliği loglanır; `str(e)` (DLL
+        # adı/absolute path/customer_name'i yansıtabilecek şablon hatası
+        # içeriği içerebilir) NE loga NE client response'una yazılır.
+        _direct_req_id = str(uuid.uuid4())[:8]
+        logger.error(f"[{_direct_req_id}] PDF generation error (generate-pdf-direct): {type(e).__name__}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"PDF oluşturma hatası: sunucu tarafında beklenmeyen bir hata oluştu. (ref: {_direct_req_id})",
+        )
 
 
 @app.post("/generate-pdf-simple")

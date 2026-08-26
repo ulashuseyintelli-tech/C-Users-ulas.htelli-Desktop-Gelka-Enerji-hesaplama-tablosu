@@ -1,12 +1,18 @@
 'use strict';
 /**
  * PDSMR-R2 — packaged backend icin DATABASE_URL yonlendirme karari.
+ * S5-R03B — AYNI dosyaya durable STORAGE_DIR yonlendirmesi eklendi
+ * (DB ile SIMETRIK format: `<userData>/storage`; ayri "mode" karari
+ * GEREKMEZ — legacy storage salt-okunur uyumluluk icin OKUNUR, DB'deki
+ * FAIL_CLOSED_MISSING_RESCUE gibi baslatmayi ENGELLEYEN bir kapi yok,
+ * cunku yeni yazimlar zaten dogrudan durable koke gider; backend-tarafi
+ * dual-root containment app/services/storage_local.py::LocalStorage'da).
  *
  * Saf modul: Electron'a BAGIMLI DEGILDIR (yalniz `path`/`fs`), boylece
  * gercek Electron calistirmadan test edilebilir. main.js bu modulun
- * dondugu karari SPAWN ENV'ine DATABASE_URL olarak gecirir.
+ * dondugu karari SPAWN ENV'ine DATABASE_URL/STORAGE_DIR olarak gecirir.
  *
- * Kural (owner sozlesmesi, PDSMR-R2 ADIM 7):
+ * DB kurali (owner sozlesmesi, PDSMR-R2 ADIM 7):
  *   - canonical (`<userData>/database/gelka_enerji.db`) VARSA -> onu kullan.
  *   - canonical YOK ama legacy (`resources/backend/gelka_enerji.db`) VARSA
  *     -> bu, kurtarmanin CALISMADIGI/BASARISIZ oldugu anlamina gelir.
@@ -15,8 +21,14 @@
  *   - ikisi de YOKSA -> GERCEK taze kurulum; backend kendi ilk-kurulum
  *     yolundan (create_all/migration) canonical'i olusturabilir.
  *
+ * Storage kurali (S5-R03B): durable kok HER ZAMAN `<userData>/storage`
+ * olarak gecirilir (DB'nin aksine mode secimi YOK) — backend, icindeki
+ * dosyalari LocalStorage.legacy_base_dir araciligiyla eski
+ * `resources/backend/storage` konumundan da OKUYABILIR (silmez,
+ * tasimaz); gercek installer-fazi migrasyonu bu fazda YETKISIZ.
+ *
  * Cagrildigi yerler:
- * - electron/main.js::startBackend() [PDSMR-R2]
+ * - electron/main.js::startBackend() [PDSMR-R2 + S5-R03B]
  * - electron/dbRouting.test.js
  */
 
@@ -25,6 +37,8 @@ const fs = require('fs');
 
 const DATABASE_SUBDIR = 'database';
 const CANONICAL_DB_FILENAME = 'gelka_enerji.db';
+// S5-R03B: DB ile SIMETRIK durable storage alt-dizini.
+const STORAGE_SUBDIR = 'storage';
 
 const MODE_CANONICAL = 'CANONICAL';
 const MODE_FRESH_INSTALL = 'FRESH_INSTALL';
@@ -43,6 +57,33 @@ function resolveCanonicalDbPath(userDataDir) {
 
 function resolveLegacyDbPath(resourcesPath) {
   return path.join(resourcesPath, 'backend', CANONICAL_DB_FILENAME);
+}
+
+/**
+ * userData altindaki durable storage KOKUNU hesaplar (S5-R03B).
+ *
+ * Python tarafi (`app/services/storage_local.py::LocalStorage`) `base_dir`
+ * olarak AYNI formulu kullanir — backend'e STORAGE_DIR env'i olarak gecirilir
+ * (main.js). DB'nin aksine bu fonksiyon bir "mode" KARARI URETMEZ: durable
+ * kok her zaman budur; eski konumdaki dosyalar backend tarafinda ayrica
+ * `legacy_base_dir` olarak salt-okunur taninir (asagida
+ * `resolveLegacyStorageDir`).
+ */
+function resolveDurableStorageDir(userDataDir) {
+  return path.join(userDataDir, STORAGE_SUBDIR);
+}
+
+/**
+ * Eski (pre-durable-root) storage kokunu hesaplar — `resources/backend/storage`.
+ *
+ * Bu, backend'in STORAGE_DIR env'i HIC verilmeden calisirken kendi
+ * `settings.storage_dir` varsayilanini (`./storage`, CWD-goreli) neye
+ * cozdugunun AYNISIDIR (CWD packaged modda daima `resources/backend`'dir —
+ * bkz. main.js spawn `cwd:` + backend `run_server.py`'nin frozen `os.chdir`i).
+ * Salt-okunur gecis-uyumlulugu icin kullanilir; backend BURAYA asla YAZMAZ.
+ */
+function resolveLegacyStorageDir(resourcesPath) {
+  return path.join(resourcesPath, 'backend', STORAGE_SUBDIR);
 }
 
 /**
@@ -109,12 +150,15 @@ function resolveDatabaseRouting({ userDataDir, resourcesPath }) {
 
 module.exports = {
   DATABASE_SUBDIR,
+  STORAGE_SUBDIR,
   CANONICAL_DB_FILENAME,
   MODE_CANONICAL,
   MODE_FRESH_INSTALL,
   MODE_FAIL_CLOSED_MISSING_RESCUE,
   resolveCanonicalDbPath,
   resolveLegacyDbPath,
+  resolveDurableStorageDir,
+  resolveLegacyStorageDir,
   resolveDatabaseRouting,
   toSqliteUrl,
 };
