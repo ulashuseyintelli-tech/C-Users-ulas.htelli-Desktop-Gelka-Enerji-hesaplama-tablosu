@@ -48,19 +48,27 @@ def _temp_artiklari(dizin: Path) -> list[Path]:
 # 10 — Return/path sözleşmesi bozulmadı
 # ═══════════════════════════════════════════════════════════════════════════
 
-def test_donus_sozlesmesi_mutlak_yol_ve_icerik_aynen_korunur(storage, tmp_path):
+def test_donus_sozlesmesi_relative_anahtar_ve_icerik_aynen_korunur(storage, tmp_path):
+    """
+    S5-R03B: dönüş sözleşmesi mutlak yoldan RELATIVE/portable anahtara
+    değişti (bkz. storage_local.py::put_bytes docstring) — kurulum dizinini
+    `pdf_ref` içine gömmemek, upgrade-safe olmak için. Fiziksel yol yalnız
+    `resolve_local_path` ile, durable `base_dir`'e göre çözülür.
+    """
     ref = storage.put_bytes("offers/1/offer.pdf", b"%PDF-govde", PDF)
 
-    assert os.path.isabs(ref), "dönüş mutlak yol olmalı (eski sözleşme)"
-    assert Path(ref) == Path(storage.base_dir) / "offers" / "1" / "offer.pdf"
-    assert Path(ref).read_bytes() == b"%PDF-govde"
-    # Aynı ref `resolve_local_path` containment kontrolünden geçmeli.
-    assert storage.resolve_local_path(ref) == str(Path(ref).resolve())
+    assert not os.path.isabs(ref), "dönüş RELATIVE/portable anahtar olmalı (S5-R03B sözleşmesi)"
+    assert ref == "offers/1/offer.pdf", "dönüş, verilen key'in KENDİSİ olmalı"
+
+    fiziksel_yol = Path(storage.base_dir) / "offers" / "1" / "offer.pdf"
+    assert fiziksel_yol.read_bytes() == b"%PDF-govde"
+    # ref, `resolve_local_path` ile durable base_dir'e göre doğru çözülmeli.
+    assert storage.resolve_local_path(ref) == str(fiziksel_yol.resolve())
 
 
 def test_ic_ice_dizinler_olusturulur(storage):
     ref = storage.put_bytes("a/b/c/d.pdf", b"x", PDF)
-    assert Path(ref).is_file()
+    assert Path(storage.resolve_local_path(ref)).is_file()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -83,7 +91,9 @@ def test_gecici_dosya_hedefle_ayni_dizinde_ve_replace_ile_yayimlanir(storage, mo
     assert os.path.dirname(yakalanan["src"]) == os.path.dirname(yakalanan["dst"]), (
         "geçici dosya hedefle AYNI dizinde olmalı — aksi hâlde replace atomik değildir"
     )
-    assert yakalanan["dst"] == ref
+    # S5-R03B: `ref` artık relative anahtar; `os.replace`e verilen `dst` ise
+    # her zaman FİZİKSEL (mutlak) yoldur — `resolve_local_path` ile eşleşmeli.
+    assert yakalanan["dst"] == storage.resolve_local_path(ref)
 
 
 def test_gecici_adlar_benzersiz(storage, monkeypatch):
@@ -151,16 +161,17 @@ def test_yazim_hatasinda_temp_temizlenir_ve_hedef_olusmaz(storage, monkeypatch):
 
 def test_mevcut_saglam_hedef_basarisiz_yazimda_korunur(storage, monkeypatch):
     ref = storage.put_bytes("offers/17/offer.pdf", b"SURUM-1", PDF)
-    assert Path(ref).read_bytes() == b"SURUM-1"
+    fiziksel = Path(storage.resolve_local_path(ref))
+    assert fiziksel.read_bytes() == b"SURUM-1"
 
     monkeypatch.setattr(os, "fsync", lambda fd: (_ for _ in ()).throw(OSError("disk")))
     with pytest.raises(OSError):
         storage.put_bytes("offers/17/offer.pdf", b"SURUM-2-BOZUK", PDF)
 
-    assert Path(ref).read_bytes() == b"SURUM-1", (
+    assert fiziksel.read_bytes() == b"SURUM-1", (
         "eski sağlam hedef, yeni dosya hazır olmadan ASLA bozulmamalı"
     )
-    assert _temp_artiklari(Path(ref).parent) == []
+    assert _temp_artiklari(fiziksel.parent) == []
 
 
 def test_replace_kalici_hata_verirse_yukari_firlatir_ve_artik_birakmaz(storage, monkeypatch):
@@ -197,7 +208,7 @@ def test_gecici_permission_hatasinda_yeniden_denenir(storage, monkeypatch):
     monkeypatch.setattr("app.services.storage_local._PUBLISH_RETRY_DELAY_SECONDS", 0.0)
 
     ref = storage.put_bytes("offers/23/offer.pdf", b"sonunda-yayimlandi", PDF)
-    assert Path(ref).read_bytes() == b"sonunda-yayimlandi"
+    assert Path(storage.resolve_local_path(ref)).read_bytes() == b"sonunda-yayimlandi"
     assert kalan["hata"] == 0, "geçici hatalar tüketilmeliydi"
 
 

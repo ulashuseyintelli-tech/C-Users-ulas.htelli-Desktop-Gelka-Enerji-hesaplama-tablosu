@@ -3,7 +3,11 @@
 @tailwind utilities;
 
 * {
-  font-family: 'Inter', sans-serif;
+  /* S5-R03B: Google Fonts kaldirildi (paketli UI TAM OFFLINE calismali).
+     Inter yerine Windows sistem font yiginina donuldu -- Segoe UI, gorsel
+     hiyerarsi/karakter genisligi acisindan Inter'e yakin bir humanist
+     sans-serif oldugu icin duzen/tasma riski dusuk. */
+  font-family: "Segoe UI", Arial, sans-serif;
 }
 
 html, body, #root {
