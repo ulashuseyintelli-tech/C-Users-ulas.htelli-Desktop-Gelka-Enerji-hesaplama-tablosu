@@ -338,13 +338,27 @@ const ALLOWED_DOWNLOAD_ORIGINS = [
   `http://127.0.0.1:${BACKEND_PORT}`,
   `http://localhost:${BACKEND_PORT}`,
 ];
-// İzin verilen path prefix'leri (sadece PDF endpoint'leri)
+// İzin verilen path prefix'leri (sadece PDF endpoint'leri) — S5-R03D: bu
+// liste GENİŞLETİLMEZ (legacy /generate-pdf-simple ve /api/contracts aynen
+// kalır). Teklif PDF indirme (offer-bound) için AŞAĞIDAKİ EXACT route
+// matcher kullanılır — asla genel bir '/offers/' prefix'i DEĞİL.
 const ALLOWED_PATH_PREFIXES = ['/generate-pdf', '/api/contracts'];
 const MAX_PDF_SIZE = 50 * 1024 * 1024; // 50MB hard limit
 
+// S5-R03D — Authoritative backend route: GET /offers/{offer_id}/download
+// (backend/app/main.py, @app.get("/offers/{offer_id}/download"), offer_id: int).
+// Starlette'in int path-converter'ı `[0-9]+` kullanır (negatif/non-numeric
+// zaten route seviyesinde reddedilir); frontend (api.ts::downloadOfferPdf)
+// HİÇBİR ZAMAN query/fragment eklemez — `${API_BASE}/offers/${offerId}/download`.
+// `[1-9]\d*` ile "0" ve lider-sıfır da reddedilir (pratikte hiç oluşmaz,
+// yalnız ekstra güvenlik marjı). EXACT string eşleşmesi (^...$) — suffix,
+// alt-rota veya genişletilmiş prefix KABUL EDİLMEZ.
+const OFFER_DOWNLOAD_PATH_MATCHER = /^\/offers\/[1-9]\d*\/download$/;
+
 /**
  * URL'in güvenli olduğunu doğrula.
- * Kontroller: parse, protocol, username/password, origin allowlist, path allowlist.
+ * Kontroller: parse, protocol, username/password, origin allowlist,
+ * query/fragment yokluğu, path allowlist (prefix VEYA exact offer-download).
  */
 function validateDownloadUrl(rawUrl) {
   let parsed;
@@ -370,10 +384,25 @@ function validateDownloadUrl(rawUrl) {
     return { ok: false, error: `İzin verilmeyen adres: ${origin}` };
   }
 
-  // Path allowlist: sadece PDF endpoint'lerine izin ver
-  const pathAllowed = ALLOWED_PATH_PREFIXES.some(prefix => parsed.pathname.startsWith(prefix));
+  // Path allowlist: mevcut prefix'ler (legacy generate-pdf + contracts) VEYA
+  // EXACT offer-download route eşleşmesi. `pathname` query/fragment İÇERMEZ
+  // (URL nesnesi bunları ayrı tutar) — o yüzden "query/fragment yok" şartı
+  // AYRICA, aşağıda açıkça kontrol edilir.
+  const pathAllowed =
+    ALLOWED_PATH_PREFIXES.some(prefix => parsed.pathname.startsWith(prefix)) ||
+    OFFER_DOWNLOAD_PATH_MATCHER.test(parsed.pathname);
   if (!pathAllowed) {
     return { ok: false, error: `İzin verilmeyen path: ${parsed.pathname}` };
+  }
+
+  // Query/fragment yasak (yalnız offer-download route'u için değil, TÜM
+  // indirme URL'leri için sıkı sözleşme — mevcut çağıranların hiçbiri
+  // query/fragment kullanmaz, bu bir davranış değişikliği YARATMAZ).
+  if (parsed.search) {
+    return { ok: false, error: 'URL içinde query string yasak.' };
+  }
+  if (parsed.hash) {
+    return { ok: false, error: 'URL içinde fragment yasak.' };
   }
 
   return { ok: true, parsed };
@@ -759,3 +788,22 @@ app.on('before-quit', () => stopBackend());
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
+
+// ── Test edilebilirlik (S5-R03D) ──────────────────────────────────────────
+// main.js gerçek Electron process'i tarafından çalıştırılır ve dosyanın
+// tepesinde top-level Electron API çağrıları içerir (`!app.isPackaged`,
+// `app.requestSingleInstanceLock()`) — bu yüzden düz `require('./main.js')`
+// gerçek bir Electron çalışma-zamanı OLMADAN (örn. `node main.test.js`)
+// bu satırlara ulaşana kadar çöker. main.test.js bunu, main.js'e HİÇBİR
+// DAVRANIŞ DEĞİŞİKLİĞİ getirmeden, `electron` modülünü test-zamanlı sahte
+// bir nesneyle değiştirerek (require.cache enjeksiyonu) çözer; bu export
+// SADECE o test-zamanlı yüklemenin `validateDownloadUrl`'a erişebilmesi
+// içindir, paketlenmiş/gerçek çalışma zamanını ETKİLEMEZ.
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    validateDownloadUrl,
+    ALLOWED_PATH_PREFIXES,
+    ALLOWED_DOWNLOAD_ORIGINS,
+    OFFER_DOWNLOAD_PATH_MATCHER,
+  };
+}
