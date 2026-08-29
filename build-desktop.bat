@@ -78,7 +78,23 @@ cd backend
 for /f "delims=" %%i in ('git rev-parse HEAD') do set GIT_COMMIT=%%i
 for /f "delims=" %%i in ('git rev-parse --short HEAD') do set GIT_SHORT=%%i
 for /f "delims=" %%i in ('git rev-parse --abbrev-ref HEAD') do set GIT_BRANCH=%%i
-for /f "delims=" %%i in ('powershell -NoProfile -Command "Get-Date -Format o"') do set BUILD_DATE=%%i
+:: PDSMR-DETERMINISM-R03 — RELEASE build HER ZAMAN detached HEAD'den
+:: calismalidir (owner karari: "clean master'dan TEK immutable RC uret"
+:: felsefesiyle tutarli + build-info.json'daki "branch" alaninin
+:: worktree'nin git DURUMUNA [branch'li mi detached mi] gore FARKLI
+:: string uretmesini onler - AYNI commit'ten yapilan iki build'in
+:: build-info.json'unun bu yuzden byte-farkli cikabildigi R03'te
+:: KANITLANDI). Branch'li bir checkout'tan release build fail-closed durur.
+if not "%GIT_BRANCH%"=="HEAD" (
+    echo HATA: release build detached HEAD gerektirir, mevcut branch: %GIT_BRANCH%
+    echo   Cozum: git checkout --detach ile detached HEAD'e gecin.
+    pause
+    exit /b 1
+)
+:: PDSMR-DETERMINISM-R03 — build_date GERCEK saat/mtime/worktree yolundan
+:: DEGIL, HEAD commit'inin KENDI (sabit) ISO zaman damgasindan turetilir
+:: (owner karari: deterministik build-info.json icin gercek saat kullanilmaz).
+for /f "delims=" %%i in ('git log -1 --format^=%%cI HEAD') do set BUILD_DATE=%%i
 >build-info.json echo {"commit":"%GIT_COMMIT%","commit_short":"%GIT_SHORT%","branch":"%GIT_BRANCH%","build_date":"%BUILD_DATE%","app_version":"%APP_VERSION%","dirty":%BUILD_DIRTY%}
 echo   build-info.json: v%APP_VERSION% - %GIT_SHORT% (%GIT_BRANCH%) %BUILD_DATE%
 cd ..
@@ -98,6 +114,19 @@ cd ..
 echo [3/5] Backend paketleniyor (PyInstaller)...
 cd backend
 
+:: PDSMR-DETERMINISM-R03 STALE-CACHE GUVENLIGI (1/3) — git-tracked
+:: __pycache__/*.pyc VARSA (normalde .gitignore'da olmali) kaynak agaci
+:: anormal durumdadir - fail-closed dur. Genis/rekursif silme YOK, yalniz
+:: sayim+durdurma.
+set TRACKED_PYC_COUNT=0
+for /f "delims=" %%N in ('powershell -NoProfile -Command "@(git ls-files -- '*__pycache__*' '*.pyc' 2^>$null).Count"') do set TRACKED_PYC_COUNT=%%N
+if not "%TRACKED_PYC_COUNT%"=="0" (
+    echo HATA: git-tracked __pycache__/*.pyc dosyasi bulundu ^(%TRACKED_PYC_COUNT% adet^) - repository anormal durumda.
+    git ls-files -- "*__pycache__*" "*.pyc"
+    pause
+    exit /b 1
+)
+
 :: NOT: pip/pyinstaller/python komutlarini DOGRUDAN cagirmiyoruz — bunlar
 :: calistiran shell'in PATH durumuna gore SISTEM Python'una (venv disinda)
 :: dusebilir ve build'i deterministik olmaktan cikarir. Bunun yerine .venv'in
@@ -109,6 +138,25 @@ if not exist "%VENV_PY%" (
     pause
     exit /b 1
 )
+
+:: PDSMR-DETERMINISM-R03 — deterministik derleme icin sabit env degiskenleri.
+:: SOURCE_DATE_EPOCH, GERCEK build ZAMANINDAN DEGIL, HEAD commit'inin KENDI
+:: (sabit) unix-timestamp'inden turetilir (owner karari: gercek saat/mtime/
+:: worktree yolu KULLANILMAYACAK). Bos/sayisal-olmayan deger fail-closed durur.
+for /f "delims=" %%i in ('git log -1 --format^=%%ct HEAD') do set SOURCE_DATE_EPOCH=%%i
+echo %SOURCE_DATE_EPOCH%| findstr /r /c:"^[0-9][0-9]*$" >nul
+if errorlevel 1 (
+    echo HATA: SOURCE_DATE_EPOCH bos veya sayisal degil: "%SOURCE_DATE_EPOCH%"
+    pause
+    exit /b 1
+)
+set PYTHONHASHSEED=0
+:: __pycache__ olusumunu TAMAMEN engeller — assert_alembic_identity.py'nin
+:: "import app" cagrisi (asagida) worktree'nin MUTLAK yolunu .pyc
+:: co_filename alanina gomerdi (R03 kok-neden kaniti: 15/16 farkli
+:: archive entry bu yuzdendi); bu ayar o riski KOKTEN kaldirir.
+set PYTHONDONTWRITEBYTECODE=1
+
 %VENV_PY% -m pip install pyinstaller >nul 2>&1
 
 :: PDSMR-R3B STEP 1 — PyInstaller'i "%VENV_PY% -m PyInstaller" YERINE
@@ -168,6 +216,19 @@ echo   Derleme-oncesi dogrulama: alembic kimligi + app bulunabilirligi...
 %VENV_PY% scripts\assert_alembic_identity.py
 if %ERRORLEVEL% neq 0 (
     echo HATA: derleme-oncesi dogrulama BASARISIZ - PyInstaller CALISTIRILMADI.
+    pause
+    exit /b 1
+)
+
+:: PDSMR-DETERMINISM-R03 STALE-CACHE GUVENLIGI (2/3) — PYTHONDONTWRITEBYTECODE=1
+:: GERCEKTEN etkili oldu mu dogrula: assert_alembic_identity.py'nin "import
+:: app" cagrisindan SONRA, app/ agacinda HICBIR __pycache__/*.pyc dosyasi
+:: OLUSMAMALI. Sayisi 0 DEGILSE PyInstaller CALISTIRILMADAN DURULUR (fail-
+:: closed) — genis/rekursif SILME YAPILMAZ, yalniz SAYIM+DURDURMA.
+set PYC_COUNT=0
+for /f "delims=" %%N in ('powershell -NoProfile -Command "@(Get-ChildItem -Path 'app' -Recurse -Filter '*.pyc' -ErrorAction SilentlyContinue).Count"') do set PYC_COUNT=%%N
+if not "%PYC_COUNT%"=="0" (
+    echo HATA: assert_alembic_identity.py SONRASI app\ agacinda %PYC_COUNT% adet __pycache__/*.pyc bulundu ^(PYTHONDONTWRITEBYTECODE etkisiz kalmis olabilir^) — PyInstaller CALISTIRILMADI.
     pause
     exit /b 1
 )
