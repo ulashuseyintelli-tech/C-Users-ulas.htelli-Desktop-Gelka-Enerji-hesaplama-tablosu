@@ -42,6 +42,7 @@ pdfplumber==0.11.4  # PDF metin/tablo çıkarma (hibrit yaklaşım için)
 # PDF Generation
 # ═══════════════════════════════════════════════════════════════════════════════
 jinja2==3.1.6
+reportlab==5.0.0
 weasyprint==67.0
 playwright==1.49.1  # Fallback for Windows (no Cairo/Pango)
 
