@@ -104,8 +104,16 @@ function gelkaNormalizeNsisInputMtimesR32(defines) {
         if (typeof defines[archDefineKey] === "string" && defines[archDefineKey].length > 0) inputPaths.push(defines[archDefineKey]);
     });
     if (typeof defines.UNINSTALLER_OUT_FILE === "string" && defines.UNINSTALLER_OUT_FILE.length > 0) inputPaths.push(defines.UNINSTALLER_OUT_FILE);
+    // GELKA-S5-RC1-R61-GELKA-RESCUE-MTIME-REMEDIATION: gelka-rescue.exe --
+    // installer.nsh'in KENDI File directive'iyle (${BUILD_RESOURCES_DIR}\gelka-rescue.exe)
+    // BIREBIR AYNI cozumleme yolu kullanilir (basename arama/glob/regex YOK --
+    // R59/R60'in ACTIVE_FILE_PAYLOAD_MTIME_CAUSAL_ONLY bulgusunun dogrudan
+    // giderilmesi). defines.BUILD_RESOURCES_DIR bu cagri noktasinda ZATEN
+    // mevcuttur (NsisTarget.js buildInstaller() -- APP_64/UNINSTALLER_OUT_FILE
+    // ile AYNI defines objesi, ayni SOURCE_DATE_EPOCH otoritesi).
+    if (typeof defines.BUILD_RESOURCES_DIR === "string" && defines.BUILD_RESOURCES_DIR.length > 0) inputPaths.push(path.join(defines.BUILD_RESOURCES_DIR, "gelka-rescue.exe"));
     if (inputPaths.length === 0) {
-        throw new Error("GELKA-NSIS-MTIME-NORMALIZATION-R32: normalize edilecek hicbir build-generated girdi (APP_64/APP_ARM64/APP_32/UNINSTALLER_OUT_FILE) bulunamadi - fail-closed.");
+        throw new Error("GELKA-NSIS-MTIME-NORMALIZATION-R32: normalize edilecek hicbir build-generated girdi (APP_64/APP_ARM64/APP_32/UNINSTALLER_OUT_FILE/gelka-rescue.exe) bulunamadi - fail-closed.");
     }
 
     const receiptEntries = [];
