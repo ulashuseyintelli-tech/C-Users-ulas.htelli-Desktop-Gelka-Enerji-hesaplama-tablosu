@@ -32,6 +32,46 @@ REM   set "PYINSTALLER_EXE=C:\...\.venv\Scripts\pyinstaller.exe"
 REM   build-rescue-helper.bat <build_sha>
 if "%PYINSTALLER_EXE%"=="" set PYINSTALLER_EXE=.venv\Scripts\pyinstaller.exe
 
+REM R66 -- PYINSTALLER REPRODUCIBILITY AUTHORITY (SOURCE_DATE_EPOCH + PYTHONHASHSEED).
+REM R65'te STATIK olarak kanitlanan iki bagimsiz nondeterminism kaynagi:
+REM   1) PE TimeDateStamp -- PyInstaller.building.api.EXE.assemble() ->
+REM      os.environ.get('SOURCE_DATE_EPOCH', time.time()) -- set edilmezse wall-clock.
+REM   2) base_library.zip entry-yazma sirasi -- PYTHONHASHSEED sabitlenmezse
+REM      Python'un set/dict hash-randomization'i modulegraph traversal sirasini
+REM      calistirmadan calistirmaya degistirir.
+REM Ikisi de PyInstaller/CPython'un KENDI standart env-var mekanizmasidir --
+REM KAYNAK PATCH GEREKMEZ. Deger BUILD_SHA (zaten yukarida cozumlendi) ISTIKAMETINDEN
+REM turetilir -- R61/R62 NSIS mtime normalization'in KULLANDIGI AYNI commit-epoch
+REM otoritesi (yeni bir sabit ICAT EDILMEDI). Wall-clock KULLANILMAZ; git basarisiz/
+REM bos/decimal-olmayan cikti verirse FAIL-CLOSED (sessizce time.time()'a DUSULMEZ).
+REM setlocal/endlocal ZATEN bu betigin cevresini sarmaladigi icin asagidaki set
+REM komutlari CAGIRANIN ortamina SIZMAZ.
+if "%PYTHONHASHSEED%"=="" (
+  set PYTHONHASHSEED=0
+) else if not "%PYTHONHASHSEED%"=="0" (
+  echo [gelka-rescue build] FAIL-CLOSED: ambient PYTHONHASHSEED=%PYTHONHASHSEED% beklenen 0 ile CELISIYOR
+  exit /b 1
+)
+
+set R66_SOURCE_DATE_EPOCH_COMPUTED=
+for /f "usebackq delims=" %%e in (`git show -s --format^=%%ct %BUILD_SHA% 2^>nul`) do set R66_SOURCE_DATE_EPOCH_COMPUTED=%%e
+if "%R66_SOURCE_DATE_EPOCH_COMPUTED%"=="" (
+  echo [gelka-rescue build] FAIL-CLOSED: git show basarisiz/bos cikti, SOURCE_DATE_EPOCH turetilemedi ^(BUILD_SHA=%BUILD_SHA%^)
+  exit /b 1
+)
+echo %R66_SOURCE_DATE_EPOCH_COMPUTED%| findstr /r "^[0-9][0-9]*$" >nul
+if errorlevel 1 (
+  echo [gelka-rescue build] FAIL-CLOSED: git show decimal-olmayan cikti dondurdu: %R66_SOURCE_DATE_EPOCH_COMPUTED%
+  exit /b 1
+)
+if "%SOURCE_DATE_EPOCH%"=="" (
+  set SOURCE_DATE_EPOCH=%R66_SOURCE_DATE_EPOCH_COMPUTED%
+) else if not "%SOURCE_DATE_EPOCH%"=="%R66_SOURCE_DATE_EPOCH_COMPUTED%" (
+  echo [gelka-rescue build] FAIL-CLOSED: ambient SOURCE_DATE_EPOCH=%SOURCE_DATE_EPOCH% beklenen %R66_SOURCE_DATE_EPOCH_COMPUTED% ile CELISIYOR
+  exit /b 1
+)
+set R66_SOURCE_DATE_EPOCH_COMPUTED=
+
 cd /d "%~dp0..\..\backend"
 
 REM Build SHA'yi CALISMA-ZAMANI env var'i olarak degil, PyInstaller
