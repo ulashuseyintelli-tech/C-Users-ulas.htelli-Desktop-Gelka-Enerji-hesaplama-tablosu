@@ -392,6 +392,19 @@ if %ERRORLEVEL% neq 0 (
 echo [5/5] Masaustu uygulamasi olusturuluyor...
 echo winCodeSign cache hazirlaniyor (symlink sorunu icin)...
 if exist "%LOCALAPPDATA%\electron-builder\Cache\winCodeSign" rmdir /s /q "%LOCALAPPDATA%\electron-builder\Cache\winCodeSign"
+
+:: GELKA-NSIS-DETERMINISM-R44 -- outer NSIS installer (Setup.exe) icin, R43'un
+:: kontrollu 2x2 deneyinde nedensel oldugu kanitlanan async assembly-block
+:: emission-order sorununu (deterministic-order fix) + R32/R33'te kullanilan
+:: LastWriteTime normalizasyonunu (APP_64/uninstaller) AYNI pristine dosyaya
+:: TEK atomik yazma ile uygulayan minimal candidate patch (fail-closed).
+echo   NSIS deterministic-order + LastWriteTime normalization patch'i uygulaniyor (R44 candidate)...
+node scripts\patch-nsis-order-and-mtime-r44.js
+if %ERRORLEVEL% neq 0 (
+    echo HATA: NSIS deterministic-order + LastWriteTime normalization patch'i basarisiz oldu - build durduruluyor ^(fail-closed^).
+    exit /b 1
+)
+
 cd electron
 set CSC_IDENTITY_AUTO_DISCOVERY=false
 set WIN_CSC_LINK=
