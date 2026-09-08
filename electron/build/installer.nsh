@@ -148,6 +148,13 @@
       ; Mesaj METNI kasitli olarak GENELDIR: gercek dosya yolu/kullanici
       ; adi kullaniciya GORUNMEZ (rescue.exe kendi stderr'inde de
       ; sanitize eder, bkz. sanitize_for_log()).
+      ; GO-R93/R94: /SD IDOK -- BUNSUZ, SilentInstall/gercek /S kurulumunda
+      ; bu MessageBox GERCEK bir dialog acmaya CALISIR ve kimse tiklamadigi
+      ; icin SONSUZA KADAR HANG EDER (GO-R93 Madde 1'de standalone makensis
+      ; testiyle DOGRUDAN gozlemlendi -- upgrade-config-preservation.nsh'deki
+      ; AYNI kusur, AYNI sekilde duzeltildi). Silent DEGILSE davranis AYNI
+      ; kalir (kullanici yine gorur/tiklar); /SD SADECE silent modda
+      ; otomatik-cevap saglar.
       MessageBox MB_OK|MB_ICONSTOP "Veritabani tasima islemi basarisiz oldu (kod: $0). Kurulum guvenlik nedeniyle durduruldu. Mevcut verileriniz DEGISTIRILMEDI." /SD IDOK
       Quit
     ${endIf}
