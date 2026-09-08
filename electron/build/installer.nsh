@@ -52,6 +52,11 @@
 ;
 ; ${APP_GUID} / ${INSTALL_REGISTRY_KEY} zaten derleme zamaninda
 ; multiUser.nsh tarafindan tanimlanir (bu betikten ONCE include edilir).
+;
+; GO-R93: upgrade sirasinda kullanici sirlarinin (OPENAI_API_KEY, EPIAS_*)
+; sessizce kaybolmasini onleyen bagimsiz blok - bkz.
+; upgrade-config-preservation.nsh basindaki detayli aciklama.
+!include "upgrade-config-preservation.nsh"
 
 !macro customInit
   ; .onInit icinde calisir - INSTDIR henuz eski kurulumun dizini
@@ -105,4 +110,10 @@
       Quit
     ${endIf}
   ${endIf}
+
+  ; GO-R93: DB-kurtarmadan BAGIMSIZ, ayri katman - AYNI $R0'i (eski
+  ; InstallLocation) yeniden kullanir, ikinci bir registry okuma YOK.
+  ; Fresh install ($R0=="") veya eski .env yoksa NO-OP. Hedef,
+  ; electron/main.js::loadMachineLocalEnv'in okudugu AYNI, GERCEK yol.
+  !insertmacro R93_ProtectUserSecretsBeforeUpgrade $R0 "$APPDATA\gelka-enerji" "$APPDATA\gelka-enerji\machine-local.env"
 !macroend
