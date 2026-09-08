@@ -65,6 +65,51 @@
   InitPluginsDir
   File /oname=$PLUGINSDIR\gelka-rescue.exe "${BUILD_RESOURCES_DIR}\gelka-rescue.exe"
 
+  ; ── $APPDATA, SetShellVarContext'e GORE DEGISIR (initMultiUser BURADAN
+  ; ONCE calisir): "sadece benim icin" -> current -> Roaming AppData
+  ; ($APPDATA=C:\Users\<kullanici>\AppData\Roaming); "tum kullanicilar
+  ; icin" -> all -> $APPDATA ARTIK C:\ProgramData'YA DONUSUR. Bu installer
+  ; oneClick:false oldugu icin (assistedInstaller.nsh + multiUser.nsh,
+  ; app-builder-lib 25.1.8, dogrudan okunarak DOGRULANDI) "tum kullanicilar
+  ; icin" secenegi HEM sihirbazda bir radyo-dugmesi (PAGE_INSTALL_MODE)
+  ; HEM DE komut satirinda /allusers ile HER ZAMAN erisilebilir - nsis.
+  ; perMachine:false BUNU KAPATMAZ (tetikleyici !oneClick'tir, perMachine
+  ; DEGIL; NsisTarget.js: "if (!oneClick || perMachine) INSTALL_MODE_
+  ; PER_ALL_USERS_REQUIRED"). allowElevation:false de yetersiz - zaten
+  ; admin/UAC-gecmis bir kullaniciyi VE /allusers komut-satiri bayragini
+  ; (initMultiUser'da, elevation-gate'in yasadigi sihirbaz sayfasindan
+  ; BAGIMSIZ, kosulsuz okunur) hic kapsamaz.
+  ;
+  ; Electron'un app.getPath('userData')'si ISE HER ZAMAN, kurulum
+  ; modundan BAGIMSIZ, mevcut oturum acmis kullanicinin Roaming
+  ; AppData'sidir - Electron'da "tum kullanicilar icin" kavrami YOKTUR
+  ; (main.js::loadMachineLocalEnv, dbRouting.js::resolveCanonicalDbPath).
+  ; Kurulum "tum kullanicilar icin" ile yapilirsa, asagidaki DB-kurtarma
+  ; VE GO-R93 blogu ham $APPDATA kullansaydi C:\ProgramData\gelka-enerji\...
+  ; hedefler, calisan Electron ise SESSIZCE C:\Users\<kullanici>\AppData\
+  ; Roaming\gelka-enerji\...'i okurdu - veri sessizce YANLIS yere giderdi.
+  ;
+  ; DUZELTME: $installMode (initMultiUser tarafindan zaten "all" veya
+  ; "CurrentUser" olarak ayarlanmis GERCEK NSIS degiskeni, ayni karsilastirma
+  ; multiUserUi.nsh'de de kullanilir) ile baglami SADECE bu iki satir icin
+  ; gecici olarak "current"e alip HEMEN geri donduruyoruz - baska hicbir
+  ; yan etkisi yok, $DESKTOP/$STARTMENU/kisayol/kurulum-hedefi gibi
+  ; sonraki adimlar ETKILENMEDEN kullanicinin GERCEKTEN sectigi modda kalir.
+  ;
+  ; $9 SECIMI KASITLIDIR: hem bu makro hem upgrade-config-preservation.nsh
+  ; SADECE $R0-$R9'u ic gecici (scratch) olarak kullanir (R93_ReadKeyFrom
+  ; EnvFile $R9'a kadar YAZAR) - bir $RN verilirse makro kendi icinde bu
+  ; degeri EZER. $0-$9 (R'siz) bu dosyada sadece $0 (ExecWait sonucu)
+  ; kullanir; $9 HICBIR yerde dokunulmaz, bu yuzden customInit'in SONUNA
+  ; kadar guvenle tasinir.
+  ${if} $installMode == "all"
+    SetShellVarContext current
+    StrCpy $9 "$APPDATA"
+    SetShellVarContext all
+  ${else}
+    StrCpy $9 "$APPDATA"
+  ${endif}
+
   ; Eski kurulumun InstallLocation'i (varsa) registry'den okunur -
   ; uninstallOldVersion'in KULLANDIGI AYNI kaynaktir (bkz.
   ; installUtil.nsh Function uninstallOldVersion), boylece rescue
@@ -75,16 +120,13 @@
 
   ${if} $R0 != ""
   ${andIf} ${FileExists} "$R0\resources\backend\gelka_enerji.db"
-    ; canonical hedef: $APPDATA\gelka-enerji\database\gelka_enerji.db -
+    ; canonical hedef: $9\gelka-enerji\database\gelka_enerji.db (yukarida
+    ; cozulen, HER ZAMAN mevcut kullanicinin Roaming AppData'si) -
     ; Electron app.getPath('userData') ile AYNI formul (bkz.
     ; app/legacy_adoption/pathsafety.py::resolve_canonical_db_path,
     ; electron/dbRouting.js::resolveCanonicalDbPath - uc dilde de
     ; TEK sabit deger, "gelka-enerji" package.json 'name' alanindan).
-    ; $APPDATA NSIS built-in yol sabitidir; Electron'un
-    ; app.getPath('appData') ile AYNI OS per-user Roaming AppData
-    ; kokunu verir - kullanici adi/dil/TR karakter/silent modundan
-    ; ETKILENMEZ (formulde bu girdiler hic yer almaz).
-    ExecWait '"$PLUGINSDIR\gelka-rescue.exe" --legacy "$R0\resources\backend\gelka_enerji.db" --canonical "$APPDATA\gelka-enerji\database\gelka_enerji.db" --backups-dir "$APPDATA\gelka-enerji\database\backups" --version-label "${VERSION}"' $0
+    ExecWait '"$PLUGINSDIR\gelka-rescue.exe" --legacy "$R0\resources\backend\gelka_enerji.db" --canonical "$9\gelka-enerji\database\gelka_enerji.db" --backups-dir "$9\gelka-enerji\database\backups" --version-label "${VERSION}"' $0
 
     ; PDSMR-R2I DUZELTMESI (gercek derleme+kurulumla YAKALANDI): $0 TEK
     ; BASINA GUVENILMEZ. gelka-rescue.exe gecerli bir PE/EXE DEGILSE
@@ -99,7 +141,7 @@
     ; var eder (rescue.py::perform_rescue - PASS/HARD_STOP disinda cikis
     ; yoktur). Bu dosya YOKSA, $0 ne derse desin BASARISIZ SAY.
     ${if} $0 != 0
-    ${orIfNot} ${FileExists} "$APPDATA\gelka-enerji\database\gelka_enerji.db"
+    ${orIfNot} ${FileExists} "$9\gelka-enerji\database\gelka_enerji.db"
       ; RescueRefused / baslatilamadi / beklenmedik durum: kurtarma
       ; basarili OLDUGU KANITLANAMADI. Kurulumu DURDUR - "uyar ve devam
       ; et" YASAKTIR (owner karari, PDSMR-R2).
@@ -114,6 +156,7 @@
   ; GO-R93: DB-kurtarmadan BAGIMSIZ, ayri katman - AYNI $R0'i (eski
   ; InstallLocation) yeniden kullanir, ikinci bir registry okuma YOK.
   ; Fresh install ($R0=="") veya eski .env yoksa NO-OP. Hedef,
-  ; electron/main.js::loadMachineLocalEnv'in okudugu AYNI, GERCEK yol.
-  !insertmacro R93_ProtectUserSecretsBeforeUpgrade $R0 "$APPDATA\gelka-enerji" "$APPDATA\gelka-enerji\machine-local.env"
+  ; electron/main.js::loadMachineLocalEnv'in okudugu AYNI, GERCEK yol -
+  ; $9 yukarida cozulen, HER ZAMAN mevcut kullanicinin Roaming AppData'si.
+  !insertmacro R93_ProtectUserSecretsBeforeUpgrade $R0 "$9\gelka-enerji" "$9\gelka-enerji\machine-local.env"
 !macroend
