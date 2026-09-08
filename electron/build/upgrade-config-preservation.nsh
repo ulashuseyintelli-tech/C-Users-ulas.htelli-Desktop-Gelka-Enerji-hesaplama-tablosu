@@ -58,6 +58,13 @@
 ; SHELL_CONTEXT zaten initMultiUser tarafindan ayarlandiktan SONRA calisir;
 ; mevcut DB-kurtarma/registry/rollback davranisina dokunmaz (bagimsiz,
 ; katmali blok).
+;
+; SUCCESSOR DUZELTME (GO-R93 "SON EKSIKLERI KAPAT" turu): "dosya yok" ile
+; "dosya VAR ama okunamiyor" (kilitli/izin reddi/bozuk) ONCEDEN AYNI
+; sonuca (FoundVar="0") dusuyordu — yani okunamayan bir eski .env,
+; "korunacak bir sey yok" ile KARISTIRILIYORDU. R93_ReadKeyFromEnvFile
+; artik ayri bir OpenOkVar dondurur; acilamayan bir dosya (ne eski .env
+; ne de machine-local.env icin) SESSIZCE gecilmez — kurulum durur.
 ; ═══════════════════════════════════════════════════════════════════════════
 
 ; ── Yardimci: $R2'deki satirin sonundaki CR/LF'i temizler (StrFunc.nsh'nin
@@ -76,10 +83,20 @@
 
 ; ── Bir .env dosyasinda KeyName= ile baslayan satiri arar; bulursa (bos
 ;    olmayan degerle) OutVar'a deger, FoundVar'a "1" yazar; yoksa OutVar=""
-;    FoundVar="0". PrefixLen = "KEYNAME=" harf sayisi (cagiran verir). ────
-!macro R93_ReadKeyFromEnvFile EnvPath KeyName PrefixLen OutVar FoundVar
+;    FoundVar="0". PrefixLen = "KEYNAME=" harf sayisi (cagiran verir).
+;
+;    OpenOkVar: GO-R93 SON EKSIK KAPANISI -- "dosya yok" ile "dosya VAR ama
+;    okunamiyor" (kilitli/izin reddi/bozuk) ARTIK AYRISTIRILIR. Dosya HIC
+;    yoksa OpenOkVar="1" (korunacak bir sey olmamasi GECERLI bir durumdur).
+;    Dosya VARSA ama FileOpen BASARISIZ olursa OpenOkVar="0" -- bu durumda
+;    icinde GERCEK bir sir olup olmadigi DOGRULANAMAZ; cagiran bunu bir
+;    "anahtar yok" ile ASLA KARISTIRMAMALI (onceki GO-R93 turunda bu ikisi
+;    ayni FoundVar="0" sonucuna dusuyordu -- bu, "gecerli bos deger" ile
+;    "bozuk/okunamayan kaynak"i AYIRT ETMEYEN bir bulguydu). ─────────────
+!macro R93_ReadKeyFromEnvFile EnvPath KeyName PrefixLen OutVar FoundVar OpenOkVar
   StrCpy ${OutVar} ""
   StrCpy ${FoundVar} "0"
+  StrCpy ${OpenOkVar} "1"
   ${if} ${FileExists} "${EnvPath}"
     FileOpen $R7 "${EnvPath}" r
     ${if} $R7 != ""
@@ -99,6 +116,10 @@
         ${endif}
       ${loop}
       FileClose $R7
+    ${else}
+      ; DOSYA VAR (${FileExists} true) AMA ACILAMADI -- kilitli/izin reddi/
+      ; bozuk olabilir. Icerigi OKUNAMADIGI icin "anahtar yok" SAYILAMAZ.
+      StrCpy ${OpenOkVar} "0"
     ${endif}
   ${endif}
 !macroend
@@ -111,18 +132,30 @@
 ;    testte disposable bir fixture dizinine YONLENDIRILEBILIR, GERCEK
 ;    $APPDATA'ya asla YAZMAZ). ──────────────────────────────────────────
 !macro R93_MigrateProtectedKeyIfMissing OldInstallDir KeyName PrefixLen MlEnvDir MlEnvPath
-  !insertmacro R93_ReadKeyFromEnvFile "${OldInstallDir}\resources\backend\.env" "${KeyName}" ${PrefixLen} $R1 $R2
+  !insertmacro R93_ReadKeyFromEnvFile "${OldInstallDir}\resources\backend\.env" "${KeyName}" ${PrefixLen} $R1 $R2 $R5
+  ${ifNot} $R5 == "1"
+    ; eski .env VAR ama OKUNAMADI (kilitli/izin reddi/bozuk) -- icinde
+    ; GERCEK bir sir olup olmadigi DOGRULANAMAZ. Sessizce "yok say" ETME.
+    MessageBox MB_OK|MB_ICONSTOP "Önceki yapılandırma dosyası okunamadı. Kurulum güvenlik nedeniyle durduruldu. Mevcut verileriniz DEĞİŞTİRİLMEDİ." /SD IDOK
+    Quit
+  ${endif}
 
   ${if} $R2 == "1"
     ; eski .env'de GERCEK (bos olmayan) bir deger bulundu
-    !insertmacro R93_ReadKeyFromEnvFile "${MlEnvPath}" "${KeyName}" ${PrefixLen} $R3 $R4
+    !insertmacro R93_ReadKeyFromEnvFile "${MlEnvPath}" "${KeyName}" ${PrefixLen} $R3 $R4 $R5
+    ${ifNot} $R5 == "1"
+      ; machine-local.env VAR ama OKUNAMADI -- zaten bir deger olup
+      ; olmadigi DOGRULANAMAZ; korumasizca EZME/YINELEME riskine girme.
+      MessageBox MB_OK|MB_ICONSTOP "Mevcut yapılandırma dosyası okunamadı. Kurulum güvenlik nedeniyle durduruldu. Mevcut verileriniz DEĞİŞTİRİLMEDİ." /SD IDOK
+      Quit
+    ${endif}
 
     ${if} $R4 == "0"
       ; machine-local.env'de HENUZ yok (veya bos) -- tasi
       CreateDirectory "${MlEnvDir}"
       FileOpen $R7 "${MlEnvPath}" a
       ${if} $R7 == ""
-        MessageBox MB_OK|MB_ICONSTOP "Yapılandırma koruması başarısız oldu (machine-local.env açılamadı). Kurulum güvenlik nedeniyle durduruldu. Mevcut verileriniz DEĞİŞTİRİLMEDİ."
+        MessageBox MB_OK|MB_ICONSTOP "Yapılandırma koruması başarısız oldu (machine-local.env açılamadı). Kurulum güvenlik nedeniyle durduruldu. Mevcut verileriniz DEĞİŞTİRİLMEDİ." /SD IDOK
         Quit
       ${endif}
       FileSeek $R7 0 END
@@ -130,9 +163,9 @@
       FileClose $R7
 
       ; DOGRULAMA: sessizce basari VARSAYMA -- GERCEKTEN yazildi mi oku
-      !insertmacro R93_ReadKeyFromEnvFile "${MlEnvPath}" "${KeyName}" ${PrefixLen} $R3 $R4
+      !insertmacro R93_ReadKeyFromEnvFile "${MlEnvPath}" "${KeyName}" ${PrefixLen} $R3 $R4 $R5
       ${ifNot} $R4 == "1"
-        MessageBox MB_OK|MB_ICONSTOP "Yapılandırma koruması doğrulanamadı. Kurulum güvenlik nedeniyle durduruldu. Mevcut verileriniz DEĞİŞTİRİLMEDİ."
+        MessageBox MB_OK|MB_ICONSTOP "Yapılandırma koruması doğrulanamadı. Kurulum güvenlik nedeniyle durduruldu. Mevcut verileriniz DEĞİŞTİRİLMEDİ." /SD IDOK
         Quit
       ${endif}
     ${endif}
