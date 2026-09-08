@@ -101,7 +101,7 @@
       ; Mesaj METNI kasitli olarak GENELDIR: gercek dosya yolu/kullanici
       ; adi kullaniciya GORUNMEZ (rescue.exe kendi stderr'inde de
       ; sanitize eder, bkz. sanitize_for_log()).
-      MessageBox MB_OK|MB_ICONSTOP "Veritabani tasima islemi basarisiz oldu (kod: $0). Kurulum guvenlik nedeniyle durduruldu. Mevcut verileriniz DEGISTIRILMEDI."
+      MessageBox MB_OK|MB_ICONSTOP "Veritabani tasima islemi basarisiz oldu (kod: $0). Kurulum guvenlik nedeniyle durduruldu. Mevcut verileriniz DEGISTIRILMEDI." /SD IDOK
       Quit
     ${endIf}
   ${endIf}
