@@ -12,7 +12,7 @@ from typing import NamedTuple, Optional, List
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Query, Header, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response, JSONResponse
-from sqlalchemy import func, case
+from sqlalchemy import func, case, text
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
@@ -757,9 +757,26 @@ async def health_ready(db: Session = Depends(get_db)):
         failing_checks.append("config")
     
     # Check 2: Database connection
+    #
+    # GO-R97 DUZELTMESI: SQLAlchemy 2.x, ham string'i Session.execute()'a
+    # KABUL ETMEZ ("Textual SQL expression 'SELECT 1' should be explicitly
+    # declared as text('SELECT 1')"). Bu yuzden bu kontrol HER ZAMAN
+    # exception firlatiyor, failing_checks'e "database" ekleniyor ve
+    # /health/ready HER CAGRIDA 503 donuyordu -- veriyle ILGISI YOK
+    # (R96 izole provasinda kanitlandi: DB hash'i ve PRAGMA integrity_check
+    # SAGLAM, ayni 503 v1.0.6'da da v1.0.14'te de BIREBIR ayni).
+    # Cozum: text() ile acikca bildir. Baska hicbir davranis degismedi
+    # (latency esikleri, warning/error siniflandirmasi AYNEN korundu).
+    #
+    # NOT (etki alani): eski-DB uyum paketindeki ham-string execute()
+    # cagrilari RAW sqlite3 baglantisi kullanir (SQLAlchemy DEGIL) -- bu
+    # kuraldan ETKILENMEZ, dokunulmadi. (Paket adi BILEREK yazilmadi:
+    # tests/test_*::*_is_not_wired_* guard testleri app/ altindaki her
+    # .py dosyasinda o paket adini ARAR ve BULURSA basarisiz olur --
+    # bu GERCEK test kosumunda YAKALANDI.)
     try:
         start = time.time()
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         latency_ms = int((time.time() - start) * 1000)
         
         if latency_ms > 500:
@@ -785,14 +802,43 @@ async def health_ready(db: Session = Depends(get_db)):
         from .database import Job
         from datetime import timedelta
         
-        # Jobs stuck for more than 10 minutes
+        # GO-R97 DUZELTMESI -- bu blokta UC ayri kusur vardi:
+        #  (1) Job.updated_at ALANI YOK. Job modelinde (app/database.py::Job)
+        #      yalniz created_at / started_at / finished_at vardir.
+        #  (2) Job.status degerleri "processing"/"pending" DEGIL; SQLEnum
+        #      JobStatus'tur: QUEUED / RUNNING / SUCCEEDED / FAILED.
+        #  (3) Bu ikisi yuzunden sorgu AttributeError firlatiyor, except
+        #      dali "Could not check queue: ..." warning'i uretiyordu --
+        #      yani kuyruk kontrolu FIILEN HIC CALISMIYORDU.
+        #
+        # Kontrolun GERCEK amaci: "10 dakikadan uzun suredir takilmis is"
+        # tespiti. Bunun model karsiligi RUNNING durumundaki ve
+        # started_at'i esikten ESKI olan islerdir (started_at, isin
+        # calismaya BASLADIGI an -- "ne kadar suredir calisiyor"un dogru
+        # alani). Rastgele alan ikamesi YAPILMADI, YENI migration/alan
+        # EKLENMEDI, uydurma "ok" URETILMEDI.
+        #
+        # NOT (NULL semantigi): started_at nullable'dir; RUNNING olup
+        # started_at'i NULL olan bir kayit SQL'de "< esik" ile ESLESMEZ
+        # (NULL karsilastirmasi) -- bu KASITLI olarak boyle birakildi,
+        # aksi bir davranis (NULL'u takilmis saymak) bu kontrolun
+        # kanitlanmis amaci DISINDA bir varsayim olurdu.
+        #
+        # NOT (multitenant): bu bir SISTEM-seviyesi readiness probu oldugu
+        # icin tenant filtresi UYGULANMAZ (tum tenant'lardaki kuyruk
+        # derinligi/takilma bilinmelidir). Mevcut davranis KORUNDU.
+        #
+        # NOT (etki alani): AYNI kusur app/incident_metrics.py:~1676-1684
+        # icinde de VARDIR (ayni yanlis status string'leri + Job.updated_at,
+        # bare except ile sessizce yutuluyor). Bu GO'nun kapsami readiness
+        # endpoint'i oldugu icin ORAYA DOKUNULMADI -- ayrica raporlandi.
         stuck_threshold = datetime.utcnow() - timedelta(minutes=10)
         stuck_jobs = db.query(Job).filter(
-            Job.status == "processing",
-            Job.updated_at < stuck_threshold
+            Job.status == JobStatus.RUNNING,
+            Job.started_at < stuck_threshold
         ).count()
-        
-        pending_jobs = db.query(Job).filter(Job.status == "pending").count()
+
+        pending_jobs = db.query(Job).filter(Job.status == JobStatus.QUEUED).count()
         
         if stuck_jobs > 0:
             checks["queue"] = {

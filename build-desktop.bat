@@ -350,7 +350,37 @@ if %ERRORLEVEL% neq 0 (
 :: `.get(key, default)` ile okur, BILINMEYEN/YENI anahtarlar zararsizdir).
 :: Karmasik cok-satirli PowerShell mantigi AYRI bir .ps1 dosyasinda (batch
 :: icine gomulu, kirilgan tirnak/devam sozdizimi yerine).
-for /f "delims=" %%H in ('powershell -NoProfile -Command "(Get-FileHash 'dist\gelka-backend.exe' -Algorithm SHA256).Hash"') do set BACKEND_EXE_SHA256=%%H
+:: GO-R93/R94 HASH-ADIMI ONARIMI — iki ayri kusur kapatildi:
+::
+:: (1) BULUNAMAYAN CMDLET: Bu makinede Windows PowerShell 5.1
+::     (5.1.26100.9278, Desktop, FullLanguage) OTOMATIK modul yuklemesi
+::     Microsoft.PowerShell.Utility'yi EKSIK yukluyor - modul oturumda
+::     "yuklu" gorunuyor (99 cmdlet) ama Get-FileHash O KUMEDE YOK,
+::     "The term 'Get-FileHash' is not recognized" ile patliyor. OLCULDU:
+::     bare/tam-yol powershell FARKETMIYOR (ikisi de ayni System32 binary'sine
+::     cozuluyor), -NoProfile FARKETMIYOR (var/yok ikisi de basarisiz).
+::     TEK GERCEK FARK: ACIK "Import-Module Microsoft.PowerShell.Utility"
+::     -> Get-FileHash yeniden kullanilabilir oluyor (tekrarlanabilir sekilde
+::     dogrulandi; ayni hash certutil ve .NET SHA256 ile de BIREBIR uyusuyor).
+::     update_build_info.ps1'in ihtiyac duydugu diger cmdlet'ler (Test-Path/
+::     Get-Content/ConvertFrom-Json/Add-Member/ConvertTo-Json/Join-Path/
+::     Get-Location/Write-Host/Write-Error) import OLMADAN da MEVCUT - bu
+::     yuzden yalniz BU satira import eklendi (dar kapsam).
+::
+:: (2) FAIL-OPEN HASH ADIMI: Onceden alt surec basarisiz olsa bile
+::     BACKEND_EXE_SHA256 BOS/eski degerle update_build_info.ps1'e
+::     GECILIYORDU (gercek build'de "Cannot bind argument ... empty string"
+::     ile DOLAYLI patladi). Artik degisken ONCE temizlenir, sonra deger
+::     TEK-GECERLI-SHA256 (64 hex) olarak DOGRULANIR; degilse metadata
+::     guncellemesine HIC GECILMEZ ve build nonzero ile durur.
+set BACKEND_EXE_SHA256=
+for /f "delims=" %%H in ('powershell -NoProfile -Command "Import-Module Microsoft.PowerShell.Utility -ErrorAction SilentlyContinue; (Get-FileHash 'dist\gelka-backend.exe' -Algorithm SHA256).Hash"') do set BACKEND_EXE_SHA256=%%H
+powershell -NoProfile -Command "$v='%BACKEND_EXE_SHA256%'; if ($v -match '^[0-9A-Fa-f]{64}$') { exit 0 } else { exit 1 }"
+if %ERRORLEVEL% neq 0 (
+    echo HATA: backend exe SHA256 uretilemedi veya gecerli tek bir SHA256 degil.
+    echo   build-info.json GUNCELLENMEYECEK - eski/bos deger basari yerine KULLANILMAZ.
+    exit /b 1
+)
 echo   gelka-backend.exe SHA256: %BACKEND_EXE_SHA256%
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\update_build_info.ps1 -Sha256 "%BACKEND_EXE_SHA256%" -VenvPython "%VENV_PY%"
 if %ERRORLEVEL% neq 0 (
