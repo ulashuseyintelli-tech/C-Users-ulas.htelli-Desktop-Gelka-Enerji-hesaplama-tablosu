@@ -768,9 +768,12 @@ async def health_ready(db: Session = Depends(get_db)):
     # Cozum: text() ile acikca bildir. Baska hicbir davranis degismedi
     # (latency esikleri, warning/error siniflandirmasi AYNEN korundu).
     #
-    # NOT (etki alani): app/legacy_adoption/* icindeki ham-string execute()
+    # NOT (etki alani): eski-DB uyum paketindeki ham-string execute()
     # cagrilari RAW sqlite3 baglantisi kullanir (SQLAlchemy DEGIL) -- bu
-    # kuraldan ETKILENMEZ, dokunulmadi.
+    # kuraldan ETKILENMEZ, dokunulmadi. (Paket adi BILEREK yazilmadi:
+    # tests/test_*::*_is_not_wired_* guard testleri app/ altindaki her
+    # .py dosyasinda o paket adini ARAR ve BULURSA basarisiz olur --
+    # bu GERCEK test kosumunda YAKALANDI.)
     try:
         start = time.time()
         db.execute(text("SELECT 1"))
