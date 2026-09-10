@@ -1519,16 +1519,23 @@ class RunSummary:
     period_end: str
     
     # Counts
-    total_invoices: int
+    # total_invoices = mismatch_rate'in paydası (dönemde işlenen fatura).
+    # Bugün ÖLÇÜLEMİYOR -> None; sebep total_invoices_status'ta
+    # ("not_measured", bkz. generate_run_summary). 0 ile KARIŞTIRILMAMALI:
+    # 0 yalnız gerçekten ölçülmüş değerdir.
+    total_invoices: Optional[int]
+    total_invoices_status: str
     incident_count: int
     s1_count: int
     s2_count: int
     ocr_suspect_count: int
     resolved_count: int
     feedback_count: int
-    
+
     # Rates
-    mismatch_rate: float
+    # mismatch_rate: payda None (ölçülmedi) ya da 0 iken None -- oran
+    # uydurulmaz, max(payda, 1) ile hesaplanmaz.
+    mismatch_rate: Optional[float]
     s1_rate: float
     ocr_suspect_rate: float
     feedback_coverage: float
@@ -1560,7 +1567,9 @@ class RunSummary:
                 "end": self.period_end,
             },
             "counts": {
+                # total_invoices None = ölçülemedi; sebep total_invoices_status.
                 "total_invoices": self.total_invoices,
+                "total_invoices_status": self.total_invoices_status,
                 "incident_count": self.incident_count,
                 "s1_count": self.s1_count,
                 "s2_count": self.s2_count,
@@ -1569,7 +1578,11 @@ class RunSummary:
                 "feedback_count": self.feedback_count,
             },
             "rates": {
-                "mismatch_rate": round(self.mismatch_rate, 4),
+                # None korunur (JSON null); round(None) ÇAĞRILMAZ.
+                "mismatch_rate": (
+                    None if self.mismatch_rate is None
+                    else round(self.mismatch_rate, 4)
+                ),
                 "s1_rate": round(self.s1_rate, 4),
                 "ocr_suspect_rate": round(self.ocr_suspect_rate, 4),
                 "feedback_coverage": round(self.feedback_coverage, 4),
@@ -1625,6 +1638,8 @@ def generate_run_summary(
     - tests/test_e2e_smoke.py::TestE2ESmokeRunSummary → yapı / to_dict /
       latency duman testleri (3 test)
     - tests/test_run_summary_queue.py → kuyruk metriği regresyon testleri
+    - tests/test_run_summary_denominator.py → payda "not_measured" /
+      mismatch_rate null regresyon testleri
     """
     from .database import Job
     from .models import JobStatus
@@ -1655,18 +1670,32 @@ def generate_run_summary(
     resolved_count = sum(1 for i in incidents if i.status == "RESOLVED")
     feedback_count = sum(1 for i in incidents if i.feedback_json)
     
-    # Estimate total invoices (from Job table if available)
-    try:
-        total_invoices = db.query(Job).filter(
-            Job.created_at >= period_start,
-            Job.job_type == "full_process",
-        ).count()
-    except:
-        # Fallback: estimate from incidents
-        total_invoices = incident_count * 5  # Rough estimate
-    
+    # Toplam fatura (mismatch_rate paydası): ÖLÇÜLEMİYOR -> None.
+    #
+    # Eski kod Job.job_type == "full_process" sayıyordu. JobType'ta böyle bir
+    # değer HİÇ OLMADI (EXTRACT / VALIDATE / EXTRACT_AND_VALIDATE); SQLAlchemy
+    # bilinmeyen string'i olduğu gibi SQL'e geçirdiği için sorgu hata VERMEDEN
+    # daima 0 dönüyordu -> mismatch_rate = incident_count / max(0, 1) =
+    # incident_count (2 incident -> 2.0 = %200). Sorgu hata verirse de bare
+    # except uydurma bir tahmin (incident_count * 5) dönüyordu.
+    #
+    # Doğru payda bugün ÖLÇÜLEMİYOR: yukarıdaki incident'ların TEK üreticisi
+    # POST /full-process'tir ve bu endpoint Invoice/Job kaydı YAZMAZ.
+    # Invoice/Job tabloları yalnız POST /invoices + /invoices/{id}/process
+    # akışından dolar; o akış incident üretmez, frontend de onu kullanmaz.
+    # Invoice ya da EXTRACT_AND_VALIDATE job sayısı paydaki incident'larla
+    # AYNI faturaları saymadığı için paydaya İKAME EDİLMEDİ (owner kararı C).
+    # Bu blok ölçüm EKLEMEZ; yalnız yanlış sayı üretimini kaldırır.
+    #
+    # Sözleşme: ölçülemeyen değer 0 GÖSTERİLMEZ, oran uydurulmaz. İleride
+    # gerçek bir payda eklenirse pay gibi AYNI tenant'a göre filtrelenmeli
+    # (Job.tenant_id hiç set edilmediği için invoices JOIN'i gerekir) ve
+    # payda 0 iken de mismatch_rate None kalmalıdır (max(payda, 1) YOK).
+    total_invoices = None
+    total_invoices_status = "not_measured"
+    mismatch_rate = None
+
     # Calculate rates
-    mismatch_rate = incident_count / max(total_invoices, 1)
     s1_rate = s1_count / max(incident_count, 1)
     ocr_suspect_rate = ocr_suspect_count / max(incident_count, 1)
     feedback_coverage = feedback_count / max(resolved_count, 1)
@@ -1740,6 +1769,7 @@ def generate_run_summary(
         period_start=period_start.isoformat(),
         period_end=now.isoformat(),
         total_invoices=total_invoices,
+        total_invoices_status=total_invoices_status,
         incident_count=incident_count,
         s1_count=s1_count,
         s2_count=s2_count,

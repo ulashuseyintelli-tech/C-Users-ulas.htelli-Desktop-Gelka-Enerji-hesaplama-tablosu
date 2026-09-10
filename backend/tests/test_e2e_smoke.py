@@ -543,8 +543,14 @@ class TestE2ESmokeRunSummary:
         assert summary.s2_count >= 0
         assert summary.ocr_suspect_count >= 0
         
+        # Payda ölçülemiyor: total_invoices ve mismatch_rate uydurulmaz, None
+        # döner. Eski assert ("0 <= x <= 1 or x > 1") negatif olmayan HER
+        # sayıyı kabul eden bir totolojiydi.
+        assert summary.total_invoices is None
+        assert summary.total_invoices_status == "not_measured"
+        assert summary.mismatch_rate is None
+
         # Check rates are in valid range
-        assert 0 <= summary.mismatch_rate <= 1 or summary.mismatch_rate > 1  # Can be > 1 if estimate
         assert 0 <= summary.s1_rate <= 1
         assert 0 <= summary.feedback_coverage <= 1
     
