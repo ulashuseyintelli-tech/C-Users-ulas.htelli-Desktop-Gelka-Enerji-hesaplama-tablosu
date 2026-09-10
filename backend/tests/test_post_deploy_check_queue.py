@@ -12,17 +12,25 @@ Düzeltmeden sonra kapı gerçek. Bu dosya tüketicinin GERÇEK endpoint çıkt�
   - sağlıklı kuyruk      -> geçer; depth anahtarı VAR (kapı vacuous değil)
   - takılmış iş (30 dk)  -> "Queue has 1 stuck job(s)", main() -> 2
   - derinlik sınırı      -> 100 geçer; 101 "Queue backlog too high: 101", main() -> 2
+  - konsol kodlaması     -> stdout cp1254 iken (Windows'ta pipe/dosya, PYTHONIOENCODING
+                            yok) main() UTF-8 ile AYNI çıkış kodunu verir. Eskiden ilk
+                            ikon (✅) UnicodeEncodeError atıyor, genel handler "❌"
+                            basarken tekrar patlıyor ve sağlıklı deploy bile exit 1
+                            (sahte ROLLBACK) ile çıkıyordu.
 
 Taşıma: post_deploy_check.http_get FastAPI TestClient'a yönlendirilir. Karar
 mantığı (check_* fonksiyonları ve main()) ile endpoint kodu GERÇEKTİR; yalnız
 HTTP soketi yoktur. Eşikler script içinden okunur, testte TANIMLANMAZ.
 
 Çağrıldığı yerler: pytest tarafından otomatik keşfedilir
-(scripts/post_deploy_check.py check_queue_status()/main() tüketici testi).
+(scripts/post_deploy_check.py check_queue_status()/main() tüketici testi;
+main() cp1254 stdout çıkış kodu regresyonu).
 """
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -145,3 +153,66 @@ def test_derinlik_siniri_gevsetilmedi(pdc, db, adet, beklenen):
     assert pdc.check_queue_status() == beklenen
     if beklenen[0] is False:
         assert pdc.main() == 2
+
+
+def _main_akista(pdc, kodlama):
+    """main()'i verilen kodlamada bir metin akışı stdout iken çalıştırır.
+
+    errors="surrogateescape": Windows'ta pipe/dosyaya yönlendirilmiş gerçek
+    stdout'un varsayılan hata işleyicisi (strict değil; ölçüldü). ✅/❌ bu
+    işleyiciyle de kodlanamaz. Dönüş: (çıkış kodu, çözülmüş çıktı, akış).
+    """
+    ham = io.BytesIO()
+    akis = io.TextIOWrapper(ham, encoding=kodlama, errors="surrogateescape")
+    with contextlib.redirect_stdout(akis):
+        kod = pdc.main()
+    akis.flush()
+    return kod, ham.getvalue().decode(kodlama), akis
+
+
+_CP1254_SENARYOLARI = [
+    ("saglikli", (0, 4)),
+    ("takilmis-is", (2,)),
+    ("derinlik-101", (2,)),
+    ("mesajda-kodlanamayan-karakter", (0, 4)),
+]
+
+
+@pytest.mark.parametrize(
+    "senaryo, beklenen_kodlar", _CP1254_SENARYOLARI, ids=[s for s, _ in _CP1254_SENARYOLARI]
+)
+def test_cp1254_stdout_cikis_kodunu_degistirmez(pdc, db, monkeypatch, senaryo, beklenen_kodlar):
+    from app.models import JobStatus
+
+    if senaryo == "takilmis-is":
+        _isler_ekle(db, 1, JobStatus.RUNNING, started_at=datetime.utcnow() - timedelta(minutes=30))
+    elif senaryo == "derinlik-101":
+        _isler_ekle(db, 101, JobStatus.QUEUED)
+    elif senaryo == "mesajda-kodlanamayan-karakter":
+        # Sunucudan gelen mesaj içeriği: /health gövdesine cp1254'te olmayan "→"
+        # (U+2192) eklenir. Yalnız ikonları ASCII'ye çeviren bir çözüm burada
+        # yine çöker; koruma tüm çıktıyı kapsamalı.
+        gercek_http_get = pdc.http_get
+
+        def http_get_ok_ekli(url, headers=None, timeout=None):
+            status, data = gercek_http_get(url, headers=headers, timeout=timeout)
+            if url.endswith("/health"):
+                data = {**data, "not": "→"}
+            return status, data
+
+        monkeypatch.setattr(pdc, "http_get", http_get_ok_ekli)
+
+    kod_utf8, cikti_utf8, _ = _main_akista(pdc, "utf-8")
+    kod_cp1254, cikti_cp1254, akis_cp1254 = _main_akista(pdc, "cp1254")
+
+    # Asıl sözleşme: konsol kodlaması çıkış kodunu DEĞİŞTİRMEZ.
+    assert kod_cp1254 == kod_utf8
+    assert kod_utf8 in beklenen_kodlar
+    # Vacuous değil: çıktı gerçekten cp1254 akışından geçti, kodlanamayan ikon
+    # "?" oldu ve akışın kodlaması değiştirilmedi (pipe tüketicisi aynı baytları görür).
+    assert "? Health (basic)" in cikti_cp1254
+    assert akis_cp1254.encoding == "cp1254"
+    # UTF-8 tüketicisi için çıktı aynı: ikon (✅) yerinde.
+    assert "✅ Health (basic)" in cikti_utf8
+    if senaryo == "mesajda-kodlanamayan-karakter":
+        assert "→" in cikti_utf8

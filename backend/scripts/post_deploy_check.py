@@ -342,6 +342,36 @@ def check_queue_status() -> Tuple[bool, str]:
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _make_stdout_encoding_safe() -> None:
+    """
+    stdout'un kodlayamadığı karakterleri "?" yapar; kodlamayı DEĞİŞTİRMEZ.
+
+    NEDEN: Windows'ta stdout pipe/dosyaya yönlendirilince (PYTHONIOENCODING /
+    PYTHONUTF8 yoksa) yerel kodlama kullanılır (Türkçe Windows'ta cp1254,
+    varsayılan hata işleyicisi surrogateescape). ✅/❌/⚠️ bu kodlamada yok:
+    ilk print_result() UnicodeEncodeError atar, __main__'deki genel handler
+    "❌" basarken tekrar patlar ve süreç exit 1 (ROLLBACK) ile çıkar — hiçbir
+    kontrol başarısız olmadığı hâlde. Çıkış kodu yalnız kontrol sonuçlarını
+    yansıtmalı.
+
+    Kodlama bilerek korunur: pipe tüketicisi kodlanabilen her karakter için
+    aynı baytları görür, UTF-8 akışta çıktı aynen kalır. Koruma tüm çıktıyı
+    kapsar (ikonlar, sunucudan gelen mesaj içeriği, genel handler).
+    reconfigure() olmayan akışlara (io.StringIO, pythonw'da None) dokunulmaz.
+
+    Çağrıldığı yerler:
+    - post_deploy_check.main() → ilk satır; hiçbir print'ten önce
+    """
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure is None:
+        return
+    try:
+        reconfigure(errors="replace")
+    except ValueError:
+        # Kapalı/ayrılmış akış: zaten yazılamaz; yeni bir hata yolu ekleme.
+        pass
+
+
 def print_result(name: str, success: bool, message: str) -> None:
     """Print check result."""
     icon = "✅" if success else "❌"
@@ -354,7 +384,17 @@ def main() -> int:
     
     Returns:
         Exit code (0-4)
+
+    Çağrıldığı yerler:
+    - post_deploy_check.__main__ → `python scripts/post_deploy_check.py`; çıkış
+      kodu operatör/deploy prosedürlerinde ROLLBACK kararıdır
+      (backend/docs/PILOT_24H_EVALUATION.md "Saat 0-1" tablosu ve KOMUTLAR
+      kutusu, backend/docs/SPRINT_8_9_FINAL_ARCHITECTURE.md §6.3)
+    - tests/test_post_deploy_check_queue.py → tüketici regresyon testleri
+      (karar/eşik kilitleri + cp1254 stdout altında çıkış kodu)
     """
+    # Her print'ten önce: konsol kodlaması çıkış kodunu bozamasın.
+    _make_stdout_encoding_safe()
     print(f"\n{'='*60}")
     print(f"POST-DEPLOY VALIDATION")
     print(f"{'='*60}")
