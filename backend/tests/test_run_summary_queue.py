@@ -151,17 +151,11 @@ class TestRunSummaryKuyrukHataGorunurlugu:
             "error": None,
         }
 
-    def test_db_hatasi_sessiz_sifir_yerine_gorunur_durum_olur(self, db, caplog, monkeypatch):
-        # alembic/env.py'deki fileConfig() (disable_existing_loggers=True)
-        # aynı süreçte çalışırsa mevcut logger'ları kapatır; WARNING kaydı
-        # test sırasından bağımsız doğrulansın diye logger açık tutulur.
-        modul_logger = logging.getLogger(generate_run_summary.__module__)
-        monkeypatch.setattr(modul_logger, "disabled", False)
-
+    def test_db_hatasi_sessiz_sifir_yerine_gorunur_durum_olur(self, db, caplog):
         # jobs tablosu yok (ör. yarım kalmış şema) -> gerçek bir DB hatası.
         Job.__table__.drop(db.get_bind())
 
-        with caplog.at_level(logging.WARNING, logger=modul_logger.name):
+        with caplog.at_level(logging.WARNING):
             ozet = _ozet(db)
 
         assert ozet.queue_depth is None

@@ -848,10 +848,11 @@ async def health_ready(db: Session = Depends(get_db)):
         # icin tenant filtresi UYGULANMAZ (tum tenant'lardaki kuyruk
         # derinligi/takilma bilinmelidir). Mevcut davranis KORUNDU.
         #
-        # NOT (etki alani): AYNI kusur app/incident_metrics.py:~1676-1684
-        # icinde de VARDIR (ayni yanlis status string'leri + Job.updated_at,
-        # bare except ile sessizce yutuluyor). Bu GO'nun kapsami readiness
-        # endpoint'i oldugu icin ORAYA DOKUNULMADI -- ayrica raporlandi.
+        # NOT (etki alani): AYNI kusur app/incident_metrics.py::generate_run_summary
+        # kuyruk blogunda da vardi (ayni yanlis status string'leri +
+        # Job.updated_at, bare except ile sessizce yutuluyordu). Oraya da
+        # AYNI sorgu semantigi (QUEUED / RUNNING + started_at) uygulandi;
+        # orada DB hatasi artik sessiz 0 yerine gorunur 'error' durumu verir.
         stuck_threshold = datetime.utcnow() - timedelta(minutes=10)
         stuck_jobs = db.query(Job).filter(
             Job.status == JobStatus.RUNNING,
