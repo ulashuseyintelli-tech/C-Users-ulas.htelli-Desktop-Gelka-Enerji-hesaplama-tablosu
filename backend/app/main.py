@@ -723,6 +723,26 @@ async def health_ready(db: Session = Depends(get_db)):
     Returns 200 if ready, 503 if not ready.
     
     Sprint 8.9: Includes build_id and config_hash for version tracking.
+
+    Çağrıldığı yerler:
+    - post_deploy_check.check_ready() → GET /health/ready (HTTP != 200 veya
+      status != "ready" ise "ROLLBACK IMMEDIATELY", exit 1)
+    - post_deploy_check.check_config_validation() → GET /health/ready
+      (checks.config "ok" ve validated değilse exit 1)
+    - post_deploy_check.check_database() → GET /health/ready
+      (checks.database "error" veya latency > 500 ms ise exit 2)
+    - post_deploy_check.check_queue_status() → GET /health/ready
+      (checks.queue stuck_count > 0 veya depth > 100 ise exit 2)
+    - İzole upgrade/rollback prova betiği (Windows Sandbox) → GET /health/ready
+      (upgrade sonrası HTTP 200 zorunlu kabul kapısı)
+    - Operatör runbook'ları (backend/docs/SPRINT_8_9_RC_RUNBOOK.md,
+      backend/docs/PILOT_24H_EVALUATION.md, monitoring/runbooks/) → elle curl
+    - tests/test_health_ready.py, tests/test_post_deploy_check_queue.py → regresyon
+
+    NOT: Electron açılış kapısı (electron/main.js waitForBackend), Dockerfile
+    HEALTHCHECK, docker-compose service_healthy ve k6 setup() bu endpoint'i
+    DEĞİL /health (liveness) endpoint'ini kullanır; readiness sonucu uygulama
+    açılışını engellemez.
     """
     from datetime import datetime, timezone
     from .config import validate_config, ConfigValidationError, get_config_summary, get_config_hash
