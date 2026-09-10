@@ -257,6 +257,14 @@ class TestDonemFiyatiOkuma:
         prov = client.get(f"/api/epias/prices/{PERIOD}").json()["price_provenance"]
         assert prov["verified"] is True and prov["epias_basis"] is True
 
+    def test_admin_donem_okuma_varsayilan_uretmez(self, client):
+        """GET /admin/market-prices/{period}: kayıt yoksa null + not_found (eski: 2974.1/364.0 'default')."""
+        r = client.get(f"/admin/market-prices/{PERIOD}")
+        assert r.status_code == 200
+        b = r.json()
+        assert b["ptf_tl_per_mwh"] is None and b["yekdem_tl_per_mwh"] is None
+        assert b["source"] == "not_found"
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 2) AI yolu (calculate_offer) — sessiz YEKDEM=0 kapalı
