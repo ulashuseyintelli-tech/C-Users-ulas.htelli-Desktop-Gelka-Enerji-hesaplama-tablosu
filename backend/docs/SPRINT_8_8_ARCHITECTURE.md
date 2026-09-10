@@ -469,7 +469,8 @@ backend/tests/test_e2e_smoke.py
     "counts": {
       "type": "object",
       "properties": {
-        "total_invoices": {"type": "integer"},
+        "total_invoices": {"type": ["integer", "null"]},
+        "total_invoices_status": {"type": "string", "enum": ["not_measured"]},
         "incident_count": {"type": "integer"},
         "s1_count": {"type": "integer"},
         "s2_count": {"type": "integer"},
@@ -481,7 +482,7 @@ backend/tests/test_e2e_smoke.py
     "rates": {
       "type": "object",
       "properties": {
-        "mismatch_rate": {"type": "number"},
+        "mismatch_rate": {"type": ["number", "null"]},
         "s1_rate": {"type": "number"},
         "ocr_suspect_rate": {"type": "number"},
         "feedback_coverage": {"type": "number"},
@@ -532,6 +533,17 @@ backend/tests/test_e2e_smoke.py
 }
 ```
 
+> **Payda notu (2026-09-10, owner kararı C):** `counts.total_invoices` bugün
+> **ölçülemiyor** ve `null` döner; bu yüzden `counts.total_invoices_status`
+> `"not_measured"`'dır ve `rates.mismatch_rate` da `null`'dır. Ölçülemeyen
+> değer `0` gösterilmez; ileride gerçek bir payda eklenir ve değeri `0` olursa
+> oran yine `null` olur. Gerekçe: incident'ların tek üreticisi
+> `POST /full-process` Invoice/Job kaydı yazmaz; Invoice veya job sayısı,
+> paydaki incident'larla aynı faturaları saymaz. Eski
+> `Job.job_type == "full_process"` sorgusu hiç eşleşmediği için payda daima 0,
+> oran ise `incident_count` çıkıyordu (2 incident → 2.0). Bu değişiklik ölçüm
+> eklemez; yalnız yanlış sayı üretimini kaldırır.
+
 ### 6.2 Example Output
 
 ```json
@@ -542,7 +554,8 @@ backend/tests/test_e2e_smoke.py
     "end": "2026-01-17T16:00:00Z"
   },
   "counts": {
-    "total_invoices": 150,
+    "total_invoices": null,
+    "total_invoices_status": "not_measured",
     "incident_count": 23,
     "s1_count": 3,
     "s2_count": 20,
@@ -551,7 +564,7 @@ backend/tests/test_e2e_smoke.py
     "feedback_count": 12
   },
   "rates": {
-    "mismatch_rate": 0.1533,
+    "mismatch_rate": null,
     "s1_rate": 0.1304,
     "ocr_suspect_rate": 0.2174,
     "feedback_coverage": 0.6667,

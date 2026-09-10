@@ -28,6 +28,7 @@ from enum import Enum
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_
+from sqlalchemy.exc import SQLAlchemyError
 
 from .database import Incident
 from .resolution_reasons import ResolutionReason
@@ -1518,16 +1519,23 @@ class RunSummary:
     period_end: str
     
     # Counts
-    total_invoices: int
+    # total_invoices = mismatch_rate'in paydası (dönemde işlenen fatura).
+    # Bugün ÖLÇÜLEMİYOR -> None; sebep total_invoices_status'ta
+    # ("not_measured", bkz. generate_run_summary). 0 ile KARIŞTIRILMAMALI:
+    # 0 yalnız gerçekten ölçülmüş değerdir.
+    total_invoices: Optional[int]
+    total_invoices_status: str
     incident_count: int
     s1_count: int
     s2_count: int
     ocr_suspect_count: int
     resolved_count: int
     feedback_count: int
-    
+
     # Rates
-    mismatch_rate: float
+    # mismatch_rate: payda None (ölçülmedi) ya da 0 iken None -- oran
+    # uydurulmaz, max(payda, 1) ile hesaplanmaz.
+    mismatch_rate: Optional[float]
     s1_rate: float
     ocr_suspect_rate: float
     feedback_coverage: float
@@ -1544,8 +1552,11 @@ class RunSummary:
     error_by_code: Dict[str, int] = field(default_factory=dict)
     
     # Queue
-    queue_depth: int = 0
-    queue_stuck: bool = False
+    # None = kuyruk OKUNAMADI (sebep queue_error'da). 0/False ile
+    # KARIŞTIRILMAMALI: 0/False yalnız gerçekten ölçülmüş değerdir.
+    queue_depth: Optional[int] = 0
+    queue_stuck: Optional[bool] = False
+    queue_error: Optional[str] = None
     
     def to_dict(self) -> dict:
         """Convert to JSON-serializable dict."""
@@ -1556,7 +1567,9 @@ class RunSummary:
                 "end": self.period_end,
             },
             "counts": {
+                # total_invoices None = ölçülemedi; sebep total_invoices_status.
                 "total_invoices": self.total_invoices,
+                "total_invoices_status": self.total_invoices_status,
                 "incident_count": self.incident_count,
                 "s1_count": self.s1_count,
                 "s2_count": self.s2_count,
@@ -1565,7 +1578,11 @@ class RunSummary:
                 "feedback_count": self.feedback_count,
             },
             "rates": {
-                "mismatch_rate": round(self.mismatch_rate, 4),
+                # None korunur (JSON null); round(None) ÇAĞRILMAZ.
+                "mismatch_rate": (
+                    None if self.mismatch_rate is None
+                    else round(self.mismatch_rate, 4)
+                ),
                 "s1_rate": round(self.s1_rate, 4),
                 "ocr_suspect_rate": round(self.ocr_suspect_rate, 4),
                 "feedback_coverage": round(self.feedback_coverage, 4),
@@ -1584,8 +1601,12 @@ class RunSummary:
                 "total_5xx": self.error_5xx_count,
             },
             "queue": {
+                # "ok" = sayılar gerçek; "error" = kuyruk okunamadı
+                # (current_depth/stuck_detected None, sebep "error"da).
+                "status": "ok" if self.queue_error is None else "error",
                 "current_depth": self.queue_depth,
                 "stuck_detected": self.queue_stuck,
+                "error": self.queue_error,
             },
         }
 
@@ -1609,8 +1630,19 @@ def generate_run_summary(
     
     Returns:
         RunSummary with all metrics
+
+    Çağrıldığı yerler:
+    - Production çağıranı YOK: hiçbir HTTP endpoint, worker, zamanlayıcı
+      veya script bu fonksiyonu çağırmıyor (RC runbook'taki "run_summary"
+      log olayı da kodda üretilmiyor).
+    - tests/test_e2e_smoke.py::TestE2ESmokeRunSummary → yapı / to_dict /
+      latency duman testleri (3 test)
+    - tests/test_run_summary_queue.py → kuyruk metriği regresyon testleri
+    - tests/test_run_summary_denominator.py → payda "not_measured" /
+      mismatch_rate null regresyon testleri
     """
     from .database import Job
+    from .models import JobStatus
     
     now = datetime.now(timezone.utc)
     period_start = now - timedelta(hours=period_hours)
@@ -1638,18 +1670,32 @@ def generate_run_summary(
     resolved_count = sum(1 for i in incidents if i.status == "RESOLVED")
     feedback_count = sum(1 for i in incidents if i.feedback_json)
     
-    # Estimate total invoices (from Job table if available)
-    try:
-        total_invoices = db.query(Job).filter(
-            Job.created_at >= period_start,
-            Job.job_type == "full_process",
-        ).count()
-    except:
-        # Fallback: estimate from incidents
-        total_invoices = incident_count * 5  # Rough estimate
-    
+    # Toplam fatura (mismatch_rate paydası): ÖLÇÜLEMİYOR -> None.
+    #
+    # Eski kod Job.job_type == "full_process" sayıyordu. JobType'ta böyle bir
+    # değer HİÇ OLMADI (EXTRACT / VALIDATE / EXTRACT_AND_VALIDATE); SQLAlchemy
+    # bilinmeyen string'i olduğu gibi SQL'e geçirdiği için sorgu hata VERMEDEN
+    # daima 0 dönüyordu -> mismatch_rate = incident_count / max(0, 1) =
+    # incident_count (2 incident -> 2.0 = %200). Sorgu hata verirse de bare
+    # except uydurma bir tahmin (incident_count * 5) dönüyordu.
+    #
+    # Doğru payda bugün ÖLÇÜLEMİYOR: yukarıdaki incident'ların TEK üreticisi
+    # POST /full-process'tir ve bu endpoint Invoice/Job kaydı YAZMAZ.
+    # Invoice/Job tabloları yalnız POST /invoices + /invoices/{id}/process
+    # akışından dolar; o akış incident üretmez, frontend de onu kullanmaz.
+    # Invoice ya da EXTRACT_AND_VALIDATE job sayısı paydaki incident'larla
+    # AYNI faturaları saymadığı için paydaya İKAME EDİLMEDİ (owner kararı C).
+    # Bu blok ölçüm EKLEMEZ; yalnız yanlış sayı üretimini kaldırır.
+    #
+    # Sözleşme: ölçülemeyen değer 0 GÖSTERİLMEZ, oran uydurulmaz. İleride
+    # gerçek bir payda eklenirse pay gibi AYNI tenant'a göre filtrelenmeli
+    # (Job.tenant_id hiç set edilmediği için invoices JOIN'i gerekir) ve
+    # payda 0 iken de mismatch_rate None kalmalıdır (max(payda, 1) YOK).
+    total_invoices = None
+    total_invoices_status = "not_measured"
+    mismatch_rate = None
+
     # Calculate rates
-    mismatch_rate = incident_count / max(total_invoices, 1)
     s1_rate = s1_count / max(incident_count, 1)
     ocr_suspect_rate = ocr_suspect_count / max(incident_count, 1)
     feedback_coverage = feedback_count / max(resolved_count, 1)
@@ -1674,23 +1720,56 @@ def generate_run_summary(
         latency_p99 = sorted_samples[int(n * 0.99)] if n >= 100 else sorted_samples[-1]
     
     # Queue status
+    #
+    # GO-R97'de main.py::health_ready için yapılan düzeltmenin AYNISI (bkz.
+    # oradaki yorum). Bu blokta da ÜÇ kusur vardı:
+    #  (1) Job.updated_at ALANI YOK -- app/database.py::Job'da yalnız
+    #      created_at / started_at / finished_at var.
+    #  (2) "pending"/"processing" GEÇERSİZ JobStatus değerleriydi (enum:
+    #      QUEUED / RUNNING / SUCCEEDED / FAILED). SQLAlchemy bilinmeyen
+    #      string'i olduğu gibi SQL'e geçirdiği için hata VERMEDEN 0 dönüyordu.
+    #  (3) (1)'in AttributeError'ünü bare except yutuyordu -> queue_depth
+    #      daima 0, queue_stuck daima False ("sessizce yalan söyleyen yeşil").
+    #
+    # "Takılmış iş" = RUNNING durumunda ve started_at'i (işin çalışmaya
+    # BAŞLADIĞI an) eşikten ESKİ iş. Rastgele alan ikamesi YAPILMADI, yeni
+    # alan/migration EKLENMEDİ. started_at'i NULL olan RUNNING kaydı SQL'de
+    # "< eşik" ile EŞLEŞMEZ, takılmış SAYILMAZ (main.py ile aynı NULL
+    # semantiği). started_at naive UTC yazıldığı için (datetime.utcnow())
+    # eşik de naive UTC -- main.py ile aynı.
+    #
+    # Multitenant: kuyruk sayımı BİLEREK tenant filtresiz (sistem geneli).
+    # Worker işleri tenant'a bakmadan FIFO alıyor (job_queue.get_next_queued_job,
+    # services/job_claim.py); takılmış tek bir iş TÜM tenant'ları bekletir.
+    # Yukarıdaki incident sayımları tenant'a göre filtreli -- DEĞİŞMEDİ.
+    #
+    # Hata semantiği: yalnız DB hataları (SQLAlchemyError: tablo yok, kilit,
+    # bağlantı...) yakalanır ve GÖRÜNÜR yapılır (queue_depth/queue_stuck None
+    # + queue_error + WARNING log). Programlama hataları (bu olaydaki
+    # AttributeError gibi) BİLEREK yakalanmaz: sessizce yutulmak yerine
+    # yüzeye çıkmalıdır.
+    queue_error = None
     try:
-        queue_depth = db.query(Job).filter(Job.status == "pending").count()
-        stuck_threshold = now - timedelta(minutes=10)
+        queue_depth = db.query(Job).filter(Job.status == JobStatus.QUEUED).count()
+        stuck_threshold = now.replace(tzinfo=None) - timedelta(minutes=10)
         stuck_count = db.query(Job).filter(
-            Job.status == "processing",
-            Job.updated_at < stuck_threshold,
+            Job.status == JobStatus.RUNNING,
+            Job.started_at < stuck_threshold,
         ).count()
         queue_stuck = stuck_count > 0
-    except:
-        queue_depth = 0
-        queue_stuck = False
+    except SQLAlchemyError as e:
+        queue_depth = None
+        queue_stuck = None
+        ilk_satir = str(e).splitlines()[0] if str(e) else ""
+        queue_error = f"{type(e).__name__}: {ilk_satir[:200]}"
+        logger.warning("[run_summary] Kuyruk durumu okunamadı: %s", queue_error, exc_info=True)
     
     return RunSummary(
         generated_at=now.isoformat(),
         period_start=period_start.isoformat(),
         period_end=now.isoformat(),
         total_invoices=total_invoices,
+        total_invoices_status=total_invoices_status,
         incident_count=incident_count,
         s1_count=s1_count,
         s2_count=s2_count,
@@ -1707,4 +1786,5 @@ def generate_run_summary(
         latency_p99_ms=latency_p99,
         queue_depth=queue_depth,
         queue_stuck=queue_stuck,
+        queue_error=queue_error,
     )
