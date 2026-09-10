@@ -112,6 +112,14 @@ def client(db, storage_tmp):
     fastapi_app.dependency_overrides.clear()
 
 
+def _dogrulanmis_fiyat(ptf=2500.0, yekdem=50.0):
+    """Fiyat Doğruluğu Faz 1: PDF yalnız sunucuda doğrulanmış fiyat snapshot'ından
+    üretilir (kullanıcı onaylı provenance GERÇEK fonksiyonla hesaplanır)."""
+    from app.price_provenance import build_price_provenance
+    return build_price_provenance(None, period="2026-01", ptf=ptf, yekdem=yekdem,
+                                  yekdem_excluded=False, user_confirmed=True)
+
+
 def _teklif(db):
     from app.database import Offer
 
@@ -130,7 +138,7 @@ def _teklif(db):
         savings_amount=192.0,
         savings_ratio=0.0667,
         extraction_result={"meta": {}},
-        calculation_result=dict(HESAP_SONUCU),
+        calculation_result=dict(HESAP_SONUCU, meta_price_provenance=_dogrulanmis_fiyat()),
     )
     db.add(o)
     db.flush()

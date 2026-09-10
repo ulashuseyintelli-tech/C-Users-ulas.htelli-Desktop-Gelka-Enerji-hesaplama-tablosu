@@ -196,7 +196,8 @@ def main() -> int:
         }
         durum, g = _http(
             "POST",
-            f"/offers?customer_id={musteri_id}&invoice_total_raw=339000",
+            # Fiyat Doğruluğu Faz 1: sentetik PTF/YEKDEM DB'de yok → açık kullanıcı onayı.
+            f"/offers?customer_id={musteri_id}&invoice_total_raw=339000&price_confirmed_by_user=true",
             veri={
                 "extraction": {
                     "vendor": "Smoke Sentetik", "invoice_period": "2026-07",

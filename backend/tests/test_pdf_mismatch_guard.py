@@ -31,6 +31,9 @@ BASE = {
     "offer_total": "2000",
     "savings_ratio": "0.2",
     "invoice_period": "2026-05",
+    # Fiyat Doğruluğu Faz 1: bu testler R2 kapısını ölçer; fiyat kapısı açık
+    # kullanıcı onayıyla geçilir (bu uçta DB'siz sistem doğrulaması yok).
+    "price_confirmed_by_user": "true",
 }
 
 

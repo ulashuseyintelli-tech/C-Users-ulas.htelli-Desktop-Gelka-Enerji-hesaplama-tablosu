@@ -114,6 +114,83 @@ def _load_image_base64(filename: str) -> Optional[str]:
     return None
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Fiyat Doğruluğu Faz 1 — PDF metni fiyat kaynağına göre
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def fiyat_kaynagi_bayraklari(calculation: CalculationResult) -> dict:
+    """PDF metni için fiyat kaynağı bayrakları.
+
+    epias_basis yalnız snapshot'taki sunucu provenance'ı (price_provenance)
+    doğrulanmış VE EPİAŞ etiketli güvenilir kaynak dediğinde True olur.
+    Provenance yoksa (eski kayıt, doğrudan çağrı) False → PDF fiyatı "EPİAŞ
+    verisi" diye SUNMAZ.
+
+    Çağrıldığı yerler:
+    - pdf_generator._generate_pdf_reportlab() → birincil motor (ReportLab)
+    - pdf_generator.generate_offer_html() → Playwright/WeasyPrint yedek motorları
+    """
+    prov = getattr(calculation, "meta_price_provenance", None) or {}
+    ptf = prov.get("ptf") or {}
+    yekdem = prov.get("yekdem") or {}
+    return {
+        "epias_basis": prov.get("verified") is True and prov.get("epias_basis") is True,
+        "yekdem_excluded": yekdem.get("mode") == "excluded",
+        "ptf_reference_scalar": (
+            ptf.get("source") == "reference_scalar"
+            or getattr(calculation, "meta_pricing_source", "") == "reference_scalar"
+            or bool(getattr(calculation, "meta_ptf_source_warning", None))
+        ),
+    }
+
+
+def enerji_bedeli_paragraflari(bayraklar: dict, agreement_multiplier: float) -> list[str]:
+    """'Enerji Bedelinin Hesaplama Yapısı' paragrafları (ReportLab mini-HTML).
+
+    EPİAŞ ifadesi YALNIZ epias_basis=True iken kullanılır; aksi halde metin
+    teklifte belirtilen birim bedellere dayanır ve kaynak iddiası taşımaz.
+
+    Çağrıldığı yerler:
+    - pdf_generator._generate_pdf_reportlab()
+    """
+    haric = bool(bayraklar.get("yekdem_excluded"))
+    epias = bool(bayraklar.get("epias_basis"))
+    if epias:
+        giris = ("Enerji bedeli, EPİAŞ verileri esas alınarak oluşturulmaktadır. İlgili fatura dönemi için "
+                 "EPİAŞ saatlik PTF ile abonenin tüketim değerleri kullanılarak Ağırlıklı PTF hesaplanır. ")
+    elif haric:
+        giris = "Enerji bedeli, bu teklifte belirtilen PTF birim bedeli esas alınarak hesaplanmıştır. "
+    else:
+        giris = "Enerji bedeli, bu teklifte belirtilen PTF ve YEKDEM birim bedelleri esas alınarak hesaplanmıştır. "
+    if haric:
+        orta = "Bu bedel, "
+    elif epias:
+        orta = "Üzerine YEKDEM birim bedeli eklenerek toplam enerji birim maliyeti oluşturulur. Bu maliyet, "
+    else:
+        orta = "PTF üzerine YEKDEM birim bedeli eklenerek toplam enerji birim maliyeti oluşturulur. Bu maliyet, "
+    son = (f"anlaşma fiyat katsayısı (<b>{agreement_multiplier:.2f}</b>) ile çarpılarak "
+           "nihai enerji bedeline ulaşılır.")
+    paragraflar = [giris + orta + son]
+    if epias and bayraklar.get("ptf_reference_scalar"):
+        paragraflar.append(
+            "<i>Not: İlgili dönem için EPİAŞ saatlik PTF verisi bulunmadığından Ağırlıklı PTF, "
+            "aylık ortalama PTF üzerinden hesaplanmıştır.</i>"
+        )
+    return paragraflar
+
+
+def yekdem_uygulamasi_metni(bayraklar: dict) -> str:
+    """'YEKDEM Uygulaması' paragrafı — açıkça hariç tutulan YEKDEM ayrı yazılır.
+
+    Çağrıldığı yerler:
+    - pdf_generator._generate_pdf_reportlab()
+    """
+    if bayraklar.get("yekdem_excluded"):
+        return "Bu teklifte YEKDEM bedeli enerji birim fiyatına dahil edilmemiştir."
+    return ("YEKDEM bedeli tahmini değerdir. EPİAŞ tarafından açıklanacak kesin YEKDEM bedeline göre "
+            "sonraki dönem faturasında mahsup veya ek tahakkuk yapılabilir.")
+
+
 def generate_offer_html(
     extraction: InvoiceExtraction,
     calculation: CalculationResult,
@@ -212,6 +289,10 @@ def generate_offer_html(
         "weighted_ptf": params.weighted_ptf_tl_per_mwh,
         "yekdem": params.yekdem_tl_per_mwh,
         "agreement_multiplier": params.agreement_multiplier,
+
+        # Fiyat Doğruluğu Faz 1: EPİAŞ ifadesi yalnız doğrulanmış EPİAŞ kaynağında
+        # (epias_basis / yekdem_excluded / ptf_reference_scalar → offer_template.html)
+        **fiyat_kaynagi_bayraklari(calculation),
         
         # UI Switches (Teklif Varsayımları)
         "extra_items_apply_to_offer": params.extra_items_apply_to_offer,
@@ -748,30 +829,19 @@ def _generate_pdf_reportlab(
     ))
     elements.append(Spacer(1, 0.1*cm))
     
-    # Enerji Bedelinin Hesaplama Yapısı
+    # Enerji Bedelinin Hesaplama Yapısı — Fiyat Doğruluğu Faz 1: "EPİAŞ verileri
+    # esas alınarak" yalnız snapshot'taki sunucu provenance'ı EPİAŞ etiketli
+    # güvenilir kaynağı doğruladıysa yazılır (bkz. fiyat_kaynagi_bayraklari).
+    # SoT-X aylık-ortalama dipnotu yalnız EPİAŞ metninde anlamlıdır.
+    _fiyat = fiyat_kaynagi_bayraklari(calculation)
     elements.append(Paragraph("<b>Enerji Bedelinin Hesaplama Yapısı</b>", letter_style))
-    elements.append(Paragraph(
-        f"Enerji bedeli, EPİAŞ verileri esas alınarak oluşturulmaktadır. İlgili fatura dönemi için EPİAŞ saatlik PTF ile "
-        f"abonenin tüketim değerleri kullanılarak Ağırlıklı PTF hesaplanır. Üzerine YEKDEM birim bedeli eklenerek toplam enerji birim maliyeti "
-        f"oluşturulur. Bu maliyet, anlaşma fiyat katsayısı (<b>{params.agreement_multiplier:.2f}</b>) ile çarpılarak nihai enerji bedeline ulaşılır.",
-        letter_style
-    ))
-    # SoT-X: saatlik PTF yoksa aylık ortalamaya düşüldü → fallback dipnotu
-    if getattr(calculation, "meta_pricing_source", "") == "reference_scalar" or getattr(calculation, "meta_ptf_source_warning", None):
-        elements.append(Paragraph(
-            "<i>Not: İlgili dönem için EPİAŞ saatlik PTF verisi bulunmadığından Ağırlıklı PTF, "
-            "aylık ortalama PTF üzerinden hesaplanmıştır.</i>",
-            letter_style
-        ))
+    for _paragraf in enerji_bedeli_paragraflari(_fiyat, params.agreement_multiplier):
+        elements.append(Paragraph(_paragraf, letter_style))
     elements.append(Spacer(1, 0.1*cm))
 
     # YEKDEM Uygulaması
     elements.append(Paragraph("<b>YEKDEM Uygulaması</b>", letter_style))
-    elements.append(Paragraph(
-        "YEKDEM bedeli tahmini değerdir. EPİAŞ tarafından açıklanacak kesin YEKDEM bedeline göre "
-        "sonraki dönem faturasında mahsup veya ek tahakkuk yapılabilir.",
-        letter_style
-    ))
+    elements.append(Paragraph(yekdem_uygulamasi_metni(_fiyat), letter_style))
     elements.append(Spacer(1, 0.1*cm))
     
     # Diğer Bedeller
@@ -848,7 +918,8 @@ def _generate_pdf_reportlab(
     param_data = [
         ["Mevcut Birim Fiyat", f"{fmt_num(current_unit_price, 4)} TL/kWh", "Teklif Birim Fiyat", f"{fmt_num(offer_unit_price, 4)} TL/kWh"],
         ["Anlaşma Çarpanı", fmt_num(params.agreement_multiplier), "Birim Fiyat Farkı", f"{fmt_num(current_unit_price - offer_unit_price, 4)} TL/kWh"],
-        ["Ağırlıklı PTF", f"{fmt_num(params.weighted_ptf_tl_per_mwh)} TL/MWh", "YEKDEM", f"{fmt_num(params.yekdem_tl_per_mwh)} TL/MWh"],
+        ["Ağırlıklı PTF", f"{fmt_num(params.weighted_ptf_tl_per_mwh)} TL/MWh", "YEKDEM",
+         "Dahil değil" if _fiyat["yekdem_excluded"] else f"{fmt_num(params.yekdem_tl_per_mwh)} TL/MWh"],
     ]
     # 4 eşit sütun
     t = Table(param_data, colWidths=[col4, col4, col4, col4])

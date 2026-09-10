@@ -419,6 +419,10 @@ class CalculationResult(BaseModel):
     meta_pricing_period: Optional[str] = None  # "2025-01"
     meta_ptf_tl_per_mwh: float = 0  # Kullanılan PTF değeri
     meta_yekdem_tl_per_mwh: float = 0  # Kullanılan YEKDEM değeri
+    # Fiyat Doğruluğu Faz 1: fiyatın dönemi/kaynağı/kullanıcı doğrulaması
+    # (price_provenance.build_price_provenance). POST /offers bunu SUNUCUDA
+    # yeniden hesaplayıp snapshot'a yazar; istemcinin gönderdiği değer kullanılmaz.
+    meta_price_provenance: Optional[dict] = None
     
     # Total mismatch bilgisi (Sprint 8.3)
     # invoice_total vs computed_total farkı > %5 veya > 50 TL ise flag

@@ -33,6 +33,11 @@ FORM_DATA = {
     "offer_energy_tl": "400",
     "offer_total": "450",
     "savings_ratio": "0.10",
+    # Fiyat Doğruluğu Faz 1: Form varsayılanları (2974.1/364.0) kaldırıldı;
+    # fiyat açıkça verilir ve kullanıcı onayıyla doğrulanır.
+    "weighted_ptf_tl_per_mwh": "2500",
+    "yekdem_tl_per_mwh": "300",
+    "price_confirmed_by_user": "true",
 }
 
 

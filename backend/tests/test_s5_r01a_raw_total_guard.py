@@ -286,6 +286,9 @@ class CanliSunucu:
             return r.status, json.loads(r.read().decode("utf-8"))
 
     def post_offer(self, sorgu: str = "", govde: dict | None = None):
+        # Fiyat Doğruluğu Faz 1: bu testler R2 ham-toplam kapısını ölçer. Sentetik
+        # PTF/YEKDEM disposable DB'de yok → fiyat kapısı açık kullanıcı onayıyla geçilir.
+        sorgu = f"{sorgu}{'&' if '?' in sorgu else '?'}price_confirmed_by_user=true"
         veri = json.dumps(govde or GOVDE_TEMEL).encode("utf-8")
         istek = urllib.request.Request(
             self._url("/offers" + sorgu), data=veri, method="POST",
