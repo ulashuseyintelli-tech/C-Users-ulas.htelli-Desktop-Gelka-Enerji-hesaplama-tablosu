@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { PriceProvenance } from './pricing/priceReadiness';
 
 export const API_BASE = 'http://127.0.0.1:8000';
 
@@ -88,10 +89,12 @@ export interface CalculateResponse {
   meta_distribution_tariff_key?: string;  // "sanayi/OG/çift_terim"
   meta_distribution_mismatch_warning?: string;
   // PTF/YEKDEM kaynağı bilgisi
-  meta_pricing_source?: string;  // "reference", "override", "default"
+  meta_pricing_source?: string;  // "hourly_weighted:<profil>" | "hourly_consumption:<id>" | "manual_override" | "reference_scalar" | "override" | "not_found"
   meta_pricing_period?: string;  // "2025-01"
   meta_ptf_tl_per_mwh?: number;
   meta_yekdem_tl_per_mwh?: number;
+  // Fiyat Doğruluğu Faz 1: fiyatın dönemi/kaynağı/doğrulaması (sunucu hesaplar)
+  meta_price_provenance?: PriceProvenance | null;
   // KDV oranı
   meta_vat_rate?: number;  // 0.20 = %20, 0.10 = %10
 }
@@ -168,7 +171,9 @@ export async function fullProcess(
   if (!useRef && params.weighted_ptf_tl_per_mwh) {
     queryParams.append('weighted_ptf_tl_per_mwh', params.weighted_ptf_tl_per_mwh.toString());
   }
-  if (!useRef && params.yekdem_tl_per_mwh) {
+  // Fiyat Doğruluğu Faz 1: gerçek 0 YEKDEM de gönderilir (eski `if (yekdem)` 0'ı
+  // düşürüp sunucuda "bilinmiyor"a çeviriyordu); bilinmeyen (undefined) gönderilmez.
+  if (!useRef && params.yekdem_tl_per_mwh !== undefined && params.yekdem_tl_per_mwh !== null) {
     queryParams.append('yekdem_tl_per_mwh', params.yekdem_tl_per_mwh.toString());
   }
   if (params.agreement_multiplier) {
@@ -231,11 +236,13 @@ export async function createOffer(
   calculation: OfferCalculationPayload,
   params: {
     weighted_ptf_tl_per_mwh?: number;
-    yekdem_tl_per_mwh?: number;
+    // Fiyat Doğruluğu Faz 1: null = "YEKDEM hariç" (açık seçim; hariç bayrağı ayrıca gider)
+    yekdem_tl_per_mwh?: number | null;
     agreement_multiplier: number;
     use_reference_prices?: boolean;
     vat_rate?: number;
     btv_rate?: number;
+    customer_id?: string;  // Seviye 2-b: gerçek tüketim ağırlıklı PTF sunucuda da doğrulansın
   },
   // `guard` ZORUNLU olduğu için bu parametre `?:` yerine açık
   // `| undefined` ile yazıldı (TS1016: zorunlu parametre opsiyonelden
@@ -250,7 +257,10 @@ export async function createOffer(
   //
   // `computed_total` / `current_total` / teklif toplamı buraya ASLA
   // konulmaz — guard'ı anlamsız kılar.
-  guard: { invoice_total_raw: number; operator_confirmed_warnings?: boolean }
+  guard: { invoice_total_raw: number; operator_confirmed_warnings?: boolean;
+    // Fiyat Doğruluğu Faz 1: açık kullanıcı doğrulaması ve açık "YEKDEM hariç" seçimi.
+    // Sunucu fiyat kaynağını KENDİSİ hesaplar; eksik/doğrulanmamışta 422 price_unverified.
+    price_confirmed_by_user?: boolean; yekdem_excluded?: boolean }
 ): Promise<CreateOfferResponse> {
   try {
     const response = await api.post(
@@ -264,6 +274,8 @@ export async function createOffer(
           ...(guard.operator_confirmed_warnings
             ? { operator_confirmed_warnings: true }
             : {}),
+          ...(guard.price_confirmed_by_user ? { price_confirmed_by_user: true } : {}),
+          ...(guard.yekdem_excluded ? { yekdem_excluded: true } : {}),
         },
       }
     );
@@ -279,6 +291,10 @@ export async function createOffer(
     if (govde?.error?.code === 'invalid_invoice_total_raw'
         || govde?.error?.code === 'invoice_total_raw_conflict') {
       throw new Error(govde.error.message || 'Faturadaki gerçek toplam geçersiz.');
+    }
+    // Fiyat Doğruluğu Faz 1: eksik/doğrulanmamış fiyat sunucuda reddedildi.
+    if (govde?.error?.code === 'price_unverified') {
+      throw new Error(govde.error.message || 'Teklif fiyatı doğrulanmadı.');
     }
     throw err;
   }
@@ -1048,37 +1064,40 @@ export interface EpiasPricesResponse {
   period: string;
   ptf_tl_per_mwh: number | null;
   yekdem_tl_per_mwh: number | null;
-  source: string;
+  source: string;  // "db" | "not_found" (Faz 1: "default" üretilmez)
   source_description: string;
+  source_detail?: string | null;
   is_locked?: boolean;
+  // Fiyat Doğruluğu Faz 1: YEKDEM null = bilinmiyor; 0 = kayıtlı sıfır (onay ister)
+  yekdem_status?: 'known' | 'zero_unverified' | 'missing';
+  yekdem_source?: string | null;
   // SoT-X Seviye 1: profil-ağırlıklı PTF (additive — eski alanlar korunur)
   weighted_ptf_tl_per_mwh?: number | null;
   weighted_ptf_profile?: string;
-  weighted_ptf_source?: string; // "hourly_weighted:<profil>" | "reference_scalar" | "not_found"
+  weighted_ptf_source?: string; // "hourly_weighted:<profil>" | "manual_override" | "reference_scalar" | "not_found"
   ptf_source_warning?: string | null;
+  price_provenance?: PriceProvenance | null;
 }
 
 /**
- * Belirli bir dönem için PTF/YEKDEM fiyatlarını çek.
- * 
- * Öncelik sırası:
- * 1. DB'deki kayıt
- * 2. EPİAŞ API (auto_fetch=true ise)
- * 3. Default değerler
- * 
+ * Belirli bir dönem için PTF/YEKDEM fiyatlarını çek (yalnız DB).
+ *
+ * Fiyat Doğruluğu Faz 1: kayıt yoksa fiyatlar null döner — varsayılan fiyat YOK;
+ * EPİAŞ otomatik çekimi kapalı olduğundan `auto_fetch` gönderilmez.
+ *
+ * Çağrıldığı yerler: api.test.ts (App.tsx pricing/usePeriodPriceFetch kullanır).
+ *
  * @param period Dönem (YYYY-MM format, örn: "2025-01")
- * @param autoFetch EPİAŞ'tan otomatik çek (default: true)
  * @param profile Ağırlık profili (puant_agir|duz|gece_agir). Boşsa tariffGroup'tan türetilir.
  * @param tariffGroup Tarife sınıfı (profile boşsa default profil bundan belirlenir).
  */
 export async function getEpiasPrices(
   period: string,
-  autoFetch: boolean = true,
   profile?: string,
   tariffGroup?: string,
   customerId?: string
 ): Promise<EpiasPricesResponse> {
-  const qs = new URLSearchParams({ auto_fetch: String(autoFetch) });
+  const qs = new URLSearchParams();
   if (profile) qs.append('profile', profile);
   if (tariffGroup) qs.append('tariff_group', tariffGroup);
   if (customerId) qs.append('customer_id', customerId);  // Seviye 2-b: gerçek tüketim
@@ -1086,32 +1105,8 @@ export async function getEpiasPrices(
   return response.data;
 }
 
-/**
- * EPİAŞ'tan belirli dönem için veri çek ve cache'le.
- * 
- * @param period Dönem (YYYY-MM format)
- * @param forceRefresh Mevcut cache'i yoksay
- * @param useMock Mock veri kullan (test için)
- */
-export async function syncEpiasPrices(
-  period: string, 
-  forceRefresh: boolean = false,
-  useMock: boolean = false
-): Promise<{
-  status: string;
-  period: string;
-  ptf_tl_per_mwh?: number;
-  yekdem_tl_per_mwh?: number;
-  source?: string;
-  message: string;
-}> {
-  const params = new URLSearchParams();
-  if (forceRefresh) params.append('force_refresh', 'true');
-  if (useMock) params.append('use_mock', 'true');
-  
-  const response = await api.post(`/api/epias/sync/${period}?${params}`);
-  return response.data;
-}
+// Fiyat Doğruluğu Faz 1: syncEpiasPrices() KALDIRILDI — çağıranı yoktu ve
+// POST /api/epias/sync/{period} bu sürümde kapalıdır (EPİAŞ entegrasyonu ertelendi).
 
 /**
  * Fatura dönemini YYYY-MM formatına çevir.

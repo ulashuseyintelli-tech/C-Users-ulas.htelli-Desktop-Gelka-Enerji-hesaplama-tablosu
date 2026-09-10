@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { buildPdfFormFields, downloadPdf, PdfMismatchError, pdfErrorFromElectronResult, getEpiasPrices, fullProcess, api } from './api';
+import { buildPdfFormFields, downloadPdf, PdfMismatchError, pdfErrorFromElectronResult, getEpiasPrices, fullProcess, createOffer, api } from './api';
 
 const extraction: any = {
   consumption_kwh: { value: 1000 },
@@ -60,12 +60,12 @@ describe('getEpiasPrices — SoT-X weighted PTF query', () => {
     weighted_ptf_source: 'hourly_weighted:puant_agir', ptf_source_warning: null,
   };
 
-  it('profile + tariff_group query string olarak gönderilir', async () => {
+  it('profile + tariff_group query string olarak gönderilir; auto_fetch GÖNDERİLMEZ (Faz 1)', async () => {
     const spy = vi.spyOn(api, 'get').mockResolvedValue({ data: body } as any);
-    const res = await getEpiasPrices('2025-01', true, 'puant_agir', 'Sanayi OG');
+    const res = await getEpiasPrices('2025-01', 'puant_agir', 'Sanayi OG');
     const url = spy.mock.calls[0][0] as string;
     expect(url).toContain('/api/epias/prices/2025-01?');
-    expect(url).toContain('auto_fetch=true');
+    expect(url).not.toContain('auto_fetch');
     expect(url).toContain('profile=puant_agir');
     expect(url).toContain('tariff_group=Sanayi+OG');
     expect(res.weighted_ptf_tl_per_mwh).toBe(1550);
@@ -75,17 +75,63 @@ describe('getEpiasPrices — SoT-X weighted PTF query', () => {
     const spy = vi.spyOn(api, 'get').mockResolvedValue({ data: body } as any);
     await getEpiasPrices('2025-01');
     const url = spy.mock.calls[0][0] as string;
-    expect(url).toContain('auto_fetch=true');
+    expect(url).not.toContain('auto_fetch');
     expect(url).not.toContain('profile=');
     expect(url).not.toContain('tariff_group=');
   });
 
   it('Seviye 2-b: customerId verilince customer_id query eklenir; verilmeyince eklenmez', async () => {
     const spy = vi.spyOn(api, 'get').mockResolvedValue({ data: body } as any);
-    await getEpiasPrices('2025-01', true, 'puant_agir', undefined, 'cansu');
+    await getEpiasPrices('2025-01', 'puant_agir', undefined, 'cansu');
     expect(spy.mock.calls[0][0] as string).toContain('customer_id=cansu');
-    await getEpiasPrices('2025-01', true, 'puant_agir');
+    await getEpiasPrices('2025-01', 'puant_agir');
     expect(spy.mock.calls[1][0] as string).not.toContain('customer_id=');
+  });
+});
+
+describe('createOffer — Fiyat Doğruluğu Faz 1 bayrakları', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+  const params = { weighted_ptf_tl_per_mwh: 2500, yekdem_tl_per_mwh: null, agreement_multiplier: 1.01 };
+
+  it('kullanıcı onayı ve "YEKDEM hariç" query param olarak gider; hariçte YEKDEM gövdede null', async () => {
+    const spy = vi.spyOn(api, 'post').mockResolvedValue({ data: { id: 1 } } as any);
+    await createOffer({} as any, {} as any, params, undefined,
+      { invoice_total_raw: 2880, price_confirmed_by_user: true, yekdem_excluded: true });
+    const [url, govde, ayar] = spy.mock.calls[0] as any[];
+    expect(url).toBe('/offers');
+    expect(govde.params.yekdem_tl_per_mwh).toBeNull();
+    expect(ayar.params).toMatchObject({ invoice_total_raw: 2880, price_confirmed_by_user: true, yekdem_excluded: true });
+  });
+
+  it('onay/hariç yoksa bayrak GÖNDERİLMEZ (sunucu varsayılanı: onaysız, dahil)', async () => {
+    const spy = vi.spyOn(api, 'post').mockResolvedValue({ data: { id: 1 } } as any);
+    await createOffer({} as any, {} as any, { ...params, yekdem_tl_per_mwh: 0 }, undefined,
+      { invoice_total_raw: 2880 });
+    const [, govde, ayar] = spy.mock.calls[0] as any[];
+    expect(govde.params.yekdem_tl_per_mwh).toBe(0); // gerçek 0 korunur, null'a dönmez
+    expect(ayar.params).not.toHaveProperty('price_confirmed_by_user');
+    expect(ayar.params).not.toHaveProperty('yekdem_excluded');
+  });
+
+  it('price_unverified reddi okunur mesajla yüzeye çıkar', async () => {
+    vi.spyOn(api, 'post').mockRejectedValue({
+      response: { data: { error: { code: 'price_unverified', message: 'Fiyat doğrulanmadı.' } } },
+    });
+    await expect(createOffer({} as any, {} as any, params, undefined, { invoice_total_raw: 2880 }))
+      .rejects.toThrow('Fiyat doğrulanmadı.');
+  });
+});
+
+describe('fullProcess — gerçek 0 YEKDEM (Faz 1)', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+  const file = new File([new Uint8Array([1])], 'fatura.pdf');
+
+  it('manuel fiyat modunda YEKDEM 0 gönderilir; bilinmeyen (undefined) gönderilmez', async () => {
+    const spy = vi.spyOn(api, 'post').mockResolvedValue({ data: {} } as any);
+    await fullProcess(file, { use_reference_prices: false, weighted_ptf_tl_per_mwh: 2500, yekdem_tl_per_mwh: 0 });
+    expect(spy.mock.calls[0][0] as string).toContain('yekdem_tl_per_mwh=0');
+    await fullProcess(file, { use_reference_prices: false, weighted_ptf_tl_per_mwh: 2500 });
+    expect(spy.mock.calls[1][0] as string).not.toContain('yekdem_tl_per_mwh');
   });
 });
 
