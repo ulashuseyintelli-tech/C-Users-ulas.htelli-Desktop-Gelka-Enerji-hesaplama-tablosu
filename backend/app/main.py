@@ -320,8 +320,10 @@ async def startup_event():
     from .guard_config import load_guard_config
     load_guard_config()
     
-    # Sample market prices data (dev/test için)
-    _add_sample_market_prices()
+    # Fiyat Doğruluğu Faz 1: açılışta örnek (dev) PTF/YEKDEM verisi EKLENMEZ.
+    # Eski _add_sample_market_prices() boş DB'ye 2025-01 için 2974.1/364.0 gibi
+    # sabitleri "Sample data (dev)" notu ve epias_manual kaynak etiketiyle yazıyordu.
+    # Fiyat yalnız yetkili yönetim ekranından / EPİAŞ Excel yüklemesinden girilir.
     
     # EPDK tarifeleri DB'ye seed et (yoksa)
     _seed_distribution_tariffs()
@@ -339,46 +341,6 @@ async def startup_event():
             _pricing_db.close()
     except Exception as e:
         logger.warning(f"Pricing profil şablonu seed hatası (kritik değil): {e}")
-
-
-def _add_sample_market_prices():
-    """
-    Sample PTF/YEKDEM verisi ekle (eğer yoksa).
-    Production'da admin panelden girilmeli.
-    """
-    from .database import SessionLocal, MarketReferencePrice
-    
-    sample_data = [
-        ("2024-11", 2850.0, 350.0),
-        ("2024-12", 2920.0, 355.0),
-        ("2025-01", 2974.1, 364.0),
-        ("2025-02", 3050.0, 370.0),
-    ]
-    
-    db = SessionLocal()
-    try:
-        for period, ptf, yekdem in sample_data:
-            existing = db.query(MarketReferencePrice).filter(
-                MarketReferencePrice.period == period
-            ).first()
-            
-            if not existing:
-                record = MarketReferencePrice(
-                    period=period,
-                    ptf_tl_per_mwh=ptf,
-                    yekdem_tl_per_mwh=yekdem,
-                    source_note="Sample data (dev)",
-                    is_locked=0
-                )
-                db.add(record)
-                logger.info(f"Sample market price added: {period}")
-        
-        db.commit()
-    except Exception as e:
-        logger.warning(f"Could not add sample market prices: {e}")
-        db.rollback()
-    finally:
-        db.close()
 
 
 def _seed_distribution_tariffs():
@@ -1956,9 +1918,26 @@ async def create_offer(
     # Ham metin alınıp parse_invoice_total_raw() ile AÇIKÇA doğrulanır.
     invoice_total_raw: Optional[str] = None,
     operator_confirmed_warnings: bool = False,
+    # Fiyat Doğruluğu Faz 1: YEKDEM uygulamasının AÇIK seçimi (query param;
+    # OfferParams şeması değişmedi): included | excluded. Gönderilmezse
+    # 'included' (en katı yol: doğrulanmış YEKDEM ister; sessiz "hariç" YOK).
+    # Fiyat doğrulaması YALNIZ sunucudadır: istemcinin "doğrulandı" beyanı alınmaz.
+    yekdem_mode: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """Teklifi kaydet ve arşivle"""
+    """Teklifi kaydet ve arşivle.
+
+    Fiyat Doğruluğu Faz 1 — eksik, doğrulanmamış ya da kesinleşmemiş
+    (provisional) PTF/YEKDEM ile teklif KAYDEDİLMEZ (422 price_unverified; R2
+    kapısından sonra, persist'ten önce). Fiyatın dönemi, kaynağı, kayıt durumu
+    ve YEKDEM seçimi SUNUCUDA hesaplanıp snapshot'a
+    (calculation_result.meta_price_provenance) yazılır; istemcinin gönderdiği
+    provenance kullanılmaz.
+
+    Çağrıldığı yerler:
+    - frontend/src/api.ts createOffer() ← App.tsx handleDownloadPdf (manuel + AI teklif kaydı)
+    - backend/scripts/packaged_pdf_smoke.py → paketli PDF duman testi
+    """
     # ═══ R2 gross-misread guard — FAIL-CLOSED, persist'ten ÖNCE ═══════════
     # `db.add`/`flush`/`commit`/audit/PDF'den ÖNCE çalışır; rette hiçbir yan
     # etki oluşmaz. R01'de burada pozitiflik kontrolü vardı ve `raw=0` /
@@ -2029,6 +2008,26 @@ async def create_offer(
         ),
     }
 
+    # 6) Fiyat Doğruluğu Faz 1 — sunucu kapısı (yalnız düğmeye bırakılmaz).
+    #    R2 kapısından SONRA, persist'ten ÖNCE çalışır; rette yan etki oluşmaz.
+    #    Karar yalnız DB'ye dayanır: fiyat, dönemin güvenilir ve KESİN (final)
+    #    kaydıyla eşleşmelidir. Provisional, eksik ya da uyuşmayan fiyat 422 alır.
+    from .price_provenance import offer_price_gate, price_block_content, yekdem_applied
+    _prov = offer_price_gate(
+        db,
+        period=extraction.invoice_period,
+        ptf=params.weighted_ptf_tl_per_mwh,
+        yekdem=params.yekdem_tl_per_mwh,
+        yekdem_mode=yekdem_mode,
+        customer_id=params.customer_id,
+        offer_yekdem_tl=calculation.offer_yekdem_tl,
+    )
+    if not _prov["verified"]:
+        return JSONResponse(status_code=422, content=price_block_content(_prov))
+    _yekdem_dahil = yekdem_applied(_prov)
+    _calc_json = calculation.model_dump()
+    _calc_json["meta_price_provenance"] = _prov  # istemcinin gönderdiği değer EZİLİR
+
     offer = Offer(
         customer_id=customer_id,
         vendor=extraction.vendor,
@@ -2039,13 +2038,17 @@ async def create_offer(
         demand_qty=extraction.demand_qty.value,
         demand_unit_price=extraction.demand_unit_price_tl_per_unit.value,
         weighted_ptf=params.weighted_ptf_tl_per_mwh,
-        yekdem=params.yekdem_tl_per_mwh,
+        # offers.yekdem NOT NULL = teklif fiyatına UYGULANAN YEKDEM. Hariç seçiminde
+        # uygulanan değer 0'dır; hariç ile gerçek 0 ayrımı snapshot'taki
+        # meta_price_provenance.yekdem.mode alanındadır (gerçek 0 yalnız açık ve kesin
+        # giriş kaydıyla doğrulanır).
+        yekdem=params.yekdem_tl_per_mwh if _yekdem_dahil else 0.0,
         agreement_multiplier=params.agreement_multiplier,
         current_total=calculation.current_total_with_vat_tl,
         offer_total=calculation.offer_total_with_vat_tl,
         savings_amount=calculation.difference_incl_vat_tl,
         savings_ratio=calculation.savings_ratio,
-        calculation_result=calculation.model_dump(),
+        calculation_result=_calc_json,
         extraction_result=_snapshot_json,
         status="draft"
     )
@@ -2481,6 +2484,25 @@ async def generate_pdf_for_offer(
             detail="Teklif verisi eksik (extraction_result veya calculation_result)"
         )
 
+    # Fiyat Doğruluğu Faz 1: fiyatı sunucuda doğrulanmamış snapshot'tan PDF
+    # ÜRETİLMEZ. Faz 1 öncesi kayıtların kaynağı bilinmez → doğrulanmış sayılmaz
+    # ve yeniden hesaplanmaz; geçerli PDF'i olan eski kayıtlar yukarıdaki
+    # idempotency yolundan aynen döner.
+    from .price_provenance import snapshot_price_verified
+    if not snapshot_price_verified(offer.calculation_result):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "price_unverified",
+                "message": (
+                    "Bu teklifin fiyat kaynağı doğrulanmamış (fiyat doğrulaması öncesi "
+                    "kaydedilmiş ya da eksik). PDF üretilmez; teklifi doğrulanmış "
+                    "PTF/YEKDEM ile yeniden oluşturun."
+                ),
+                "offer_id": offer.id,
+            },
+        )
+
     try:
         with _teklif_pdf_uretim_kilidi(offer.id):
             # Kilidi aldıktan sonra yeniden oku: bu istek kilidi beklerken
@@ -2694,10 +2716,32 @@ async def download_offer_pdf(
 
 @app.post("/offers/{offer_id}/generate-html", response_class=HTMLResponse)
 async def generate_html_for_offer(offer_id: int, db: Session = Depends(get_db)):
-    """Kayıtlı teklif için HTML oluştur"""
+    """Kayıtlı teklif için HTML oluştur.
+
+    Fiyat Doğruluğu Faz 1: müşteri belgesiyle aynı içeriği üreten bu uç, PDF ucuyla
+    (generate_pdf_for_offer) AYNI snapshot kapısını uygular. Fiyatı sunucuda
+    doğrulanmamış (Faz 1 öncesi ya da eksik) teklif belgeye dökülmez; geçmiş kayıt
+    yeniden hesaplanmaz.
+
+    Çağrıldığı yerler: YOK (frontend/electron'da referans yok; doğrudan API yolu).
+    """
     offer = db.query(Offer).filter(Offer.id == offer_id).first()
     if not offer:
         raise HTTPException(status_code=404, detail="Teklif bulunamadı")
+    from .price_provenance import snapshot_price_verified
+    if not snapshot_price_verified(offer.calculation_result):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "price_unverified",
+                "message": (
+                    "Bu teklifin fiyat kaynağı doğrulanmamış (fiyat doğrulaması öncesi "
+                    "kaydedilmiş ya da eksik). Teklif belgesi üretilmez; teklifi "
+                    "doğrulanmış PTF/YEKDEM ile yeniden oluşturun."
+                ),
+                "offer_id": offer.id,
+            },
+        )
     
     extraction = InvoiceExtraction(**offer.extraction_result)
     calculation = CalculationResult(**offer.calculation_result)
@@ -2726,7 +2770,11 @@ async def generate_pdf_direct(
     calculation: CalculationResult,
     params: OfferParams,
     customer_name: Optional[str] = None,
-    customer_company: Optional[str] = None
+    customer_company: Optional[str] = None,
+    # Fiyat Doğruluğu Faz 1: YEKDEM uygulamasının açık seçimi (included | excluded;
+    # gönderilmezse included). Fiyat DB'de doğrulanır; istemci beyanı alınmaz.
+    yekdem_mode: Optional[str] = None,
+    db: Session = Depends(get_db),
 ):
     """
     Kaydetmeden direkt PDF oluştur.
@@ -2741,6 +2789,26 @@ async def generate_pdf_direct(
     Çağrıldığı yerler: YOK (frontend'de referans sıfır; runtime graph'ta
     ölü uç — bkz. S5-R03B kapanış raporu).
     """
+    # Fiyat Doğruluğu Faz 1: doğrudan API ile doğrulanmamış ya da kesinleşmemiş
+    # fiyatla PDF üretilemez. Fiyat, POST /offers ile AYNI kuralla DB'de doğrulanır
+    # (güvenilir + final kayıt). İstemcinin gönderdiği provenance ezilir ve
+    # "doğrulandı" beyanı alınmaz.
+    from .price_provenance import offer_price_gate, price_block_content, yekdem_applied
+    _prov_direct = offer_price_gate(
+        db,
+        period=extraction.invoice_period,
+        ptf=params.weighted_ptf_tl_per_mwh,
+        yekdem=params.yekdem_tl_per_mwh,
+        yekdem_mode=yekdem_mode,
+        customer_id=params.customer_id,
+        offer_yekdem_tl=calculation.offer_yekdem_tl,
+    )
+    if not _prov_direct["verified"]:
+        return JSONResponse(status_code=422, content=price_block_content(_prov_direct))
+    calculation = calculation.model_copy(update={"meta_price_provenance": _prov_direct})
+    if not yekdem_applied(_prov_direct):
+        params = params.model_copy(update={"yekdem_tl_per_mwh": 0.0})
+
     try:
         pdf_path = generate_offer_pdf(
             extraction, calculation, params,
@@ -2768,8 +2836,10 @@ async def generate_pdf_direct(
 
 @app.post("/generate-pdf-simple")
 async def generate_pdf_simple(
-    weighted_ptf_tl_per_mwh: float = Form(2974.1),
-    yekdem_tl_per_mwh: float = Form(364.0),
+    # Fiyat Doğruluğu Faz 1: 2974.1 / 364.0 Form varsayılanları KALDIRILDI — alan
+    # gönderilmezse fiyat "yok" sayılır ve kapı reddeder (sessiz sabit YOK).
+    weighted_ptf_tl_per_mwh: Optional[float] = Form(None),
+    yekdem_tl_per_mwh: Optional[float] = Form(None),
     agreement_multiplier: float = Form(1.01),
     consumption_kwh: float = Form(...),
     current_unit_price: float = Form(0),
@@ -2799,6 +2869,10 @@ async def generate_pdf_simple(
     offer_validity_days: int = Form(15),  # Teklif geçerlilik süresi (gün)
     operator_confirmed_warnings: bool = Form(False),  # R2: %10-40 mismatch onayı
     invoice_total_raw: float = Form(0),  # R2: operatörün girdiği/extract edilen HAM toplam (re-derive için)
+    # Fiyat Doğruluğu Faz 1: YEKDEM uygulamasının açık seçimi (included | excluded;
+    # gönderilmezse included). Fiyat DB'de doğrulanır; istemci beyanı alınmaz.
+    yekdem_mode: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
 ):
     """Basit parametrelerle PDF oluştur.
 
@@ -2808,7 +2882,7 @@ async def generate_pdf_simple(
     """
     # ── P0 guard: Teklif PTF zorunlu — PTF<=0 → çöp teklif (manuel modda boş PTF). ──
     # Çağrıldığı yerler: api.ts downloadPdf → App.tsx handleDownloadPdf (manuel+AI) + Electron.
-    # YEKDEM'e dokunulmaz (0/tahmini/kesin meşru); yalnızca PTF zorunluluğu kapatılır.
+    # YEKDEM ve fiyatın kaynağı aşağıdaki Faz 1 kapısında DB'ye karşı doğrulanır.
     if weighted_ptf_tl_per_mwh is None or weighted_ptf_tl_per_mwh <= 0:
         return JSONResponse(
             status_code=422,
@@ -2843,6 +2917,22 @@ async def generate_pdf_simple(
     )
     if _sonuc_simple.reddet is not None:
         return JSONResponse(status_code=422, content=_sonuc_simple.reddet)
+
+    # ── Fiyat Doğruluğu Faz 1: doğrudan API kapısı (semafordan ÖNCE) ──
+    # Fiyat, POST /offers ile AYNI kuralla DB'de doğrulanır (güvenilir + final kayıt).
+    # İstemcinin "doğrulandı" beyanı alınmaz; doğrulanmamış fiyatla PDF üretilmez.
+    from .price_provenance import offer_price_gate, price_block_content, yekdem_applied
+    _prov_simple = offer_price_gate(
+        db,
+        period=invoice_period,
+        ptf=weighted_ptf_tl_per_mwh,
+        yekdem=yekdem_tl_per_mwh,
+        yekdem_mode=yekdem_mode,
+    )
+    if not _prov_simple["verified"]:
+        return JSONResponse(status_code=422, content=price_block_content(_prov_simple))
+    if not yekdem_applied(_prov_simple):
+        yekdem_tl_per_mwh = 0.0
 
     import time as _time
     from .ptf_metrics import get_ptf_metrics as _get_pdf_metrics
@@ -2954,6 +3044,7 @@ async def generate_pdf_simple(
             annual_saving_tl=annual_saving_tl,
             meta_consumption_kwh=consumption_kwh,
             meta_vat_rate=vat_rate,
+            meta_price_provenance=_prov_simple,
         )
 
         # ── PDF render (sync Playwright → dedicated executor + timeout) ──
@@ -3091,9 +3182,36 @@ async def generate_html_direct(
     calculation: CalculationResult,
     params: OfferParams,
     customer_name: Optional[str] = None,
-    customer_company: Optional[str] = None
+    customer_company: Optional[str] = None,
+    # Fiyat Doğruluğu Faz 1: YEKDEM uygulamasının açık seçimi (included | excluded;
+    # gönderilmezse included). Fiyat DB'de doğrulanır; istemci beyanı alınmaz.
+    yekdem_mode: Optional[str] = None,
+    db: Session = Depends(get_db),
 ):
-    """Kaydetmeden direkt HTML oluştur"""
+    """Kaydetmeden direkt HTML oluştur.
+
+    Fiyat Doğruluğu Faz 1: /generate-pdf-direct ile AYNI kapı. Doğrulanmamış ya da
+    kesinleşmemiş fiyatla teklif belgesi üretilmez (422 price_unverified). İstemcinin
+    gönderdiği provenance ezilir; belge doğrulanmamış fiyatı "EPİAŞ verisi" diye
+    SUNAMAZ.
+
+    Çağrıldığı yerler: YOK (frontend/electron'da referans yok; doğrudan API yolu).
+    """
+    from .price_provenance import offer_price_gate, price_block_content, yekdem_applied
+    _prov_html = offer_price_gate(
+        db,
+        period=extraction.invoice_period,
+        ptf=params.weighted_ptf_tl_per_mwh,
+        yekdem=params.yekdem_tl_per_mwh,
+        yekdem_mode=yekdem_mode,
+        customer_id=params.customer_id,
+        offer_yekdem_tl=calculation.offer_yekdem_tl,
+    )
+    if not _prov_html["verified"]:
+        return JSONResponse(status_code=422, content=price_block_content(_prov_html))
+    calculation = calculation.model_copy(update={"meta_price_provenance": _prov_html})
+    if not yekdem_applied(_prov_html):
+        params = params.model_copy(update={"yekdem_tl_per_mwh": 0.0})
     html_content = generate_offer_html(
         extraction, calculation, params,
         customer_name=customer_name,
@@ -4488,8 +4606,10 @@ async def get_market_price(
     Args:
         period: Dönem (YYYY-MM format)
     """
-    from .market_prices import get_market_prices_or_default
-    
+    # Fiyat Doğruluğu Faz 1: kayıt yoksa varsayılan (2974.1/364.0, source="default")
+    # DÖNMEZ; fiyatlar null ve source="not_found" döner (yanıt şekli korunur).
+    from .market_prices import get_market_prices
+
     # Wrapper ile DB çağrısını sar (read path)
     import asyncio as _asyncio
     from .guards.dependency_wrapper import CircuitOpenError
@@ -4497,13 +4617,22 @@ async def get_market_price(
     try:
         prices = await wrapper.call(
             _asyncio.to_thread,
-            get_market_prices_or_default,
+            get_market_prices,
             db, period,
             is_write=False,
         )
     except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
         raise _map_wrapper_error_to_http(exc)
-    
+
+    if prices is None:
+        return {
+            "status": "ok",
+            "period": period,
+            "ptf_tl_per_mwh": None,
+            "yekdem_tl_per_mwh": None,
+            "source": "not_found",
+            "is_locked": False,
+        }
     return {
         "status": "ok",
         "period": prices.period,
@@ -5309,12 +5438,28 @@ async def deprecated_upsert_market_price_form(
 # EPİAŞ ENTEGRASYONU
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Fiyat Doğruluğu Faz 1 (K2): otomatik/elle EPİAŞ çekimi kapalı (entegrasyon
+# ertelendi). Fiyatlar yetkili yönetim ekranından / EPİAŞ Excel yüklemesinden girilir.
+_EPIAS_SYNC_DISABLED_BODY = {
+    "error": {
+        "code": "epias_integration_disabled",
+        "message": (
+            "EPİAŞ otomatik fiyat çekimi bu sürümde kapalıdır. PTF/YEKDEM'i "
+            "yönetim ekranından (Piyasa Fiyatları) ya da EPİAŞ uzlaştırma Excel "
+            "yüklemesiyle girin."
+        ),
+    }
+}
+
+
 @app.post("/api/epias/sync/{period}")
 async def sync_period_from_epias(
     period: str,
     force_refresh: bool = False,
     use_mock: bool = False,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    # Fiyat Doğruluğu Faz 1: ortak (tüm kiracılar) fiyat yazımı → mevcut admin yetkisi.
+    _: str = Depends(require_admin_key),
 ):
     """
     EPİAŞ'tan belirli dönem için PTF/YEKDEM verilerini çek ve cache'le.
@@ -5328,14 +5473,21 @@ async def sync_period_from_epias(
         {
             "status": "ok" | "error",
             "period": "2025-01",
-            "ptf_tl_per_mwh": 2974.1,
-            "yekdem_tl_per_mwh": 364.0,
+            "ptf_tl_per_mwh": 2508.8,
+            "yekdem_tl_per_mwh": 235.63,
             "source": "epias" | "mock",
             "message": "EPİAŞ'tan alındı ve cache'lendi"
         }
+
+    Faz 1: EPIAS_SYNC_ENABLED=False iken 503 epias_integration_disabled döner.
+    Çağrıldığı yerler: frontend'de çağıran YOK (api.ts syncEpiasPrices Faz 1'de kaldırıldı).
     """
-    from .market_prices import fetch_and_cache_from_epias
-    
+    from .market_prices import fetch_and_cache_from_epias, EPIAS_SYNC_ENABLED
+
+    # Fiyat Doğruluğu Faz 1 (K2): EPİAŞ entegrasyonu ertelendi — uç kapalı.
+    if not EPIAS_SYNC_ENABLED:
+        return JSONResponse(status_code=503, content=_EPIAS_SYNC_DISABLED_BODY)
+
     # Period format kontrolü
     if not period or len(period) != 7 or period[4] != '-':
         raise HTTPException(
@@ -5370,54 +5522,70 @@ async def sync_period_from_epias(
 @app.get("/api/epias/prices/{period}")
 async def get_prices_with_epias_fallback(
     period: str,
-    auto_fetch: bool = True,
+    auto_fetch: bool = False,
     profile: Optional[str] = None,
     tariff_group: Optional[str] = None,
     customer_id: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """
-    Dönem için piyasa fiyatlarını al - DB yoksa EPİAŞ'tan çek.
+    Dönem için piyasa fiyatlarını al — YALNIZ DB (Fiyat Doğruluğu Faz 1).
 
-    Öncelik sırası (skaler PTF):
-    1. DB'deki kayıt
-    2. EPİAŞ API (auto_fetch=True ise)
-    3. Default değerler
+    - Kayıt yoksa PTF/YEKDEM null döner; sabit/varsayılan fiyat YOK (eski
+      2974.1 / 364.0 kaldırıldı). EPİAŞ otomatik çekimi KAPALI: `auto_fetch`
+      geriye uyum için kabul edilir ama ETKİSİZDİR.
+    - YEKDEM kaydı yoksa null ("missing"); DB'de 0 ise 0 döner ve
+      "zero_unverified" işaretlenir (değer taşınır, kesin teklifte kullanılamaz).
+    - price_provenance: bu değerlerle teklif kesinleşebilir mi (POST /offers
+      kapısıyla aynı hesap; YEKDEM 'dahil' varsayılır). Kayıt provisional ise
+      draft_only=True olur ve değerler yalnız TASLAK hesapta kullanılır.
+    - record_status: kaydın durumu (final | provisional); kayıt yoksa null.
 
-    Ayrıca SoT-X Seviye 1: hourly_market_prices'tan profil-ağırlıklı PTF
+    SoT-X Seviye 1: hourly_market_prices'tan profil-ağırlıklı PTF
     (weighted_ptf_*). Profil seçimi: explicit profile → tariff_group default →
     puant_agir (fail-safe). calculator.get_ptf_yekdem_for_period ile parite.
-    Saatlik veri yoksa skaler PTF'e düşer ve ptf_source_warning döner.
+    Saatlik veri yoksa GERÇEK aylık referans kaydına düşer ve ptf_source_warning
+    döner; o da yoksa weighted_ptf null + 'not_found'.
 
     Args:
         period: Dönem (YYYY-MM format)
-        auto_fetch: EPİAŞ'tan otomatik çek (default: True)
+        auto_fetch: Faz 1'de etkisiz (geriye uyum)
         profile: Ağırlık profili (puant_agir|duz|gece_agir). Boşsa tariff_group'tan türetilir.
         tariff_group: Tarife sınıfı (profile boşsa default profil bundan belirlenir).
 
-    Returns:
+    Çağrıldığı yerler:
+    - frontend/src/pricing/usePeriodPriceFetch.ts ← App.tsx manuel teklif (dönem/profil/tarife/firma değişimi)
+    - frontend/src/api.ts getEpiasPrices() (yalnız api.test.ts)
+
+    Returns (örnek):
         {
             "period": "2025-01",
-            "ptf_tl_per_mwh": 2974.1,            # skaler/aylık (mevcut, additive korunur)
-            "yekdem_tl_per_mwh": 364.0,
-            "source": "epias",
-            "source_description": "EPİAŞ API: EPİAŞ'tan alındı ve cache'lendi",
+            "ptf_tl_per_mwh": 2508.8,                 # aylık referans; kayıt yoksa null
+            "yekdem_tl_per_mwh": 235.63,              # kayıt yoksa null; DB'de 0 ise 0
+            "yekdem_status": "known",                 # | zero_unverified | missing
+            "yekdem_source": "reference:manual_override",
+            "source": "db",                           # | not_found
+            "source_detail": "manual_override",
+            "source_description": "DB (manual_override)",
             "is_locked": false,
-            "weighted_ptf_tl_per_mwh": 3120.5,   # profil-ağırlıklı (saatlik yoksa None)
+            "weighted_ptf_tl_per_mwh": 2508.8,        # yoksa null
             "weighted_ptf_profile": "puant_agir",
-            "weighted_ptf_source": "hourly_weighted:puant_agir",  # | reference_scalar | not_found
-            "ptf_source_warning": null           # fallback durumunda amber uyarı metni
+            "weighted_ptf_source": "manual_override", # | hourly_consumption:* | hourly_weighted:* | reference_scalar | not_found
+            "ptf_source_warning": null,
+            "price_provenance": {...}                 # price_provenance.build_price_provenance
         }
     """
     from .market_prices import (
-        get_market_prices_with_epias_fallback,
+        get_market_prices,
         weighted_ptf_for_profile,
         default_profile_for_tariff,
         consumption_weighted_ptf,
         OFFER_USE_REAL_CONSUMPTION,
     )
+    from .price_provenance import YEKDEM_MODE_INCLUDED, build_price_provenance, resolve_period_yekdem
 
-    prices, source_desc = get_market_prices_with_epias_fallback(db, period, auto_fetch)
+    # Faz 1: yalnız DB — EPİAŞ çağrısı ve varsayılan fiyat YOK (auto_fetch etkisiz).
+    prices = get_market_prices(db, period)
 
     # SoT-X Seviye 1: profil-ağırlıklı PTF (hourly) — calculator ile parite.
     # Profil sırası: explicit profile → tariff_group default → puant_agir fail-safe.
@@ -5433,7 +5601,8 @@ async def get_prices_with_epias_fallback(
     # elle kaydettiyse (source="manual_override") hourly-weighted bunu ezemez. YALNIZ
     # manual_override; auto/seed skalerler hourly önceliğini bozmaz. GUARD: ptf<=0/None
     # ise override sayılmaz → fallback zinciri devam eder. (calculator ile aynı precedence.)
-    if prices.source_detail == "manual_override" and prices.ptf_tl_per_mwh and prices.ptf_tl_per_mwh > 0:
+    if (prices is not None and prices.source_detail == "manual_override"
+            and prices.ptf_tl_per_mwh and prices.ptf_tl_per_mwh > 0):
         weighted_ptf = prices.ptf_tl_per_mwh
         weighted_source = "manual_override"
         ptf_source_warning = None
@@ -5445,8 +5614,8 @@ async def get_prices_with_epias_fallback(
         weighted_ptf = wr.ptf_tl_per_mwh
         weighted_source = f"hourly_weighted:{eff_profile}"
         ptf_source_warning = None
-    elif prices.ptf_tl_per_mwh and prices.ptf_tl_per_mwh > 0:
-        # FALLBACK — aylık skaler PTF + uyarı (calculator.py ile birebir metin).
+    elif prices is not None and prices.ptf_tl_per_mwh and prices.ptf_tl_per_mwh > 0:
+        # FALLBACK — GERÇEK aylık referans kaydı + uyarı (calculator.py ile birebir metin).
         weighted_ptf = prices.ptf_tl_per_mwh
         weighted_source = "reference_scalar"
         ptf_source_warning = (
@@ -5460,17 +5629,39 @@ async def get_prices_with_epias_fallback(
             f"Dönem {period} için geçerli PTF bulunamadı (saatlik yok, referans <= 0)."
         )
 
+    # Faz 1: YEKDEM kaydı yoksa null; 0 kaydı değer olarak taşınır (kesinleşemez).
+    yekdem = resolve_period_yekdem(db, period)
+    provenance = build_price_provenance(
+        db,
+        period=period,
+        ptf=weighted_ptf,
+        yekdem=yekdem.value,
+        # Ekrandaki değerin durumu 'dahil' varsayımıyla hesaplanır. Hariç seçimi
+        # arayüzde yapılır; dönemin YEKDEM durumu seçimden bağımsız döner.
+        yekdem_mode=YEKDEM_MODE_INCLUDED,
+        mode_basis="default",
+        customer_id=customer_id,
+    )
+
     return {
-        "period": prices.period,
-        "ptf_tl_per_mwh": prices.ptf_tl_per_mwh,
-        "yekdem_tl_per_mwh": prices.yekdem_tl_per_mwh,
-        "source": prices.source,
-        "source_description": source_desc,
-        "is_locked": prices.is_locked,
+        "period": period,
+        "ptf_tl_per_mwh": prices.ptf_tl_per_mwh if prices is not None else None,
+        "yekdem_tl_per_mwh": yekdem.value,
+        "yekdem_status": yekdem.status,
+        "yekdem_source": yekdem.source,
+        "source": "db" if prices is not None else "not_found",
+        "source_detail": prices.source_detail if prices is not None else None,
+        "source_description": (
+            f"DB ({prices.source_detail or 'kaynak etiketi yok'})" if prices is not None
+            else "Kayıt yok — varsayılan fiyat kullanılmaz (EPİAŞ otomatik çekimi kapalı)"
+        ),
+        "is_locked": prices.is_locked if prices is not None else False,
+        "record_status": prices.status if prices is not None else None,
         "weighted_ptf_tl_per_mwh": weighted_ptf,
         "weighted_ptf_profile": eff_profile,
         "weighted_ptf_source": weighted_source,
         "ptf_source_warning": ptf_source_warning,
+        "price_provenance": provenance,
     }
 
 
@@ -5478,33 +5669,103 @@ async def get_prices_with_epias_fallback(
 async def save_period_prices(
     period: str,
     request: Request,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    # Fiyat Doğruluğu Faz 1: ortak (tüm kiracılar) fiyat yazımı → mevcut admin
+    # yetkisi (require_admin_key). Yalnız arayüzde gizlemek yeterli sayılmaz.
+    _: str = Depends(require_admin_key),
 ):
     """
-    Dönem için PTF/YEKDEM fiyatlarını kaydet (admin key gerektirmez).
-    
-    Frontend'den doğrudan çağrılır — kullanıcı PTF/YEKDEM değerini
-    düzenleyip kaydettiğinde bu endpoint'e POST yapılır.
-    
+    Dönem için PTF/YEKDEM fiyatlarını kaydet (source="manual_override").
+
+    Fiyat Doğruluğu Faz 1:
+    - Mevcut admin yetkisi uygulanır (ADMIN_API_KEY_ENABLED=true iken X-Admin-Key zorunlu).
+    - ptf_tl_per_mwh zorunlu; gönderilmezse 422 (eskiden 0 yazılıp doğrulamaya düşüyordu).
+    - yekdem_tl_per_mwh gönderilmezse mevcut kaydın YEKDEM'i KORUNUR (eskiden 0
+      ile eziliyordu); yeni dönem kaydında YEKDEM zorunludur (422).
+    - YEKDEM negatif ya da sayı dışı kaydedilmez (422). Owner teyidi: gerçek 0 yasak
+      DEĞİLDİR ve kaydedilir; ancak bu hızlı kayıt açık sıfır satırı (geçmiş) yazmaz.
+      Buradan yazılan 0, Piyasa Fiyatları ekranında açıkça 0 girilip kesinleşene kadar
+      teklif kapısında "anlamı doğrulanmamış sıfır" kalır (price_provenance).
+    - Bu hızlı kayıt YALNIZ TASLAK (status='provisional') değer yazar. Kesinleşmiş
+      (final) kaydın değeri buradan değiştirilemez (409); aynı değer gönderilirse
+      işlem yapılmaz. Kesinleştirme yetkili Piyasa Fiyatları ekranındadır (final
+      koruması + değişiklik geçmişi).
+
+    Çağrıldığı yerler:
+    - frontend/src/App.tsx "💾 PTF/YEKDEM Kaydet" (adminApi → X-Admin-Key varsa gönderilir)
+
     JSON Body:
-        ptf_tl_per_mwh: PTF değeri (TL/MWh)
-        yekdem_tl_per_mwh: YEKDEM değeri (TL/MWh)
+        ptf_tl_per_mwh: PTF değeri (TL/MWh) — zorunlu
+        yekdem_tl_per_mwh: YEKDEM değeri (TL/MWh) — yeni dönemde zorunlu
     """
-    from .market_prices import upsert_market_prices
-    
+    from .market_prices import upsert_market_prices, get_market_prices
+
     body = await request.json()
     ptf = body.get("ptf_tl_per_mwh")
     yekdem = body.get("yekdem_tl_per_mwh")
-    
-    if ptf is None and yekdem is None:
-        raise HTTPException(status_code=422, detail="ptf_tl_per_mwh veya yekdem_tl_per_mwh gerekli")
-    
+
+    if ptf is None:
+        raise HTTPException(status_code=422, detail="ptf_tl_per_mwh gerekli")
+
+    try:
+        ptf = float(ptf)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="ptf_tl_per_mwh sayı olmalı")
+
+    mevcut = get_market_prices(db, period)
+    if yekdem is not None:
+        try:
+            yekdem = float(yekdem)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="yekdem_tl_per_mwh sayı olmalı")
+        if not yekdem >= 0:
+            # Negatif ya da NaN YEKDEM kaydedilmez. Gerçek 0 kabul edilir (owner teyidi);
+            # bu yol yalnız TASLAK yazar ve açık sıfır satırı üretmez (price_provenance).
+            raise HTTPException(
+                status_code=422,
+                detail="YEKDEM negatif ya da geçersiz olamaz: 0 ya da pozitif bir sayı girin.",
+            )
+    elif mevcut is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Yeni dönem kaydında yekdem_tl_per_mwh zorunludur "
+                "(eksik YEKDEM 0 olarak kaydedilmez)."
+            ),
+        )
+    else:
+        yekdem = mevcut.yekdem_tl_per_mwh  # mevcut YEKDEM korunur (0 ile ezilmez)
+
+    # Owner teyidi: bu hızlı kayıt yolu KESİNLEŞMİŞ (final) kaydı değiştiremez; aynı
+    # değerler gönderilirse işlem yapılmaz. Düzeltme yetkili Piyasa Fiyatları ekranında
+    # yapılır (final koruması + değişiklik geçmişi). Durumu boş eski kayıt da kesin sayılır.
+    if mevcut is not None and mevcut.status == "final":
+        ayni = (abs(float(mevcut.ptf_tl_per_mwh) - ptf) <= 0.005
+                and abs(float(mevcut.yekdem_tl_per_mwh) - float(yekdem)) <= 0.005)
+        if not ayni:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Dönem fiyatı kesinleşmiş (final) ve bu ekrandan değiştirilemez. "
+                    "Düzeltme için Piyasa Fiyatları ekranını kullanın."
+                ),
+            )
+        return {
+            "status": "ok",
+            "period": period,
+            "ptf_tl_per_mwh": mevcut.ptf_tl_per_mwh,
+            "yekdem_tl_per_mwh": mevcut.yekdem_tl_per_mwh,
+            "record_status": "final",
+            "message": "Değişiklik yok: kesin kayıt aynı değerde.",
+        }
+
     result = upsert_market_prices(
         db=db,
         period=period,
-        ptf_tl_per_mwh=ptf if ptf is not None else 0,
-        yekdem_tl_per_mwh=yekdem if yekdem is not None else 0,
+        ptf_tl_per_mwh=ptf,
+        yekdem_tl_per_mwh=yekdem,
         source="manual_override",
+        status="provisional",  # Faz 1: hızlı kayıt yalnız TASLAK değer yazar
     )
     
     success, message = result
@@ -5516,6 +5777,7 @@ async def save_period_prices(
         "period": period,
         "ptf_tl_per_mwh": ptf,
         "yekdem_tl_per_mwh": yekdem,
+        "record_status": "provisional",
         "message": message,
     }
 
@@ -5573,8 +5835,12 @@ async def sync_all_missing_from_epias(
             "error_count": 2
         }
     """
-    from .market_prices import get_periods_needing_sync, sync_multiple_periods_from_epias
-    
+    from .market_prices import get_periods_needing_sync, sync_multiple_periods_from_epias, EPIAS_SYNC_ENABLED
+
+    # Fiyat Doğruluğu Faz 1 (K2): EPİAŞ entegrasyonu ertelendi — uç kapalı.
+    if not EPIAS_SYNC_ENABLED:
+        return JSONResponse(status_code=503, content=_EPIAS_SYNC_DISABLED_BODY)
+
     # Eksik dönemleri bul
     if force_refresh:
         # Tüm dönemleri sync et

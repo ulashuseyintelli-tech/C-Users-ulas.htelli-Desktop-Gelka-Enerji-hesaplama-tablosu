@@ -274,11 +274,15 @@ class MarketPriceValidator:
         dokunulmaz. YEKDEM tipik olarak PTF'ten çok daha düşük (TR piyasasında
         ~100-800 TL/MWh mertebesinde), bu yüzden PTF'in WARNING_MIN/MAX aralığı
         (1000-5000) burada uygulanmaz — YEKDEM için ayrı bir "olağandışı" aralığı
-        yok, sadece pozitiflik + üst guardrail kontrol edilir.
+        yok, yalnız negatiflik + üst guardrail kontrol edilir (gerçek 0 geçerlidir).
 
         Parsing kuralları PTF ile aynı (nokta ile ondalık, virgül/bilimsel gösterim red).
         yekdem_value opsiyoneldir: None ise "girilmedi" anlamına gelir (hata değil) —
         None kontrolü çağıran tarafta (validate_entry) yapılır.
+
+        Çağrıldığı yerler:
+        - MarketPriceValidator.validate_entry() ← main.upsert_market_price() → POST /admin/market-prices
+          (bulk_importer ve form ucu yekdem_value göndermez → çağrılmaz)
         """
         errors: List[ValidationError] = []
         warnings: List[str] = []
@@ -353,11 +357,14 @@ class MarketPriceValidator:
             ))
             return ValidationResult(is_valid=False, errors=errors, warnings=warnings), None
 
-        if parsed_value <= 0:
+        # Fiyat Doğruluğu Faz 1 (owner teyidi): gerçek YEKDEM=0 yasaklanmaz. Açıkça
+        # girilen 0 yönetim servisinde ayrı bir geçmiş satırıyla kaydedilir ve eski,
+        # anlamı bilinmeyen sıfırdan böyle ayrılır. Yalnız negatif değer reddedilir.
+        if parsed_value < 0:
             errors.append(ValidationError(
                 error_code=ErrorCode.VALUE_OUT_OF_RANGE,
                 field="yekdem_value",
-                message="YEKDEM değeri 0'dan büyük olmalı."
+                message="YEKDEM değeri negatif olamaz."
             ))
             return ValidationResult(is_valid=False, errors=errors, warnings=warnings), None
 

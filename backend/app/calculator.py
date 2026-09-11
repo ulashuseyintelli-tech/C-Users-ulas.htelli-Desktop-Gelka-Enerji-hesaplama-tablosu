@@ -171,7 +171,7 @@ def get_ptf_yekdem_for_period(
     period: Optional[str],
     params: OfferParams,
     tariff_group: Optional[str] = None,
-) -> Tuple[float, float, str, Optional[str], Optional[str]]:
+) -> Tuple[float, Optional[float], str, Optional[str], Optional[str]]:
     """
     PTF/YEKDEM değerlerini belirle (SoT-X Seviye 1: profil-ağırlıklı PTF).
     Bkz. docs/sot-x-offer-ptf-parity.md
@@ -183,9 +183,16 @@ def get_ptf_yekdem_for_period(
     4. yok / PTF<=0 → fail-closed (not_found). Silent default YOK.
 
     YEKDEM her dalda aylık (market_reference_prices); Seviye 1 yalnız PTF.
+    Fiyat Doğruluğu Faz 1: YEKDEM bilinmiyorsa None döner (eskiden kayıt yoksa
+    0.0, override'da `or 0`); faturada YEKDEM varsa calculate_offer fail-closed
+    olur. DB'deki 0 değer olarak taşınır; price_provenance onu doğrulanmamış sıfır
+    sayar ve kesin teklifi engeller.
 
     Returns:
-        (ptf_tl_per_mwh, yekdem_tl_per_mwh, source, error_message, warning)
+        (ptf_tl_per_mwh, yekdem_tl_per_mwh | None, source, error_message, warning)
+
+    Çağrıldığı yerler:
+    - calculator.calculate_offer() → POST /full-process, POST /calculate-offer
     """
     from .market_prices import (
         get_market_prices,
@@ -194,23 +201,25 @@ def get_ptf_yekdem_for_period(
         consumption_weighted_ptf,
         OFFER_USE_REAL_CONSUMPTION,
     )
+    from .price_provenance import resolve_period_yekdem
 
     # 1) OVERRIDE — manuel/override PTF önce; hourly devreye girmez.
     #    ÖNCELİK BOZULMAZ: override her zaman en üstte, gerçek-tüketim dalından da önce.
     if not params.use_reference_prices:
         if params.weighted_ptf_tl_per_mwh is not None and params.weighted_ptf_tl_per_mwh > 0:
             ptf = params.weighted_ptf_tl_per_mwh
-            yekdem = params.yekdem_tl_per_mwh or 0
+            # Faz 1: verilmeyen YEKDEM None kalır (eski `or 0` sessizce 0 yapıyordu).
+            yekdem = params.yekdem_tl_per_mwh
             return (ptf, yekdem, "override", None, None)
 
     # db/dönem yok → silent default YOK → fail-closed
     if db is None or not period:
-        return (0, 0, "not_found",
+        return (0, None, "not_found",
                 "PTF kaynağı yok (db/dönem eksik); teklif üretilemez.", None)
 
-    # YEKDEM (aylık skaler) — her dalda aynı kaynak; Seviye 1'de değişmedi.
+    # YEKDEM (aylık skaler) — her dalda aynı kaynak; kayıt yoksa None (bilinmiyor).
     ref = get_market_prices(db, period)
-    monthly_yekdem = ref.yekdem_tl_per_mwh if ref else 0.0
+    monthly_yekdem = resolve_period_yekdem(db, period).value
 
     # PRIORITY 2: MANUEL KAYIT (açık override) — hourly/C2'den ÖNCE.
     #   Kullanıcı PTF'i elle girip kaydettiyse (save_period_prices → source="manual_override")
@@ -243,7 +252,7 @@ def get_ptf_yekdem_for_period(
 
     # 4) FAIL-CLOSED — ne hourly ne reference>0
     error_msg = f"Dönem {period} için geçerli PTF bulunamadı (saatlik yok, referans <= 0)."
-    return (0, 0, "not_found", error_msg, None)
+    return (0, None, "not_found", error_msg, None)
 
 
 def calculate_offer(
@@ -359,10 +368,22 @@ def calculate_offer(
     # HARD ERROR (fail-closed): geçerli PTF yoksa hesaplama yapma (silent default YOK)
     if pricing_error and pricing_source == "not_found":
         raise CalculationError(pricing_error)
-    
+
+    # Fiyat Doğruluğu Faz 1: faturada YEKDEM varsa YEKDEM birim bedeli ZORUNLU.
+    # Eskiden bilinmeyen YEKDEM sessizce 0 sayılıyor, teklif eksik maliyetle çıkıyordu.
+    if should_include_yekdem and yekdem_tl_per_mwh is None:
+        raise CalculationError(
+            f"Dönem {invoice_period or '-'} için YEKDEM birim bedeli bilinmiyor; faturada "
+            "YEKDEM bedeli var. YEKDEM'i yönetim ekranından (Piyasa Fiyatları) girin."
+        )
+    # Faturada YEKDEM kalemi yoksa değer teklife girmez. Bilinmiyorsa hesap alanında
+    # 0 görünür; provenance'ta ise seçim boş kalır (yekdem_mode_required). Böylece
+    # eksik veri, gerçek 0 ve hariç birbirine karışmaz.
+    yekdem_for_calc = yekdem_tl_per_mwh if yekdem_tl_per_mwh is not None else 0.0
+
     # Teklif parametreleri
     ptf_tl_kwh = ptf_tl_per_mwh / 1000
-    yekdem_tl_kwh = yekdem_tl_per_mwh / 1000
+    yekdem_tl_kwh = yekdem_for_calc / 1000
     agreement_mult = params.agreement_multiplier
     
     # === EK KALEMLER (Tip-5/7: reaktif, mahsuplaşma, etc.) ===
@@ -595,7 +616,27 @@ def calculate_offer(
     else:
         # Mismatch yok veya tolerans içinde - info level
         logger.info(log_msg)
-    
+
+    # Fiyat Doğruluğu Faz 1: fiyatın dönemi, kaynağı ve kayıt durumu. Arayüz taslak
+    # işaretini ve düğme durumunu bununla gösterir; esas kapı POST /offers ve PDF
+    # uçlarındadır. db yoksa sistem doğrulaması yapılamaz. Faturada YEKDEM kalemi
+    # varsa seçim 'included' olur (en katı yol: doğrulanmış değer ister). Kalem
+    # YOKSA "hariç" TAHMİN EDİLMEZ: seçim boş kalır (yekdem_mode_required) ve
+    # kullanıcı dahil / hariç seçimini açıkça yapar. Hesap o durumda YEKDEM'siz
+    # taslak olarak gösterilir.
+    meta_price_provenance = None
+    if db is not None:
+        from .price_provenance import YEKDEM_MODE_INCLUDED, build_price_provenance
+        meta_price_provenance = build_price_provenance(
+            db,
+            period=invoice_period,
+            ptf=ptf_tl_per_mwh,
+            yekdem=yekdem_tl_per_mwh,
+            yekdem_mode=YEKDEM_MODE_INCLUDED if should_include_yekdem else None,
+            mode_basis="invoice",
+            customer_id=params.customer_id,
+        )
+
     return CalculationResult(
         # Mevcut fatura
         current_energy_tl=round(current_energy_tl, 2),
@@ -648,7 +689,8 @@ def calculate_offer(
         meta_ptf_source_warning=ptf_source_warning,
         meta_pricing_period=invoice_period,
         meta_ptf_tl_per_mwh=round(ptf_tl_per_mwh, 2),
-        meta_yekdem_tl_per_mwh=round(yekdem_tl_per_mwh, 2),
+        meta_yekdem_tl_per_mwh=round(yekdem_for_calc, 2),
+        meta_price_provenance=meta_price_provenance,
         # Total mismatch bilgisi (Sprint 8.3)
         meta_total_mismatch=total_mismatch_info.has_mismatch,
         meta_total_mismatch_info=total_mismatch_info.to_dict() if total_mismatch_info.has_mismatch else None,

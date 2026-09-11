@@ -226,6 +226,7 @@ class TestUpsertHistoryIntegration:
         normalized = NormalizedMarketPriceInput(
             period="2025-01", value=Decimal("2508.80"),
             status="provisional", price_type="PTF",
+            yekdem_value=Decimal("300.00"),  # Faz 1: yeni kayıt YEKDEM ister
         )
 
         result = service.upsert_price(

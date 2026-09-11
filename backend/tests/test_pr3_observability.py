@@ -33,7 +33,47 @@ FORM_DATA = {
     "offer_energy_tl": "400",
     "offer_total": "450",
     "savings_ratio": "0.10",
+
+    # Fiyat Doğruluğu Faz 1: Form varsayılanları (2974.1/364.0) kaldırıldı; fiyat
+    # açıkça verilir ve sunucuda dönemin KESİN kaydıyla doğrulanır (aşağıdaki fikstür).
+    "weighted_ptf_tl_per_mwh": "2500",
+    "yekdem_tl_per_mwh": "300",
+    "invoice_period": "2099-01",
 }
+
+@pytest.fixture(autouse=True)
+def _kesin_fiyat_db():
+    """Fiyat Doğruluğu Faz 1: /generate-pdf-simple fiyatı DB'de doğrular (kullanıcı onayı
+    yolu yok). Bu testler PDF metriklerini ölçer; formdaki fiyat dönemin yetkili KESİN (final) kaydıyla eşleşir
+    (bellek-içi SQLite; canlı/varsayılan DB'ye dokunulmaz)."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from backend.app.database import Base, MarketReferencePrice, get_db
+    from backend.app.pricing import schemas as _saatlik_semasi  # noqa: F401 — saatlik tablo Base.metadata'ya
+
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    Base.metadata.create_all(engine)
+    Oturum = sessionmaker(bind=engine)
+    with Oturum() as s:
+        s.add(MarketReferencePrice(period="2099-01", price_type="PTF", ptf_tl_per_mwh=2500.0,
+                                   yekdem_tl_per_mwh=300.0, source="epias_manual",
+                                   status="final", is_locked=0))
+        s.commit()
+
+    def _oturum():
+        s = Oturum()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = _oturum
+    yield
+    app.dependency_overrides.pop(get_db, None)
+    engine.dispose()
 
 
 @pytest.fixture

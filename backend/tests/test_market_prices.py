@@ -22,11 +22,8 @@ from app.market_prices import (
     MarketPrices,
     get_market_prices,
     get_latest_market_prices,
-    get_market_prices_or_default,
     upsert_market_prices,
     get_all_market_prices,
-    DEFAULT_PTF_TL_PER_MWH,
-    DEFAULT_YEKDEM_TL_PER_MWH,
 )
 
 
@@ -255,32 +252,24 @@ class TestGetMarketPrices:
 
 
 # ---------------------------------------------------------------------------
-# get_market_prices_or_default Tests
+# Fiyat Doğruluğu Faz 1: varsayılan fiyat YOK (eski get_market_prices_or_default)
 # ---------------------------------------------------------------------------
 
-class TestGetMarketPricesOrDefault:
-    """Test get_market_prices_or_default() backward compatibility."""
+class TestVarsayilanFiyatYok:
+    """Kayıt yoksa sabit/varsayılan fiyat üretilmez; None döner."""
 
-    def test_default_has_final_status(self):
-        """Default MarketPrices should have status='final'."""
+    def test_kayit_yoksa_none_doner(self):
         db = _mock_db_session()
         _setup_query_returns(db, None)
 
-        result = get_market_prices_or_default(db, "2099-01")
+        assert get_market_prices(db, "2099-01") is None
 
-        assert result.status == "final"
-        assert result.price_type == "PTF"
-        assert result.source == "default"
-        assert result.ptf_tl_per_mwh == DEFAULT_PTF_TL_PER_MWH
+    def test_varsayilan_sabitler_ve_fonksiyonlar_kaldirildi(self):
+        import app.market_prices as mp
 
-    def test_default_with_custom_price_type(self):
-        """Default should use the requested price_type."""
-        db = _mock_db_session()
-        _setup_query_returns(db, None)
-
-        result = get_market_prices_or_default(db, "2099-01", price_type="SMF")
-
-        assert result.price_type == "SMF"
+        for ad in ("DEFAULT_PTF_TL_PER_MWH", "DEFAULT_YEKDEM_TL_PER_MWH",
+                   "get_market_prices_or_default", "get_market_prices_with_epias_fallback"):
+            assert not hasattr(mp, ad), f"{ad} geri gelmiş"
 
 
 # ---------------------------------------------------------------------------

@@ -1,16 +1,16 @@
 """
 Piyasa Referans Fiyatları Servisi (PTF/YEKDEM)
 
-Veri Kaynakları (öncelik sırasına göre):
-1. DB'deki manuel/cache değerler
-2. EPİAŞ Şeffaflık Platformu API (otomatik çekme)
-3. Default değerler (fallback)
+Veri kaynağı (Fiyat Doğruluğu Faz 1):
+- Yalnız DB'deki kayıtlar (yetkili yönetim ekranı / EPİAŞ uzlaştırma Excel'i).
+- Kayıt yoksa fiyat "bilinmiyor" (None) döner; sabit/varsayılan fiyat YOK.
+- EPİAŞ otomatik çekimi Faz 1'de KAPALI (EPIAS_SYNC_ENABLED); entegrasyon ertelendi.
 
 Kullanım:
-- get_market_prices(period) → PTF/YEKDEM for given period
+- get_market_prices(period) → PTF/YEKDEM for given period (yoksa None)
 - get_latest_market_prices() → En güncel dönem
 - upsert_market_prices(period, ptf, yekdem) → Admin güncelleme
-- fetch_and_cache_from_epias(period) → EPİAŞ'tan çek ve cache'le
+- fetch_and_cache_from_epias(period) → EPİAŞ'tan çek ve cache'le (Faz 1'de uçlardan erişilemez)
 """
 
 import logging
@@ -161,7 +161,7 @@ class MarketPrices:
     period: str  # YYYY-MM
     ptf_tl_per_mwh: float
     yekdem_tl_per_mwh: float
-    source: str  # "db", "default", "override"
+    source: str  # "db" (Faz 1: "default" artık üretilmez; kayıt yoksa None döner)
     is_locked: bool = False
     # Yeni alanlar (backward compatible - default değerlerle)
     status: str = "final"  # provisional | final (null status = final for backward compat)
@@ -173,17 +173,25 @@ class MarketPrices:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# DEFAULT DEĞERLER (DB'de kayıt yoksa kullanılır)
+# VARSAYILAN FİYAT YOK (Fiyat Doğruluğu Faz 1)
 # ═══════════════════════════════════════════════════════════════════════════════
-# Bu değerler sadece fallback - production'da DB'den gelmeli
+# Eski DEFAULT_PTF_TL_PER_MWH=2974.1 / DEFAULT_YEKDEM_TL_PER_MWH=364.0 ("Ocak 2025
+# tahmini") KALDIRILDI: kayıt olmayan dönemde teklife ve PDF'e sessizce giriyordu.
+# Eksik fiyat None olarak taşınır; kesinleştirme kapısı price_provenance.py'dedir.
 
-DEFAULT_PTF_TL_PER_MWH = 2974.1  # Ocak 2025 tahmini ortalama
-DEFAULT_YEKDEM_TL_PER_MWH = 364.0  # Ocak 2025 tahmini
+# EPİAŞ Şeffaflık Platformu senkronu (POST /api/epias/sync/{period},
+# POST /admin/epias/sync-all). Faz 1'de KAPALI — entegrasyon ertelendi (pakette
+# eptr2 yok; istemcideki YEKDEM çağrı anahtarı ve bloklayan bekleme Faz 2 işi).
+EPIAS_SYNC_ENABLED = False
 
 # Guardrail eşikleri
 MIN_PTF_TL_PER_MWH = 500.0  # Çok düşük = muhtemelen hata
 MAX_PTF_TL_PER_MWH = 10000.0  # Çok yüksek = muhtemelen hata
-MIN_YEKDEM_TL_PER_MWH = 0.0  # YEKDEM 0 olabilir (muaf)
+# Alt sınır yalnız negatifliği reddeder (0 geçerli bir değerdir). Fiyat Doğruluğu
+# Faz 1: kayıtlı 0 teklif kapısında YALNIZ yetkili yönetim ekranından açıkça girilip
+# kesinleşmişse (price_change_history açık sıfır satırı, price_provenance) doğrulanır;
+# açık giriş kaydı olmayan eski 0 otomatik gerçek ya da eksik sayılmaz.
+MIN_YEKDEM_TL_PER_MWH = 0.0
 # Owner kararı: 2026 kesinleşen YEKDEM verisi 1000'i asiyor (ör. Mayis 2026 =
 # 1306,10 TL/MWh) - eski 1000 tavani gercek 2026 piyasasini yansitmiyordu,
 # "muhtemelen hata" degil dogrulanmis gercek deger. Tavan 2500'e cikarildi:
@@ -272,36 +280,6 @@ def get_latest_market_prices(db: Session, price_type: str = "PTF") -> Optional[M
         )
     
     return None
-
-
-def get_market_prices_or_default(db: Session, period: str, price_type: str = "PTF") -> MarketPrices:
-    """
-    Dönem için piyasa fiyatlarını getir, yoksa default döndür.
-    
-    Args:
-        db: Database session
-        period: Dönem (YYYY-MM format)
-        price_type: Fiyat tipi (default: "PTF")
-    
-    Returns:
-        MarketPrices (her zaman bir değer döner)
-    """
-    prices = get_market_prices(db, period, price_type=price_type)
-    
-    if prices:
-        return prices
-    
-    # DB'de yok, default kullan
-    logger.warning(f"Dönem {period} için piyasa fiyatı bulunamadı, default kullanılıyor")
-    return MarketPrices(
-        period=period,
-        ptf_tl_per_mwh=DEFAULT_PTF_TL_PER_MWH,
-        yekdem_tl_per_mwh=DEFAULT_YEKDEM_TL_PER_MWH,
-        source="default",
-        is_locked=False,
-        status="final",
-        price_type=price_type,
-    )
 
 
 def upsert_market_prices(
@@ -584,6 +562,11 @@ async def fetch_and_cache_from_epias(
         
         if result.ptf_tl_per_mwh is None:
             return (False, None, f"EPİAŞ'tan PTF verisi alınamadı: {', '.join(result.warnings)}")
+        # Fiyat Doğruluğu Faz 1: YEKDEM alınamadıysa KAYIT YAZILMAZ — eskiden
+        # `yekdem or 0` ile DB'ye kalıcı YEKDEM=0 yazılıyor ve her iki teklif
+        # akışına servis ediliyordu.
+        if result.yekdem_tl_per_mwh is None:
+            return (False, None, f"EPİAŞ'tan YEKDEM verisi alınamadı; kısmi kayıt yazılmadı: {', '.join(result.warnings)}")
         
         # DB'ye kaydet
         source_note = f"Mock data" if use_mock else f"EPİAŞ API ({result.ptf_data_points} data points)"
@@ -591,7 +574,7 @@ async def fetch_and_cache_from_epias(
             db=db,
             period=period,
             ptf_tl_per_mwh=result.ptf_tl_per_mwh,
-            yekdem_tl_per_mwh=result.yekdem_tl_per_mwh or 0,
+            yekdem_tl_per_mwh=result.yekdem_tl_per_mwh,
             source_note=source_note,
             updated_by="epias_sync" if not use_mock else "mock_sync",
             source="epias_api",
@@ -604,7 +587,7 @@ async def fetch_and_cache_from_epias(
         prices = MarketPrices(
             period=period,
             ptf_tl_per_mwh=result.ptf_tl_per_mwh,
-            yekdem_tl_per_mwh=result.yekdem_tl_per_mwh or 0,
+            yekdem_tl_per_mwh=result.yekdem_tl_per_mwh,
             source="mock" if use_mock else "epias",
             is_locked=False
         )
@@ -621,67 +604,10 @@ async def fetch_and_cache_from_epias(
         return (False, None, f"EPİAŞ API hatası: {str(e)}")
 
 
-def get_market_prices_with_epias_fallback(
-    db: Session,
-    period: str,
-    auto_fetch: bool = True
-) -> Tuple[MarketPrices, str]:
-    """
-    Piyasa fiyatlarını al - DB yoksa EPİAŞ'tan çek.
-    
-    Öncelik sırası:
-    1. DB'deki kayıt
-    2. EPİAŞ API (auto_fetch=True ise)
-    3. Default değerler
-    
-    Args:
-        db: Database session
-        period: Dönem (YYYY-MM)
-        auto_fetch: EPİAŞ'tan otomatik çek
-    
-    Returns:
-        (market_prices, source_description)
-    """
-    # 1. DB'de ara
-    prices = get_market_prices(db, period)
-    if prices:
-        return (prices, f"DB ({prices.source})")
-    
-    # 2. EPİAŞ'tan çek (sync wrapper - thread ile async çakışmasını önle)
-    if auto_fetch:
-        try:
-            import concurrent.futures
-            
-            def _run_in_new_loop():
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    return loop.run_until_complete(
-                        fetch_and_cache_from_epias(db, period)
-                    )
-                finally:
-                    loop.close()
-            
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(_run_in_new_loop)
-                success, epias_prices, msg = future.result(timeout=30)
-                if success and epias_prices:
-                    return (epias_prices, f"EPİAŞ API: {msg}")
-        except Exception as e:
-            logger.warning(f"EPİAŞ auto-fetch başarısız: {e}")
-    
-    # 3. Default
-    logger.warning(f"Dönem {period} için piyasa fiyatı bulunamadı, default kullanılıyor")
-    return (
-        MarketPrices(
-            period=period,
-            ptf_tl_per_mwh=DEFAULT_PTF_TL_PER_MWH,
-            yekdem_tl_per_mwh=DEFAULT_YEKDEM_TL_PER_MWH,
-            source="default",
-            is_locked=False
-        ),
-        "Default (EPİAŞ ve DB'de bulunamadı)"
-    )
+# Fiyat Doğruluğu Faz 1: get_market_prices_with_epias_fallback() KALDIRILDI —
+# DB'de kayıt yoksa EPİAŞ'ı (olay döngüsünü bloklayarak) deniyor, o da olmazsa
+# 2974.1/364.0 varsayılanını döndürüyordu. Tek çağıranı olan
+# GET /api/epias/prices artık get_market_prices() + price_provenance kullanır.
 
 
 async def sync_multiple_periods_from_epias(

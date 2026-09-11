@@ -27,6 +27,8 @@ export const ERROR_CODE_MAP: Record<string, { message: string; field?: string }>
   BATCH_VALIDATION_FAILED: { message: 'Toplu doğrulama başarısız' },
   EMPTY_FILE: { message: 'Dosya boş' },
   CHANGE_REASON_REQUIRED: { message: 'Değişiklik nedeni zorunlu', field: 'change_reason' },
+  // Fiyat Doğruluğu Faz 1: yeni dönem kaydı YEKDEM'siz oluşturulamaz (eksik YEKDEM 0 olarak saklanmaz).
+  YEKDEM_REQUIRED: { message: 'Yeni dönem için YEKDEM birim bedeli zorunlu', field: 'yekdem_value' },
 };
 
 // ---------------------------------------------------------------------------

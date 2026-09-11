@@ -276,7 +276,7 @@ class TestPreview:
         return record
 
     def test_all_new_records(self, importer, mock_db):
-        """All rows are new records."""
+        """All rows are new PTF periods → Faz 1: YEKDEM'siz yeni dönem satır hatasıdır."""
         rows = [
             self._make_valid_row(1, "2025-01", 2508.80, "final"),
             self._make_valid_row(2, "2025-02", 2478.28, "final"),
@@ -286,13 +286,16 @@ class TestPreview:
 
         preview = importer.preview(mock_db, rows)
 
+        # Fiyat Doğruluğu Faz 1: toplu içe aktarma yalnız PTF taşır; kaydı olmayan PTF
+        # dönemi YEKDEM'siz oluşturulamaz → "yeni kayıt" SAYILMAZ, satır hatasıdır.
         assert preview.total_rows == 2
-        assert preview.valid_rows == 2
-        assert preview.invalid_rows == 0
-        assert preview.new_records == 2
+        assert preview.valid_rows == 0
+        assert preview.invalid_rows == 2
+        assert preview.new_records == 0
         assert preview.updates == 0
         assert preview.unchanged == 0
         assert preview.final_conflicts == 0
+        assert [e["error_code"] for e in preview.errors] == ["YEKDEM_REQUIRED", "YEKDEM_REQUIRED"]
 
     def test_unchanged_records(self, importer, mock_db):
         """Records with same value and status are unchanged."""
@@ -357,14 +360,17 @@ class TestPreview:
             self._make_valid_row(1, "2025-01", 2508.80, "final"),
             self._make_invalid_row(2, "invalid", 0.0, "final"),
         ]
-        mock_db.query.return_value.filter.return_value.first.return_value = None
+        # Fiyat Doğruluğu Faz 1: geçerli satır mevcut bir dönemi günceller (yeni PTF
+        # dönemi YEKDEM'siz oluşturulamadığı için "yeni kayıt" sayılmazdı).
+        mock_db.query.return_value.filter.return_value.first.return_value = (
+            self._make_existing_record("2025-01", 2400.00, "provisional"))
 
         preview = importer.preview(mock_db, rows)
 
         assert preview.total_rows == 2
         assert preview.valid_rows == 1
         assert preview.invalid_rows == 1
-        assert preview.new_records == 1
+        assert preview.updates == 1 and preview.new_records == 0
 
     def test_status_downgrade_conflict(self, importer, mock_db):
         """Downgrade from final to provisional is a conflict."""

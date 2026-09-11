@@ -101,6 +101,21 @@ def client(db, storage_tmp):
     fastapi_app.dependency_overrides.clear()
 
 
+def _dogrulanmis_fiyat(db, ptf=2500.0, yekdem=50.0):
+    """Fiyat Doğruluğu Faz 1: PDF yalnız sunucuda doğrulanmış (güvenilir + KESİN)
+    fiyat snapshot'ından üretilir. Dönemin kesin kaydı test DB'sine yazılır ve
+    provenance GERÇEK fonksiyonla hesaplanır (elle uydurulmaz; onay yolu yok)."""
+    from app.database import MarketReferencePrice
+    from app.price_provenance import build_price_provenance
+    if db.query(MarketReferencePrice).filter_by(period="2026-01", price_type="PTF").first() is None:
+        db.add(MarketReferencePrice(period="2026-01", price_type="PTF", ptf_tl_per_mwh=ptf,
+                                    yekdem_tl_per_mwh=yekdem, source="epias_manual",
+                                    status="final", is_locked=0))
+        db.commit()
+    return build_price_provenance(db, period="2026-01", ptf=ptf, yekdem=yekdem,
+                                  yekdem_mode="included")
+
+
 def _teklif(db):
     from app.database import Offer
 
@@ -119,7 +134,7 @@ def _teklif(db):
         savings_amount=192.0,
         savings_ratio=0.0667,
         extraction_result={"meta": {}},
-        calculation_result=dict(HESAP_SONUCU),
+        calculation_result=dict(HESAP_SONUCU, meta_price_provenance=_dogrulanmis_fiyat(db)),
     )
     db.add(o)
     db.flush()
@@ -636,11 +651,14 @@ class TestGoogleFontsStatikTarama:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestGeneratePdfDirectSanitize:
-    def test_hata_yolunda_ic_detay_sizmaz(self, client):
+    def test_hata_yolunda_ic_detay_sizmaz(self, client, db):
         from unittest.mock import patch
 
+        # Fiyat Doğruluğu Faz 1: fiyat kapısı DB'de doğrular; dönemin kesin kaydı yazılır
+        # ki hata yolu (üretici istisnası → sanitize 500) sınanabilsin.
+        _dogrulanmis_fiyat(db, ptf=100.0, yekdem=10.0)
         gecersiz_govde = {
-            "extraction": {"meta": {}},
+            "extraction": {"meta": {}, "invoice_period": "2026-01"},
             "calculation": dict(HESAP_SONUCU),
             "params": {
                 "weighted_ptf_tl_per_mwh": 100.0,

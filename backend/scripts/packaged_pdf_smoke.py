@@ -140,6 +140,9 @@ def main() -> int:
         "DATABASE_URL": f"sqlite:///{db_yolu.as_posix()}",
         "STORAGE_DIR": str(storage),
         "API_KEY_ENABLED": "false",
+        # Fiyat Doğruluğu Faz 1: sentetik kesin dönem fiyatı yetkili yönetim ucundan
+        # yazılır; disposable koşuda yönetim anahtarı belirleyici olarak kapalıdır.
+        "ADMIN_API_KEY_ENABLED": "false",
     }
     ortam.pop("OPENAI_API_KEY", None)  # dış AI çağrısı imkânsız olsun
 
@@ -194,6 +197,14 @@ def main() -> int:
             "difference_excl_vat_tl": 20200.0, "difference_incl_vat_tl": 24240.0,
             "savings_ratio": 0.0715, "unit_price_savings_ratio": 0.08,
         }
+        # Fiyat Doğruluğu Faz 1: teklif fiyatı sunucuda dönemin güvenilir + KESİN (final)
+        # kaydıyla doğrulanır (kullanıcı onayı yolu yok). Sentetik dönemin kesin fiyatı
+        # disposable DB'ye YETKİLİ yönetim ucundan yazılır (production'a dokunulmaz).
+        durum, g = _http("POST", "/admin/market-prices", veri={
+            "period": "2026-07", "value": 2974.1, "yekdem_value": 364.0,
+            "status": "final", "source_note": "packaged smoke sentetik",
+        })
+        _kontrol(durum == 200, f"sentetik kesin donem fiyati yazildi ({durum}): {g[:200]!r}")
         durum, g = _http(
             "POST",
             f"/offers?customer_id={musteri_id}&invoice_total_raw=339000",

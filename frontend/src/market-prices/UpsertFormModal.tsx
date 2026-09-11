@@ -30,6 +30,9 @@ function getInitialFormState(record?: MarketPriceRecord): UpsertFormState {
     return {
       period: record.period,
       value: String(record.ptf_tl_per_mwh),
+      // Faz 1: kayıtlı 0 önceden DOLDURULMAZ (boş = mevcut korunur): eski/anlamı bilinmeyen
+      // sıfır farkında olmadan "açık sıfır" olarak teyit edilmesin; gerçek 0 açıkça yazılır.
+      yekdemValue: record.yekdem_tl_per_mwh > 0 ? String(record.yekdem_tl_per_mwh) : '',
       status: record.status,
       changeReason: '',
       sourceNote: record.source_note ?? '',
@@ -39,6 +42,7 @@ function getInitialFormState(record?: MarketPriceRecord): UpsertFormState {
   return {
     period: '',
     value: '',
+    yekdemValue: '',
     status: 'provisional',
     changeReason: '',
     sourceNote: '',
@@ -148,6 +152,23 @@ export const UpsertFormModal: React.FC<UpsertFormModalProps> = ({
         return;
       }
 
+      // Fiyat Doğruluğu Faz 1 (K3): YEKDEM bu yetkili ekrandan girilir. Yeni dönemde
+      // ZORUNLU (girilmeyen YEKDEM tekliflerde "bilinmiyor" kalır); güncellemede boş =
+      // mevcut YEKDEM korunur. Gerçek 0 kabul edilir: sunucu açıkça girilen 0'ı ayrı bir
+      // geçmiş satırıyla kaydeder (eski/anlamı bilinmeyen sıfırdan ayrılır). Negatif olmaz.
+      const yekdemMetin = form.yekdemValue.trim();
+      const yekdemSayi = yekdemMetin === '' ? undefined : parseValueForApi(yekdemMetin);
+      if (!editingRecord && yekdemSayi === undefined) {
+        setShowConfirmation(false);
+        setClientErrors({ yekdem_value: 'YEKDEM zorunlu (TL/MWh)' });
+        return;
+      }
+      if (yekdemSayi !== undefined && !(Number.isFinite(yekdemSayi) && yekdemSayi >= 0)) {
+        setShowConfirmation(false);
+        setClientErrors({ yekdem_value: 'YEKDEM 0 ya da pozitif bir sayı olmalı' });
+        return;
+      }
+
       // If force_update is checked and confirmation not yet shown, show it
       if (form.forceUpdate && !showConfirmation) {
         setShowConfirmation(true);
@@ -163,6 +184,7 @@ export const UpsertFormModal: React.FC<UpsertFormModalProps> = ({
         source_note: form.sourceNote || undefined,
         change_reason: form.changeReason || undefined,
         force_update: form.forceUpdate,
+        ...(yekdemSayi !== undefined ? { yekdem_value: yekdemSayi } : {}),
       };
 
       try {
@@ -196,14 +218,17 @@ export const UpsertFormModal: React.FC<UpsertFormModalProps> = ({
 
         // Extract error_code to decide field vs global toast routing
         let errorCode = '';
+        let errorField = '';
         if (err && typeof err === 'object' && 'response' in err) {
           const axiosErr = err as { response?: { data?: ApiErrorResponse } };
           errorCode = axiosErr.response?.data?.error_code ?? '';
+          errorField = axiosErr.response?.data?.field ?? '';
         }
 
         // If error has no field mapping in ERROR_CODE_MAP, show global toast
+        // (Faz 1: YEKDEM alan hataları satır içinde gösterilir — bkz. parseFieldErrors)
         const mapping = errorCode ? ERROR_CODE_MAP[errorCode] : undefined;
-        if (!mapping?.field) {
+        if (!mapping?.field && errorField !== 'yekdem_value') {
           const message = mapping?.message ?? 'Bir hata oluştu';
           onToast({
             id: makeToastId(),
@@ -215,7 +240,7 @@ export const UpsertFormModal: React.FC<UpsertFormModalProps> = ({
         // Field-mapped errors are already set by the hook's fieldErrors state
       }
     },
-    [form, loading, showConfirmation, submit, onClose, onToast, onSuccess],
+    [form, loading, showConfirmation, submit, onClose, onToast, onSuccess, editingRecord],
   );
 
   if (!open) return null;
@@ -340,6 +365,40 @@ export const UpsertFormModal: React.FC<UpsertFormModalProps> = ({
             )}
           </div>
 
+          {/* YEKDEM — Fiyat Doğruluğu Faz 1 (K3) */}
+          <div className="mb-4">
+            <label
+              htmlFor="upsert-yekdem"
+              className="mb-1 block text-sm font-medium text-gray-700"
+            >
+              YEKDEM Birim Bedeli (TL/MWh)
+            </label>
+            <input
+              id="upsert-yekdem"
+              type="text"
+              inputMode="decimal"
+              value={form.yekdemValue}
+              onChange={(e) => updateField('yekdemValue', e.target.value)}
+              placeholder={isEditing ? 'boş = mevcut YEKDEM korunur' : 'örn. 486.31'}
+              className={`w-full rounded-md border px-3 py-2 text-sm ${
+                allFieldErrors.yekdem_value
+                  ? 'border-red-500'
+                  : 'border-gray-300'
+              }`}
+            />
+            {allFieldErrors.yekdem_value && (
+              <p className="mt-1 text-xs text-red-600" data-testid="error-yekdem_value">
+                {allFieldErrors.yekdem_value}
+              </p>
+            )}
+            {isEditing && editingRecord?.yekdem_tl_per_mwh === 0 && (
+              <p className="mt-1 text-xs text-amber-700" data-testid="yekdem-zero-hint">
+                Kayıtlı YEKDEM 0. Gerçek sıfırsa alana açıkça 0 yazın (açık sıfır kaydı); boş
+                bırakılırsa değer korunur ama kesin teklif için teyitli sayılmaz.
+              </p>
+            )}
+          </div>
+
           {/* Status */}
           <div className="mb-4">
             <label
@@ -371,6 +430,11 @@ export const UpsertFormModal: React.FC<UpsertFormModalProps> = ({
                 {allFieldErrors.status}
               </p>
             )}
+            {/* Fiyat Doğruluğu Faz 1 (owner teyidi): durum teklif kapısını belirler. */}
+            <p className="mt-1 text-xs text-gray-500" data-testid="status-hint">
+              Yalnız "{STATUS_LABELS.final}" kayıtlar kesin teklif ve PDF'te kullanılır;
+              "{STATUS_LABELS.provisional}" kayıtlar yalnız taslak hesapta kullanılır.
+            </p>
           </div>
 
           {/* Change Reason */}

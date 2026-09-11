@@ -17,6 +17,7 @@ Property Definition:
 """
 
 import pytest
+from dataclasses import replace
 from decimal import Decimal
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
@@ -96,6 +97,7 @@ class TestProperty14AuditTrailInsert:
     )
     def test_insert_sets_updated_by(self, normalized, updated_by, source, change_reason):
         """Requirement 1.7, 2.7: updated_by SHALL be set and non-empty on insert."""
+        normalized = replace(normalized, yekdem_value=Decimal("300.00"))  # Faz 1: yeni kayıt YEKDEM ister
         service = MarketPriceAdminService()
         mock_db = MagicMock()
         mock_db.query.return_value.filter.return_value.first.return_value = None
@@ -118,6 +120,7 @@ class TestProperty14AuditTrailInsert:
     )
     def test_insert_sets_updated_at_to_current_utc(self, normalized, updated_by, source, change_reason):
         """Requirement 4.4: updated_at SHALL be set to current UTC time on insert."""
+        normalized = replace(normalized, yekdem_value=Decimal("300.00"))  # Faz 1: yeni kayıt YEKDEM ister
         service = MarketPriceAdminService()
         mock_db = MagicMock()
         mock_db.query.return_value.filter.return_value.first.return_value = None
@@ -141,6 +144,7 @@ class TestProperty14AuditTrailInsert:
     )
     def test_insert_stores_change_reason_when_provided(self, normalized, updated_by, source, change_reason):
         """Requirement 1.8: If change_reason is provided, it SHALL be stored on insert."""
+        normalized = replace(normalized, yekdem_value=Decimal("300.00"))  # Faz 1: yeni kayıt YEKDEM ister
         service = MarketPriceAdminService()
         mock_db = MagicMock()
         mock_db.query.return_value.filter.return_value.first.return_value = None

@@ -30,6 +30,28 @@ from fastapi.testclient import TestClient
 FAKE_PDF_BYTES = b"%PDF-1.4 fake pdf content padding to exceed 10 bytes minimum"
 
 
+def _kesin_fiyat_oturumu():
+    """Fiyat Doğruluğu Faz 1: /generate-pdf-simple fiyatı DB'de doğrular (kullanıcı
+    onayı yolu yok). Bu testler PDF sözleşmesini ölçer; formdaki fiyat dönemin yetkili
+    KESİN (final) kaydıyla eşleşir (bellek-içi SQLite; varsayılan DB'ye dokunulmaz)."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from app.database import Base, MarketReferencePrice
+    from app.pricing import schemas as _saatlik_semasi  # noqa: F401 — saatlik tablo Base.metadata'ya
+
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    Base.metadata.create_all(engine)
+    s = sessionmaker(bind=engine)()
+    s.add(MarketReferencePrice(period="2099-01", price_type="PTF", ptf_tl_per_mwh=2500.0,
+                               yekdem_tl_per_mwh=300.0, source="epias_manual",
+                               status="final", is_locked=0))
+    s.commit()
+    return s
+
+
 @pytest.fixture()
 def client():
     """
@@ -45,7 +67,7 @@ def client():
         from app.main import app as fastapi_app
         from app.database import get_db
 
-        mock_db = MagicMock()
+        mock_db = _kesin_fiyat_oturumu()
         fastapi_app.dependency_overrides[get_db] = lambda: mock_db
 
         with patch(
@@ -65,6 +87,12 @@ def _pdf_form_data() -> dict:
         "offer_energy_tl": "400",
         "offer_total": "450",
         "savings_ratio": "0.10",
+        # Fiyat Doğruluğu Faz 1: Form varsayılanları (2974.1/364.0) kaldırıldı; fiyat
+        # açıkça verilir ve sunucuda dönemin KESİN kaydıyla doğrulanır (bkz.
+        # _kesin_fiyat_oturumu; kullanıcı onayı yolu yok).
+        "weighted_ptf_tl_per_mwh": "2500",
+        "yekdem_tl_per_mwh": "300",
+        "invoice_period": "2099-01",
     }
 
 
@@ -117,10 +145,23 @@ class TestBackendContract:
         """
         `invoice_period` uzerinden CR/LF enjekte edilemez: sanitize yalnizca
         [A-Za-z0-9_-] birakir, bu yuzden basliga yeni satir/ek alan sizamaz.
+
+        Fiyat Doğruluğu Faz 1: fiyat kapısı dönemi YYYY-MM olarak doğrular; ortasına
+        başlık enjekte edilmiş dönem PDF'e HİÇ ulaşmaz (422 JSON, başlık sızmaz).
+        Sondaki CR/LF kırpılınca geçerli olan dönem kapıdan geçer ve başlık kodu ham
+        değeri sanitize eder (aşağıdaki özgün sözleşme).
         """
         kotu = "2026-01" + chr(13) + chr(10) + "X-Injected: evil" + chr(13) + chr(10) + "Set-Cookie: a=b"
         veri = _pdf_form_data()
         veri["invoice_period"] = kotu
+        resp = client.post("/generate-pdf-simple", data=veri)
+        assert resp.status_code == 422
+        assert resp.json()["error"]["code"] == "price_unverified"
+        assert "x-injected" not in {k.lower() for k in resp.headers}
+        assert "set-cookie" not in {k.lower() for k in resp.headers}
+
+        veri["invoice_period"] = veri_donemi = "2099-01" + chr(13) + chr(10)
+        assert chr(13) in veri_donemi
         resp = client.post("/generate-pdf-simple", data=veri)
         assert resp.status_code == 200
         cd = resp.headers["content-disposition"]
@@ -196,7 +237,7 @@ class TestBackendContract:
             from app.main import app as fastapi_app
             from app.database import get_db
 
-            mock_db = MagicMock()
+            mock_db = _kesin_fiyat_oturumu()
             fastapi_app.dependency_overrides[get_db] = lambda: mock_db
 
             with patch("app.main.generate_offer_pdf_bytes", return_value=b""):
@@ -222,7 +263,7 @@ class TestBackendContract:
             from app.main import app as fastapi_app
             from app.database import get_db
 
-            mock_db = MagicMock()
+            mock_db = _kesin_fiyat_oturumu()
             fastapi_app.dependency_overrides[get_db] = lambda: mock_db
 
             with patch(
@@ -251,7 +292,7 @@ class TestBackendContract:
             from app.main import app as fastapi_app
             from app.database import get_db
 
-            mock_db = MagicMock()
+            mock_db = _kesin_fiyat_oturumu()
             fastapi_app.dependency_overrides[get_db] = lambda: mock_db
 
             # Test both empty_pdf and internal_error
@@ -313,7 +354,7 @@ class TestConcurrencyBackpressure:
                 import app.main as main_mod
                 main_mod._pdf_semaphore = asyncio.Semaphore(_PDF_MAX_CONCURRENT)
 
-                mock_db = MagicMock()
+                mock_db = _kesin_fiyat_oturumu()
                 fastapi_app.dependency_overrides[get_db] = lambda: mock_db
 
                 def slow_pdf(*args, **kwargs):
@@ -393,7 +434,7 @@ class TestThreadDeterminism:
             from app.main import app as fastapi_app
             from app.database import get_db
 
-            mock_db = MagicMock()
+            mock_db = _kesin_fiyat_oturumu()
             fastapi_app.dependency_overrides[get_db] = lambda: mock_db
 
             def spy_pdf(*args, **kwargs):
@@ -433,7 +474,7 @@ class TestThreadDeterminism:
                 # Reset semaphore for clean state
                 main_mod._pdf_semaphore = asyncio.Semaphore(_PDF_MAX_CONCURRENT)
 
-                mock_db = MagicMock()
+                mock_db = _kesin_fiyat_oturumu()
                 fastapi_app.dependency_overrides[get_db] = lambda: mock_db
 
                 def counting_pdf(*args, **kwargs):
@@ -486,7 +527,7 @@ class TestElectronErrorParsing:
             from app.main import app as fastapi_app
             from app.database import get_db
 
-            mock_db = MagicMock()
+            mock_db = _kesin_fiyat_oturumu()
             fastapi_app.dependency_overrides[get_db] = lambda: mock_db
 
             if isinstance(side_effect, bytes):
@@ -545,7 +586,7 @@ class TestElectronErrorParsing:
                 # Reset semaphore
                 main_mod._pdf_semaphore = asyncio.Semaphore(_PDF_MAX_CONCURRENT)
 
-                mock_db = MagicMock()
+                mock_db = _kesin_fiyat_oturumu()
                 fastapi_app.dependency_overrides[get_db] = lambda: mock_db
 
                 def slow_pdf(*args, **kwargs):

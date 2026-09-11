@@ -44,6 +44,8 @@ export interface UpsertMarketPriceRequest {
   source_note?: string;
   change_reason?: string;
   force_update: boolean;
+  /** Fiyat Doğruluğu Faz 1 (K3): YEKDEM birim bedeli (TL/MWh). Verilmezse sunucu mevcut YEKDEM'e dokunmaz. */
+  yekdem_value?: number;
 }
 
 /** Success response from POST /admin/market-prices */
@@ -149,6 +151,7 @@ export interface ToastMessage {
 export interface UpsertFormState {
   period: string;
   value: string;          // String for input control, parsed to number on submit
+  yekdemValue: string;    // Faz 1 (K3): YEKDEM (TL/MWh); yeni dönemde zorunlu, güncellemede boş = koru
   status: 'provisional' | 'final';
   changeReason: string;
   sourceNote: string;

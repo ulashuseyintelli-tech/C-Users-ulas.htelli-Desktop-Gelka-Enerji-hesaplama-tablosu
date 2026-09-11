@@ -1,6 +1,10 @@
 ﻿import { useState, useCallback, useMemo, useEffect } from 'react';
 import { Upload, FileText, Zap, TrendingDown, AlertCircle, CheckCircle, Loader2, RefreshCw, Download, Settings, FileSignature, Users, Database } from 'lucide-react';
-import { fullProcess, generateOfferPdf, downloadOfferPdf, FullProcessResponse, pricingAnalyze, pricingGetTemplates, pricingGetPeriods, pricingDownloadPdf, pricingDownloadExcel, PricingAnalyzeResponse, normalizeInvoicePeriod, API_BASE, TemplateItem, getVersion, VersionInfo, PdfMismatchError, PdfMismatchContract, createOffer, createCustomer, OfferCalculationPayload } from './api';
+import { fullProcess, generateOfferPdf, downloadOfferPdf, FullProcessResponse, pricingAnalyze, pricingGetTemplates, pricingGetPeriods, pricingDownloadPdf, pricingDownloadExcel, PricingAnalyzeResponse, normalizeInvoicePeriod, API_BASE, TemplateItem, getVersion, VersionInfo, PdfMismatchError, PdfMismatchContract, createOffer, createCustomer, OfferCalculationPayload, adminApi } from './api';
+import { evaluatePriceReadiness, priceSourceLabel, type PriceProvenance, type YekdemMode } from './pricing/priceReadiness';
+import { PriceDraftBanner } from './pricing/PriceDraftBanner';
+import { YekdemModeSelector } from './pricing/YekdemModeSelector';
+import { usePeriodPriceFetch } from './pricing/usePeriodPriceFetch';
 import { ContractWizardModal } from './contracts/ContractWizardModal';
 import AdminPanel from './AdminPanel';
 import ReconPage from './recon/ReconPage';
@@ -224,8 +228,17 @@ function App() {
   const [contractWizardOpen, setContractWizardOpen] = useState(false);
   
   // Teklif parametreleri
-  const [ptfPrice, setPtfPrice] = useState(2974.1);
-  const [yekdemPrice, setYekdemPrice] = useState(364.0);
+  // Fiyat Doğruluğu Faz 1: SABİT BAŞLANGIÇ FİYATI YOK (eski 2974.1 / 364.0 "Ocak 2025
+  // tahmini" kaldırıldı). null = bilinmiyor; 0 = gerçek sıfır (ayrı tutulur).
+  const [ptfPrice, setPtfPrice] = useState<number | null>(null);
+  const [yekdemPrice, setYekdemPrice] = useState<number | null>(null);
+  // Sunucunun ekrandaki fiyat için döndürdüğü kaynak/durum (GET /api/epias/prices ya da
+  // AI hesabının meta_price_provenance'ı) ve YEKDEM uygulamasının açık seçimi.
+  // Owner teyidi: kullanıcı onayı kapıyı AÇMAZ; fiyat sunucuda doğrulanır.
+  const [priceProvenance, setPriceProvenance] = useState<PriceProvenance | null>(null);
+  // dahil / hariç; null = seçilmedi (AI: faturada YEKDEM kalemi yoksa kullanıcı seçer)
+  const [yekdemMode, setYekdemMode] = useState<YekdemMode | null>('included');
+  const [priceRefreshKey, setPriceRefreshKey] = useState(0);   // kayıt sonrası kaynağı yeniden oku
   const [multiplier, setMultiplier] = useState(1.01);
   // SoT-X Seviye 1: profil-ağırlıklı PTF (manuel akış)
   //
@@ -379,9 +392,11 @@ function App() {
       const kwh = manualValues.consumption_kwh;
       const distUnitPrice = getDistributionUnitPrice() || (manualValues.current_distribution_tl / kwh);
       
-      const ptfKwh = ptfPrice / 1000;
-      const yekdemKwh = yekdemPrice / 1000;
-      
+      // Faz 1: bilinmeyen fiyat hesapta 0 görünür ama kesinleştirme kapısı
+      // (priceReadiness) PDF'i ve kaydı engeller; sabit değer KULLANILMAZ.
+      const ptfKwh = (ptfPrice ?? 0) / 1000;
+      const yekdemKwh = (yekdemPrice ?? 0) / 1000;
+
       // Mevcut fatura değerleri: Mevcut tedarikçinin birim fiyatı × kWh
       // current_unit_price = tedarikçinin uyguladığı birim aktif enerji fiyatı (TL/kWh)
       // Bu, EPİAŞ PTF'den farklıdır — tedarikçi kendi marjını, risk primini vs. ekler
@@ -395,8 +410,9 @@ function App() {
       const current_vat_tl = current_vat_matrah_tl * vatRate;
       const current_total_with_vat_tl = current_vat_matrah_tl + current_vat_tl;
       
-      // YEKDEM dahil et (manuel modda her zaman dahil)
-      const includeYekdem = yekdemPrice > 0;
+      // Faz 1: YEKDEM uygulaması AÇIK seçimdir (dahil / hariç). Eskiden
+      // `yekdemPrice > 0` idi: bilinmeyen YEKDEM, gerçek 0 ve "hariç" birbirine karışıyordu.
+      const includeYekdem = yekdemMode === 'included';
       const offerBasePrice = includeYekdem ? (ptfKwh + yekdemKwh) : ptfKwh;
       
       // Teklif hesaplama
@@ -478,9 +494,9 @@ function App() {
     const kwh = result.extraction.consumption_kwh?.value || 0;
     const distUnitPrice = getDistributionUnitPrice();
     
-    const ptfKwh = ptfPrice / 1000;
-    const yekdemKwh = yekdemPrice / 1000;
-    
+    const ptfKwh = (ptfPrice ?? 0) / 1000;
+    const yekdemKwh = (yekdemPrice ?? 0) / 1000;
+
     // Mevcut fatura değerleri: Backend'den gelen enerji ve dağıtım
     const current_energy_tl = backendCalc?.current_energy_tl || 0;
     const backendDistUnitPrice = result.extraction.distribution_unit_price_tl_per_kwh?.value || 0;
@@ -494,9 +510,10 @@ function App() {
     // Faturadan okunan toplam (SOURCE OF TRUTH) - backend hesaplamasını kullan
     const current_total_with_vat_tl = backendCalc?.current_total_with_vat_tl ?? (current_vat_matrah_tl + current_vat_tl);
     
-    // YEKDEM: Backend'in kararını kullan (faturada YEKDEM varsa dahil et, yoksa etme)
-    // meta_include_yekdem_in_offer backend tarafından faturaya göre belirleniyor
-    const includeYekdem = backendCalc?.meta_include_yekdem_in_offer || false;
+    // Fiyat Doğruluğu Faz 1: YEKDEM uygulaması AÇIK seçimdir (dahil / hariç).
+    // Faturada YEKDEM kalemi varsa seçim 'dahil' gelir; yoksa boş gelir ve kullanıcı
+    // seçer ("hariç" tahmin edilmez). Seçim yokken hesap YEKDEM'siz taslak gösterilir.
+    const includeYekdem = yekdemMode === 'included';
     
     // Teklif fatura: Parametrelere göre frontend'de hesapla
     // YEKDEM sadece faturada varsa dahil edilir
@@ -572,7 +589,35 @@ function App() {
       gross_margin_total_tl: gross_margin_total,
       net_margin_tl: net_margin,
     };
-  }, [result?.extraction, result?.calculation, ptfPrice, yekdemPrice, multiplier, getDistributionUnitPrice, manualMode, manualValues, btvRate, vatRate, bayiEnabled, bayiOzelOnayPuan]);
+  }, [result?.extraction, result?.calculation, ptfPrice, yekdemPrice, yekdemMode, multiplier, getDistributionUnitPrice, manualMode, manualValues, btvRate, vatRate, bayiEnabled, bayiOzelOnayPuan]);
+
+  // Fiyat Doğruluğu Faz 1: teklif kesinleştirme hazırlığı — sunucu kapısının istemci
+  // yansıması (esas kapı POST /offers ve PDF uçlarındadır). Kullanıcı onayı YOKTUR:
+  // provisional ya da doğrulanmamış fiyatla hesap yalnız TASLAK olarak gösterilir.
+  const yekdemIncluded = yekdemMode === 'included';
+  const priceReadiness = evaluatePriceReadiness({
+    ptf: ptfPrice,
+    yekdem: yekdemPrice,
+    yekdemMode,
+    provenance: priceProvenance,
+    valuesEditedByUser: priceModified,
+  });
+
+  // Faz 1: elle değiştirilen fiyatı kayıtlı dönem fiyatına döndürür (sunucu doğrulaması
+  // yeniden geçerli olur). Manuelde dönem fiyatı DB'den yeniden okunur; AI'da analizin
+  // sunucu provenance'ındaki değerlere dönülür.
+  const restorePeriodPrices = () => {
+    if (manualMode) {
+      setPriceRefreshKey((k) => k + 1);
+      return;
+    }
+    const ptfKayitli = priceProvenance?.ptf?.value;
+    setPtfPrice(typeof ptfKayitli === 'number' && ptfKayitli > 0 ? ptfKayitli : null);
+    const y = priceProvenance?.yekdem;
+    const yekdemKayitli = y?.mode === 'included' ? y.value : y?.period_value;
+    setYekdemPrice(typeof yekdemKayitli === 'number' ? yekdemKayitli : null);
+    setPriceModified(false);
+  };
 
   // ── Risk Buffer hesaplama — türetilen değerler (state değil) ──
   const selectedTemplate = useMemo(
@@ -702,57 +747,39 @@ function App() {
       .catch(() => setConsumptionProfiles([]));  // fail-safe: liste alınamazsa boş
   }, []);
 
-  // Dönem değiştiğinde PTF/YEKDEM fiyatlarını otomatik çek
-  useEffect(() => {
-    // Sadece manuel modda ve dönem seçilmişse çalış
-    if (!manualMode || !manualValues.invoice_period) return;
-    
-    // Dönem zaten YYYY-MM formatında (dropdown'dan geliyor)
-    const period = manualValues.invoice_period;
-    
-    const fetchPrices = async () => {
+  // Dönem değiştiğinde PTF/YEKDEM fiyatlarını çek — YALNIZ DB (Faz 1'de EPİAŞ otomatik
+  // çekimi kapalı; auto_fetch gönderilmez). Yarış korumalı: gecikmiş yanıt yeni dönemi
+  // ezmez; dönem değişince ve hata olursa önceki dönemin fiyatı ekranda KALMAZ.
+  usePeriodPriceFetch({
+    enabled: manualMode && !!manualValues.invoice_period,
+    period: manualValues.invoice_period,
+    profile: ptfProfile,
+    tariffGroup: manualValues.tariff_group || undefined,
+    customerId: selectedCustomerId || undefined,
+    refreshKey: priceRefreshKey,
+    onStart: () => {
       setPriceLoading(true);
       setPriceError(null);
-      
-      try {
-        // DB'den PTF/YEKDEM fiyatlarını çek (auto_fetch=true ile EPİAŞ fallback aktif)
-        // SoT-X: profil-ağırlıklı PTF için profile + tariff_group gönder.
-        const qs = new URLSearchParams({ auto_fetch: 'true', profile: ptfProfile });
-        if (manualValues.tariff_group) qs.append('tariff_group', manualValues.tariff_group);
-        // Seviye 2-b: firma seçiliyse gerçek tüketim-ağırlıklı PTF (backend flag açıksa kullanılır)
-        if (selectedCustomerId) qs.append('customer_id', selectedCustomerId);
-        const res = await fetch(`${API_BASE}/api/epias/prices/${period}?${qs.toString()}`);
-        if (!res.ok) {
-          const errBody = await res.json().catch(() => ({}));
-          throw new Error(errBody.detail || `HTTP ${res.status}`);
-        }
-        const response = await res.json();
-
-        // weighted_ptf varsa onu kullan; yoksa skaler ptf_tl_per_mwh'e düş (geriye-uyum).
-        const effectivePtf =
-          response.weighted_ptf_tl_per_mwh !== undefined && response.weighted_ptf_tl_per_mwh !== null
-            ? response.weighted_ptf_tl_per_mwh
-            : response.ptf_tl_per_mwh;
-        if (effectivePtf !== undefined && effectivePtf !== null) {
-          setPtfPrice(effectivePtf);
-        }
-        if (response.yekdem_tl_per_mwh !== undefined && response.yekdem_tl_per_mwh !== null) {
-          setYekdemPrice(response.yekdem_tl_per_mwh);
-        }
-        setPtfSource(response.weighted_ptf_source ?? null);
-        setPtfSourceWarning(response.ptf_source_warning ?? null);
-        setPriceModified(false);
-        setPriceSaved(false);
-      } catch (err: any) {
-        const errorMsg = err.response?.data?.detail || err.message || 'Fiyat çekilemedi';
-        setPriceError(typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg));
-      } finally {
-        setPriceLoading(false);
-      }
-    };
-
-    fetchPrices();
-  }, [manualMode, manualValues.invoice_period, ptfProfile, manualValues.tariff_group, selectedCustomerId]);
+      setPtfPrice(null);
+      setYekdemPrice(null);
+      setPriceProvenance(null);
+      setPtfSource(null);
+      setPtfSourceWarning(null);
+      setPriceModified(false);
+    },
+    onResult: (response) => {
+      // weighted_ptf varsa onu kullan; yoksa skaler ptf_tl_per_mwh; o da yoksa bilinmiyor (null).
+      const effectivePtf = response.weighted_ptf_tl_per_mwh ?? response.ptf_tl_per_mwh ?? null;
+      setPtfPrice(typeof effectivePtf === 'number' && effectivePtf > 0 ? effectivePtf : null);
+      // YEKDEM: null = bilinmiyor; 0 = kayıtlı sıfır (onay ister) — ikisi AYRI tutulur.
+      setYekdemPrice(typeof response.yekdem_tl_per_mwh === 'number' ? response.yekdem_tl_per_mwh : null);
+      setPtfSource(response.weighted_ptf_source ?? null);
+      setPtfSourceWarning(response.ptf_source_warning ?? null);
+      setPriceProvenance(response.price_provenance ?? null);
+    },
+    onError: (message) => setPriceError(message || 'Fiyat çekilemedi'),
+    onSettled: () => setPriceLoading(false),
+  });
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -795,13 +822,14 @@ function App() {
     setLoading(true);
     setError(null);
     setPersistedOfferId(null);  // yeni analiz → önceki offer artık bu ekranla ilgisiz
+    setPriceProvenance(null);   // Faz 1: önceki analizin fiyat kaynağı yeni teklife taşınmaz
     setPersistedCustomerId(undefined);
     setContractWizardOpen(false);
 
     try {
       const response = await fullProcess(file, {
-        weighted_ptf_tl_per_mwh: ptfPrice,
-        yekdem_tl_per_mwh: yekdemPrice,
+        weighted_ptf_tl_per_mwh: ptfPrice ?? undefined,
+        yekdem_tl_per_mwh: yekdemPrice ?? undefined,
         agreement_multiplier: multiplier,
         use_reference_prices: useReferencePrices,
         vat_rate: vatRate,
@@ -828,16 +856,23 @@ function App() {
         return;
       }
       
-      // Backend'den dönen PTF/YEKDEM değerlerini auto-fill yap (referans modunda)
+      // Backend'den dönen PTF/YEKDEM değerlerini auto-fill yap (referans modunda).
+      // Faz 1: YEKDEM yalnız sunucu "dahil ve değer biliniyor" diyorsa doldurulur
+      // (hariç/bilinmiyor → null); fiyat kaynağı kesinleştirme kapısı için saklanır.
+      const prov = (response.calculation?.meta_price_provenance ?? null) as PriceProvenance | null;
+      setPriceProvenance(prov);
+      // YEKDEM seçimi: faturada YEKDEM kalemi varsa 'dahil'; yoksa BOŞ (kullanıcı
+      // dahil / hariç seçimini açıkça yapar; "hariç" tahmin edilmez).
+      setYekdemMode(response.calculation?.meta_include_yekdem_in_offer ? 'included' : null);
       if (useReferencePrices && response.calculation) {
         const backendPtf = response.calculation.meta_ptf_tl_per_mwh;
-        const backendYekdem = response.calculation.meta_yekdem_tl_per_mwh;
-        if (backendPtf && backendPtf > 0) {
-          setPtfPrice(backendPtf);
-        }
-        if (backendYekdem !== undefined) {
-          setYekdemPrice(backendYekdem);
-        }
+        setPtfPrice(typeof backendPtf === 'number' && backendPtf > 0 ? backendPtf : null);
+        // Dahilse hesaptaki değer; değilse dönemin kayıtlı değeri (kullanıcı 'dahil'e
+        // geçerse doğrulanabilir değer hazır olur). Bilinmiyorsa null (0 DEĞİL).
+        const provYekdem = prov?.yekdem;
+        const yekdemAday = provYekdem?.mode === 'included' ? provYekdem.value : provYekdem?.period_value;
+        setYekdemPrice(typeof yekdemAday === 'number' ? yekdemAday : null);
+        setPriceModified(false);
       }
       
       setResult(response);
@@ -853,6 +888,12 @@ function App() {
     setFile(null);
     setResult(null);
     setError(null);
+    // Faz 1: önceki teklifin/dönemin fiyatı yeni teklife TAŞINMAZ.
+    setPtfPrice(null);
+    setYekdemPrice(null);
+    setPriceProvenance(null);
+    setPriceModified(false);
+    setYekdemMode('included');
     setPersistedOfferId(null);
     setPersistedCustomerId(undefined);
     setContractWizardOpen(false);
@@ -880,11 +921,15 @@ function App() {
     // S5-R01: yeniden giris korumasi — ayni kullanici aksiyonu IKINCI bir
     // teklif kaydi olusturmamali (butonlar zaten disabled, bu ikinci kat).
     if (pdfLoading || offerPersisting) return;
-    // P0 guard: PTF zorunlu — boş/0 ise çöp teklif PDF'i üretme.
-    if (!ptfPrice || ptfPrice <= 0) {
-      setError("Teklif PTF değeri zorunludur ve 0'dan büyük olmalıdır.");
+    // P0 guard (Faz 1 genişletmesi): PTF ve (dahilse) YEKDEM sunucuda KESİN (final)
+    // kayıtla doğrulanmış olmalı; YEKDEM uygulaması açıkça seçilmiş olmalı. TASLAK
+    // (provisional/doğrulanmamış) hesapla kayıt ve PDF yapılmaz. Esas kapı sunucudadır
+    // (POST /offers → 422 price_unverified); bu erken geri bildirimdir.
+    if (!priceReadiness.ready || ptfPrice === null) {
+      setError(priceReadiness.reasons.join(' ') || "Teklif PTF değeri zorunludur ve 0'dan büyük olmalıdır.");
       return;
     }
+    const kesinPtf: number = ptfPrice;
 
     // Seçili tarife grubunu belirle
     const selectedTariffLabel = distributionTariffKey 
@@ -971,8 +1016,10 @@ function App() {
         meta_vat_rate: vatRate,
       };
       const paramsForOffer = {
-        weighted_ptf_tl_per_mwh: ptfPrice,
-        yekdem_tl_per_mwh: liveCalculation.include_yekdem ? yekdemPrice : 0,
+        weighted_ptf_tl_per_mwh: kesinPtf,
+        // Faz 1: hariç → null (değer yok; seçim yekdem_mode ile ayrıca gider).
+        // Dahilse bilinen değer. Eski `: 0` hariç ile gerçek 0'ı karıştırıyordu.
+        yekdem_tl_per_mwh: liveCalculation.include_yekdem ? yekdemPrice : null,
         agreement_multiplier: multiplier,
         // S5-R01A: ham toplam — manuel YENİ alan veya AI extraction.
         // `|| 0` SENTINEL'İ KALDIRILDI: `0` "girilmedi" demektir ve sunucudaki
@@ -991,8 +1038,8 @@ function App() {
         const kwhForOffer = manualMode
           ? manualValues.consumption_kwh
           : (result?.extraction?.consumption_kwh?.value || 0);
-        const ptfKwh = ptfPrice / 1000;
-        const yekdemKwh = yekdemPrice / 1000;
+        const ptfKwh = kesinPtf / 1000;
+        const yekdemKwh = (yekdemPrice ?? 0) / 1000;
         const offerCalculation: OfferCalculationPayload = {
           ...calcForPdf,
           current_demand_tl: 0,   // mevcut canlı UI demand bedeli izlemiyor (mevcut PDF akışıyla aynı)
@@ -1015,12 +1062,14 @@ function App() {
           extraction,
           offerCalculation,
           {
-            weighted_ptf_tl_per_mwh: ptfPrice,
+            weighted_ptf_tl_per_mwh: kesinPtf,
             yekdem_tl_per_mwh: paramsForOffer.yekdem_tl_per_mwh,
             agreement_multiplier: multiplier,
             use_reference_prices: useReferencePrices,
             vat_rate: vatRate,
             btv_rate: btvRate,
+            // Seviye 2-b: gerçek tüketim ağırlıklı PTF sunucuda da doğrulanabilsin
+            customer_id: selectedCustomerId || undefined,
           },
           customerIdForOffer,
           // S5-R01: R2 sapma kapisi artik PERSIST aninda calisir. Sapmali
@@ -1029,6 +1078,9 @@ function App() {
           {
             invoice_total_raw: hamFaturaToplami,
             operator_confirmed_warnings: paramsForOffer.operator_confirmed_warnings,
+            // Fiyat Doğruluğu Faz 1: YEKDEM uygulamasının açık seçimi. Fiyatı sunucu
+            // KENDİSİ doğrular (kullanıcı onayı yok); taslak fiyatta 422 döner.
+            yekdem_mode: yekdemMode,
           }
         );
         uretilecekOfferId = persisted.id;
@@ -1243,19 +1295,15 @@ function App() {
               </div>
               
               <div className="space-y-2">
-                {/* Kaynak Badge - sadece sonuç varsa göster */}
+                {/* Kaynak rozeti — Faz 1: gerçek kaynak adlarıyla (eski 'reference'/'default' eşlemesi ölüydü) */}
                 {result?.calculation?.meta_pricing_source && (
                   <div className="flex items-center gap-1 text-xs">
                     <span className={`inline-flex items-center px-1.5 py-0.5 rounded font-medium ${
-                      result.calculation.meta_pricing_source === 'reference' 
-                        ? 'bg-primary-100 text-primary-700'
-                        : result.calculation.meta_pricing_source === 'override'
+                      result.calculation.meta_pricing_source === 'override'
                         ? 'bg-amber-100 text-amber-700'
-                        : 'bg-gray-100 text-gray-700'
+                        : 'bg-primary-100 text-primary-700'
                     }`}>
-                      {result.calculation.meta_pricing_source === 'reference' && '📊 Referans'}
-                      {result.calculation.meta_pricing_source === 'override' && '✏️ Override'}
-                      {result.calculation.meta_pricing_source === 'default' && '⚠️ Default'}
+                      {priceSourceLabel(result.calculation.meta_pricing_source)}
                     </span>
                     {result.calculation.meta_pricing_period && (
                       <span className="text-gray-500">{result.calculation.meta_pricing_period}</span>
@@ -1270,62 +1318,20 @@ function App() {
                       Teklif PTF (TL/MWh)
                       {priceLoading && <Loader2 className="w-3 h-3 inline ml-1 animate-spin text-primary-500" />}
                     </label>
-                    {(() => {
-                      const ptfDisabled = false; // Her zaman düzenlenebilir — dönem seçildiğinde otomatik dolar ama sonra elle değiştirilebilir
-                      const ptfPresets = [
-                        { label: 'Oca 25 — 2.508,80', value: 2508.80 },
-                        { label: 'Şub 25 — 2.478,28', value: 2478.28 },
-                        { label: 'Mar 25 — 2.183,83', value: 2183.83 },
-                        { label: 'Nis 25 — 2.452,67', value: 2452.67 },
-                        { label: 'May 25 — 2.458,15', value: 2458.15 },
-                        { label: 'Haz 25 — 2.202,23', value: 2202.23 },
-                        { label: 'Tem 25 — 2.965,16', value: 2965.16 },
-                        { label: 'Ağu 25 — 2.939,24', value: 2939.24 },
-                        { label: 'Eyl 25 — 2.729,02', value: 2729.02 },
-                        { label: 'Eki 25 — 2.739,50', value: 2739.50 },
-                        { label: 'Kas 25 — 2.784,10', value: 2784.10 },
-                        { label: 'Ara 25 — 2.973,04', value: 2973.04 },
-                        { label: 'Oca 26 — 2.894,92', value: 2894.92 },
-                        { label: 'Şub 26 — 2.078,20', value: 2078.20 },
-                        { label: 'Mar 26 — 1.620,32', value: 1620.32 },
-                        { label: 'Nis 26 — 1.038,80', value: 1038.80 },
-                      ];
-                      return (
-                        <div className="relative">
-                          <input
-                            type="number"
-                            className={`w-full px-2 py-1.5 pr-7 text-sm border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 focus:border-primary-500 outline-none ${ptfDisabled ? 'bg-gray-50' : ''} ${priceLoading ? 'animate-pulse' : ''}`}
-                            value={ptfPrice || ''}
-                            onChange={(e) => { setPtfPrice(e.target.value === '' ? 0 : parseFloat(e.target.value)); setPriceModified(true); setPriceSaved(false); }}
-                            onFocus={(e) => { if (ptfPrice === 0) e.target.value = ''; }}
-                            step="0.1"
-                            disabled={ptfDisabled}
-                          />
-                          {!ptfDisabled && (
-                            <div className="absolute right-0 top-0 bottom-0 w-7 flex items-center justify-center">
-                              <select
-                                className="absolute inset-0 opacity-0 cursor-pointer"
-                                value=""
-                                onChange={(e) => {
-                                  if (e.target.value) {
-                                    setPtfPrice(parseFloat(e.target.value));
-                                    setPriceModified(true); setPriceSaved(false);
-                                  }
-                                }}
-                              >
-                                <option value="">EPİAŞ PTF</option>
-                                {ptfPresets.map(p => (
-                                  <option key={p.value} value={p.value.toString()}>{p.label}</option>
-                                ))}
-                              </select>
-                              <div className="pointer-events-none text-gray-400">
-                                <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })()}
+                    {/* Faz 1: sabit "EPİAŞ PTF" preset listesi KALDIRILDI (koddaki sabitler
+                        doğrulanmamıştı). Değer DB'den gelir; elle girilen değer yalnız taslaktır. */}
+                    <input
+                      type="number"
+                      className={`w-full px-2 py-1.5 text-sm border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 focus:border-primary-500 outline-none ${priceLoading ? 'animate-pulse' : ''}`}
+                      value={ptfPrice ?? ''}
+                      placeholder="bilinmiyor"
+                      onChange={(e) => {
+                        const n = parseFloat(e.target.value);
+                        setPtfPrice(e.target.value === '' || !Number.isFinite(n) ? null : n);
+                        setPriceModified(true); setPriceSaved(false);
+                      }}
+                      step="0.1"
+                    />
                     {manualMode && (
                       <div className="mt-1.5 space-y-1">
                         {/* Seviye 2-b: yüklü tüketim profili olan firma → gerçek tüketim-ağırlıklı PTF */}
@@ -1380,60 +1386,49 @@ function App() {
                   </div>
                   <div>
                     {(() => {
-                      const yekdemDisabled = !!(liveCalculation && !liveCalculation.include_yekdem && !manualMode); // YEKDEM yoksa disabled, ama referans modunda bile düzenlenebilir
-                      const yekdemVal = liveCalculation && !liveCalculation.include_yekdem && !manualMode ? 0 : yekdemPrice;
-                      const yekdemPresets = [
-                        { label: 'Oca 26 — 162,73', value: 162.73 },
-                        { label: 'Şub 26 — 479,35', value: 479.35 },
-                        { label: 'Mar 26 — 747,80', value: 747.80 },
-                      ];
+                      // Faz 1: YEKDEM uygulaması AÇIK seçimdir (dahil / hariç); manuel ve AI
+                      // akışında aynıdır. Değer null = bilinmiyor (boş), 0 = sıfır değeri (gösterilir;
+                      // kesin teklif için dönemin açık ve kesin sıfır kaydı gerekir, sunucu doğrular).
+                      // Sabit "2026 Öngörü" preset listesi KALDIRILDI.
+                      const yekdemUygulanmaz = yekdemMode !== 'included';
+                      const modEtiketi = yekdemMode === 'excluded' ? '(hariç)'
+                        : yekdemMode === null ? '(seçilmedi)' : null;
                       return (
                         <>
                           <label className="text-xs font-medium text-gray-700 mb-1 block">
                             YEKDEM (TL/MWh)
-                            {liveCalculation && !liveCalculation.include_yekdem && !manualMode && (
-                              <span className="text-gray-400 ml-1">(yok)</span>
-                            )}
+                            {modEtiketi && <span className="text-gray-400 ml-1">{modEtiketi}</span>}
                           </label>
-                          <div className="relative">
-                            <input
-                              type="number"
-                              className={`w-full px-2 py-1.5 pr-7 text-sm border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 focus:border-primary-500 outline-none ${yekdemDisabled ? 'bg-gray-100 text-gray-400' : ''}`}
-                              value={yekdemVal || ''}
-                              onChange={(e) => { setYekdemPrice(e.target.value === '' ? 0 : parseFloat(e.target.value)); setPriceModified(true); setPriceSaved(false); }}
-                              onFocus={(e) => { if (yekdemVal === 0) e.target.value = ''; }}
-                              step="0.1"
-                              disabled={yekdemDisabled}
-                            />
-                            {!yekdemDisabled && (
-                              <div className="absolute right-0 top-0 bottom-0 w-7 flex items-center justify-center">
-                                <select
-                                  className="absolute inset-0 opacity-0 cursor-pointer"
-                                  value=""
-                                  onChange={(e) => {
-                                    if (e.target.value) {
-                                      setYekdemPrice(parseFloat(e.target.value));
-                                      setPriceModified(true); setPriceSaved(false);
-                                    }
-                                  }}
-                                >
-                                  <option value="">2026 Öngörü</option>
-                                  {yekdemPresets.map(p => (
-                                    <option key={p.value} value={p.value.toString()}>{p.label}</option>
-                                  ))}
-                                </select>
-                                <div className="pointer-events-none text-gray-400">
-                                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                                </div>
-                              </div>
-                            )}
-                          </div>
+                          <input
+                            type="number"
+                            className={`w-full px-2 py-1.5 text-sm border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 focus:border-primary-500 outline-none ${yekdemUygulanmaz ? 'bg-gray-100 text-gray-400' : ''}`}
+                            value={yekdemUygulanmaz || yekdemPrice === null ? '' : yekdemPrice}
+                            placeholder={yekdemMode === 'excluded' ? 'hariç' : 'bilinmiyor'}
+                            onChange={(e) => {
+                              const n = parseFloat(e.target.value);
+                              setYekdemPrice(e.target.value === '' || !Number.isFinite(n) ? null : n);
+                              setPriceModified(true); setPriceSaved(false);
+                            }}
+                            step="0.1"
+                            disabled={yekdemUygulanmaz}
+                          />
+                          <YekdemModeSelector value={yekdemMode} onChange={setYekdemMode} />
                         </>
                       );
                     })()}
                   </div>
                 </div>
                 
+                {/* Fiyat Doğruluğu Faz 1 (owner teyidi): provisional ya da doğrulanmamış fiyatla
+                    hesap AÇIKÇA TASLAK işaretlenir; onay kutusu yoktur (kapı sunucudadır). */}
+                {(manualMode || result?.calculation) && (
+                  <PriceDraftBanner
+                    readiness={priceReadiness}
+                    period={manualMode ? (manualValues.invoice_period || null) : (result?.extraction?.invoice_period || null)}
+                    onRestore={priceModified ? restorePeriodPrices : undefined}
+                  />
+                )}
+
                 {/* PTF/YEKDEM Kaydet Butonu — değer değiştirildiğinde görünür */}
                 {priceModified && (
                   <div className="flex items-center gap-2">
@@ -1443,37 +1438,34 @@ function App() {
                       onClick={async () => {
                         const period = manualMode ? manualValues.invoice_period : (result?.extraction?.invoice_period || '');
                         if (!period) return;
+                        // Faz 1: PTF zorunlu; YEKDEM bilinmiyorsa/hariçse GÖNDERİLMEZ (sunucu mevcut
+                        // YEKDEM'i korur, yeni dönemde ister). 0 ile doldurma YOK; açıkça girilen
+                        // gerçek 0 gönderilir (taslak yazılır; kesin teyit Piyasa Fiyatları'nda).
+                        if (ptfPrice === null || !(ptfPrice > 0)) {
+                          setError("Kaydetmek için 0'dan büyük bir PTF değeri girin.");
+                          return;
+                        }
                         setPriceSaving(true);
                         try {
-                          const res = await fetch(`${API_BASE}/api/epias/prices/${period}`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                              ptf_tl_per_mwh: ptfPrice,
-                              yekdem_tl_per_mwh: yekdemPrice,
-                            }),
+                          // Ortak (tüm kiracılar) fiyat yazımı → mevcut admin yetkisi: adminApi
+                          // X-Admin-Key'i (girilmişse) ekler; sunucu require_admin_key uygular.
+                          await adminApi.post(`/api/epias/prices/${period}`, {
+                            ptf_tl_per_mwh: ptfPrice,
+                            ...(yekdemIncluded && yekdemPrice !== null && yekdemPrice >= 0 ? { yekdem_tl_per_mwh: yekdemPrice } : {}),
                           });
-                          if (!res.ok) {
-                            // P0-a: backend reddini (422/500) gizleme — sahte "kaydedildi" yok.
-                            let msg = 'PTF/YEKDEM kaydedilemedi.';
-                            try {
-                              const body = await res.json();
-                              if (body?.detail) {
-                                msg = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail);
-                              } else if (body?.error?.message) {
-                                msg = body.error.message;
-                              }
-                            } catch { /* JSON degilse default mesaj */ }
-                            setError(msg);
-                            return;  // setPriceSaved(true) CALISMAZ
-                          }
                           setError(null);  // basaridan once eski hata banner'ini temizle
                           setPriceModified(false);
                           setPriceSaved(true);
                           setTimeout(() => setPriceSaved(false), 3000);
-                        } catch (err) {
-                          // Ag hatasi (fetch throw): bunu da gizleme.
-                          setError('PTF/YEKDEM kaydedilemedi: baglanti hatasi.');
+                          // Kaynağı yeniden oku: bu kayıt TASLAK (provisional) yazılır; kesin teklif için Piyasa Fiyatları'nda 'final' yapılmalı
+                          if (manualMode) setPriceRefreshKey((k) => k + 1);
+                        } catch (err: any) {
+                          // P0-a: backend reddini (401/422/500) ve ağ hatasını gizleme — sahte "kaydedildi" yok.
+                          const body = err?.response?.data;
+                          const detay = body?.detail ?? body?.error?.message;
+                          setError(detay
+                            ? `PTF/YEKDEM kaydedilemedi: ${typeof detay === 'string' ? detay : (detay.message || JSON.stringify(detay))}`
+                            : 'PTF/YEKDEM kaydedilemedi: baglanti hatasi.');
                           console.error('Fiyat kaydetme hatası:', err);
                         } finally {
                           setPriceSaving(false);
@@ -1601,8 +1593,8 @@ function App() {
                           <button
                             onClick={() => {
                               if (!liveCalculation) return;
-                              const ptfKwh = ptfPrice / 1000;
-                              const yekdemKwh = yekdemPrice / 1000;
+                              const ptfKwh = (ptfPrice ?? 0) / 1000;
+                              const yekdemKwh = (yekdemPrice ?? 0) / 1000;
                               const kwh = manualMode ? manualValues.consumption_kwh : (result?.extraction?.consumption_kwh?.value || 0);
                               const offerBasePrice = liveCalculation.include_yekdem ? (ptfKwh + yekdemKwh) : ptfKwh;
                               generateBayiRaporPdf({
@@ -1611,8 +1603,8 @@ function App() {
                                 invoicePeriod: manualMode ? manualValues.invoice_period : (result?.extraction?.invoice_period || '-'),
                                 raporTarihi: new Date().toLocaleDateString('tr-TR'),
                                 consumptionKwh: kwh,
-                                ptfTlPerMwh: ptfPrice,
-                                yekdemTlPerMwh: liveCalculation.include_yekdem ? yekdemPrice : 0,
+                                ptfTlPerMwh: ptfPrice ?? 0,
+                                yekdemTlPerMwh: liveCalculation.include_yekdem ? (yekdemPrice ?? 0) : 0,
                                 multiplier,
                                 bayiPoints: liveCalculation.bayi_points,
                                 gelkaPoints: liveCalculation.gelka_points,
@@ -2986,7 +2978,8 @@ function App() {
                     </h3>
                     <button
                       onClick={handleDownloadPdf}
-                      disabled={pdfLoading || !ptfPrice || ptfPrice <= 0 || (!!mismatchInfo?.requires_operator_confirmation && !operatorConfirmed)}
+                      disabled={pdfLoading || !priceReadiness.ready || (!!mismatchInfo?.requires_operator_confirmation && !operatorConfirmed)}
+                      title={priceReadiness.ready ? undefined : `TASLAK — ${priceReadiness.reasons.join(' ')}`}
                       className="btn-primary flex items-center gap-1 px-3 py-1 text-xs"
                     >
                       {pdfLoading ? (
@@ -3038,7 +3031,7 @@ function App() {
                     <tbody className="divide-y divide-gray-100">
                       {manualMode && manualValues.current_unit_price > 0 && (() => {
                         const distUnitPrice = liveCalculation.distribution_unit_price || 0;
-                        const energyOfferPrice = ((ptfPrice / 1000 + (liveCalculation.include_yekdem ? yekdemPrice / 1000 : 0)) * multiplier);
+                        const energyOfferPrice = (((ptfPrice ?? 0) / 1000 + (liveCalculation.include_yekdem ? (yekdemPrice ?? 0) / 1000 : 0)) * multiplier);
                         
                         let offerPrice: number;
                         let label: string;
@@ -3130,7 +3123,8 @@ function App() {
                 <div className="flex gap-2">
                   <button
                     onClick={handleDownloadPdf}
-                    disabled={pdfLoading || offerPersisting || !ptfPrice || ptfPrice <= 0 || (!!mismatchInfo?.requires_operator_confirmation && !operatorConfirmed)}
+                    disabled={pdfLoading || offerPersisting || !priceReadiness.ready || (!!mismatchInfo?.requires_operator_confirmation && !operatorConfirmed)}
+                    title={priceReadiness.ready ? undefined : `TASLAK — ${priceReadiness.reasons.join(' ')}`}
                     className="btn-primary flex-1 flex items-center justify-center gap-2 py-2 text-sm"
                   >
                     {pdfLoading || offerPersisting ? (

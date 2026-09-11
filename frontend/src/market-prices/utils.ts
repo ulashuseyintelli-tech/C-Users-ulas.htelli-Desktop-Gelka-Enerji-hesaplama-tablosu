@@ -170,6 +170,11 @@ export function serializeUrlParams(params: Partial<ListParams>): string {
  * If no field mapping, return empty object (error goes to global toast instead).
  */
 export function parseFieldErrors(error: ApiErrorResponse): Record<string, string> {
+  // Fiyat Doğruluğu Faz 1 (K3): YEKDEM hataları kendi alanında gösterilir — kod
+  // eşlemesi (ör. INVALID_DECIMAL_FORMAT → 'value') bunları PTF alanına düşürüyordu.
+  if (error.field === 'yekdem_value') {
+    return { yekdem_value: error.message || 'Geçersiz YEKDEM değeri' };
+  }
   const mapping = ERROR_CODE_MAP[error.error_code];
   if (mapping && mapping.field) {
     return { [mapping.field]: mapping.message };

@@ -813,6 +813,7 @@ def preview_scenario_strategy(draw):
     rows = []
     db_records = {}
     expected_new = 0
+    expected_yekdem_required = 0
     expected_updates = 0
     expected_unchanged = 0
     expected_final_conflicts = 0
@@ -866,7 +867,10 @@ def preview_scenario_strategy(draw):
         # Build DB record and compute expected outcome
         if db_state == DB_STATE_NEW:
             db_records[period] = None
-            expected_new += 1
+            # Fiyat Doğruluğu Faz 1: yeni PTF dönemi YEKDEM ister; toplu içe aktarma
+            # yalnız PTF taşıdığı için önizleme bu satırı YEKDEM_REQUIRED hatası sayar
+            # ("yeni kayıt" değil; eksik YEKDEM 0 olarak saklanmaz).
+            expected_yekdem_required += 1
 
         elif db_state == DB_STATE_SAME:
             # Existing record with same value and same status
@@ -936,6 +940,7 @@ def preview_scenario_strategy(draw):
         "db_records": db_records,
         "force_update": force_update,
         "expected_new": expected_new,
+        "expected_yekdem_required": expected_yekdem_required,
         "expected_updates": expected_updates,
         "expected_unchanged": expected_unchanged,
         "expected_final_conflicts": expected_final_conflicts,
@@ -971,7 +976,8 @@ def preview_with_invalid_rows_strategy(draw):
         rows.append(invalid_row)
 
     scenario["rows"] = rows
-    scenario["expected_invalid"] = num_invalid
+    # Faz 1: YEKDEM'siz yeni PTF dönemleri de satır hatasıdır.
+    scenario["expected_invalid"] = num_invalid + scenario["expected_yekdem_required"]
     return scenario
 
 
@@ -1079,6 +1085,10 @@ class TestProperty13ImportPreviewAccuracy:
             f"final_conflicts: expected {scenario['expected_final_conflicts']}, got {preview.final_conflicts}. "
             f"force_update={force_update}, rows={len(rows)}"
         )
+        # Fiyat Doğruluğu Faz 1: yeni PTF dönemleri YEKDEM_REQUIRED satır hatasıdır.
+        assert preview.invalid_rows == scenario["expected_yekdem_required"]
+        assert sum(1 for e in preview.errors if e["error_code"] == "YEKDEM_REQUIRED") == \
+            scenario["expected_yekdem_required"]
 
     @settings(max_examples=100, suppress_health_check=[HealthCheck.too_slow])
     @given(scenario=preview_scenario_strategy())

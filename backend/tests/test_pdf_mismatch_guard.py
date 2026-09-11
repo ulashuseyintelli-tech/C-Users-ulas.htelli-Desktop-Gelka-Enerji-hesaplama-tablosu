@@ -11,6 +11,7 @@ Karar ağacı:
 Asıl operatif kapı: hesaplanan toplam (current_vat_matrah_tl + current_vat_tl) vs invoice_total_raw.
 Cross-check (consumption×unit_price vs current_energy_tl) frontend'de türetildiği için ≈0 (belgelenir).
 """
+import pytest
 from fastapi.testclient import TestClient
 from app.main import app
 
@@ -30,8 +31,43 @@ BASE = {
     "offer_energy_tl": "1000",
     "offer_total": "2000",
     "savings_ratio": "0.2",
+
     "invoice_period": "2026-05",
 }
+
+@pytest.fixture(autouse=True)
+def _kesin_fiyat_db():
+    """Fiyat Doğruluğu Faz 1: /generate-pdf-simple fiyatı DB'de doğrular (kullanıcı onayı
+    yolu yok). Bu testler R2 kapısını ölçer; formdaki fiyat dönemin yetkili KESİN (final) kaydıyla eşleşir
+    (bellek-içi SQLite; canlı/varsayılan DB'ye dokunulmaz)."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from app.database import Base, MarketReferencePrice, get_db
+    from app.pricing import schemas as _saatlik_semasi  # noqa: F401 — saatlik tablo Base.metadata'ya
+
+    engine = create_engine(
+        "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
+    Base.metadata.create_all(engine)
+    Oturum = sessionmaker(bind=engine)
+    with Oturum() as s:
+        s.add(MarketReferencePrice(period="2026-05", price_type="PTF", ptf_tl_per_mwh=590.9,
+                                   yekdem_tl_per_mwh=563.78, source="epias_manual",
+                                   status="final", is_locked=0))
+        s.commit()
+
+    def _oturum():
+        s = Oturum()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = _oturum
+    yield
+    app.dependency_overrides.pop(get_db, None)
+    engine.dispose()
 
 
 def _post(**overrides):
