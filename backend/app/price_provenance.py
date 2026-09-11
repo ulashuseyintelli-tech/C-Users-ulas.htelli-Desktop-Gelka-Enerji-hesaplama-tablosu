@@ -3,27 +3,37 @@ Fiyat Doğruluğu Faz 1 — teklif fiyatının kaynağı (provenance) ve kesinle
 
 Eksik ya da doğrulanmamış PTF/YEKDEM ile teklif KESİNLEŞMEZ (kayıt/PDF). Eksik
 fiyat sabit bir değerle ya da 0 ile SESSİZCE doldurulmaz. Fiyatın dönemi,
-kaynağı ve kullanıcı doğrulaması teklif snapshot'ına yazılır.
+kaynağı ve kayıt durumu teklif snapshot'ına yazılır.
 
-YEKDEM için üç durum birbirinden AYRILIR:
-- missing  : değer yok (None). Kesinleştirme engellenir.
-- değer    : >= 0 bir sayı (0 dahil). DB kolonu NOT NULL olduğu ve eski
-             yazımlar girilmemiş YEKDEM'i 0 bıraktığı için DB'deki 0 sistem
-             tarafından doğrulanmış SAYILMAZ ("zero_unverified"); kullanıcı
-             açıkça onaylarsa gerçek 0 olarak kabul edilir.
-- excluded : açıkça seçilen "YEKDEM hariç" (manuel akış) ya da faturada YEKDEM
-             bulunmaması (AI akışı). YEKDEM teklife dahil edilmez.
+Owner teyidi (provenance sürüm 2):
+- Doğrulama YALNIZ SUNUCUDADIR. İstemcinin "doğrulandı/onaylandı" beyanı kapıyı
+  AÇMAZ; sürüm 1'deki kullanıcı onayı yolu kaldırıldı.
+- Kesin teklif için fiyat, dönemin GÜVENİLİR kaynaklı ve KESİNLEŞMİŞ
+  (status='final') kaydıyla birebir eşleşmelidir. 'provisional' kayıttan gelen
+  fiyat YALNIZ açıkça işaretlenmiş TASLAK hesapta kullanılabilir
+  (draft_only=True, provisional=True); POST /offers ve PDF uçları reddeder.
+- YEKDEM uygulaması açık bir seçimdir; aşağıdaki durumlar birbirine EŞİTLENMEZ:
+  * included (dahil): değer, dönemin güvenilir + kesin kaydıyla eşleşmelidir.
+  * excluded (hariç): YEKDEM enerji birim fiyatına eklenmez (açık seçim).
+  * exempt (muaf): müşteri YEKDEM'den muaftır (açık seçim; hariç ile AYNI DEĞİL).
+  * gerçek 0: included + değer 0. DB kolonu NOT NULL'dur ve eski yazımlar
+    girilmemiş YEKDEM'i 0 bırakıyordu; kayıtlı 0 eksik veriden AYIRT EDİLEMEZ.
+    Bu yüzden Faz 1'de doğrulanmış SAYILMAZ (yekdem_zero_unverified). Değer 0
+    olarak taşınır; null'a, hariç'e ya da muaf'a çevrilmez.
+  * eksik: dönem kaydı yok (None). 0 ile temsil edilmez.
 
-Sistem doğrulaması (kullanıcı onayı gerektirmeyen) yalnız teklif değeri aynı
-dönemin GÜVENİLİR kaynaktan türetilen etkin değeriyle eşleştiğinde vardır:
-- market_reference_prices.source ∈ {epias_manual, epias_api, manual_override}
-  (açılıştaki geliştirme örnek verisi ve mock senkron izi HARİÇ),
-- hourly_market_prices (yetkili EPİAŞ Excel yüklemesi).
-Kaynağı bilinmeyen/eski kayıtlar (seed, migration, örnek veri) doğrulanmış
-sayılmaz; kullanıcı onayı istenir.
+Sistem doğrulaması (güvenilir kaynak):
+- market_reference_prices: source ∈ {epias_manual, epias_api, manual_override}
+  VE status == 'final'. Açılıştaki geliştirme örnek verisi ve mock senkron izi
+  HARİÇ tutulur.
+- hourly_market_prices: yetkili EPİAŞ Excel yüklemesi. Saatlik PTF'te
+  provisional/final ayrımı yoktur; yayımlanan PTF kesindir.
+Kaynağı bilinmeyen ya da eski kayıtlar (seed, migration, örnek veri)
+doğrulanmış sayılmaz.
 
 PDF'te "EPİAŞ verileri esas alınarak" ifadesi yalnız epias_basis=True iken
-kullanılır (PTF ve dahil ise YEKDEM EPİAŞ etiketli güvenilir kaynaktan).
+kullanılır. Bunun için PTF'in (ve dahilse YEKDEM'in) EPİAŞ etiketli güvenilir
+kaynaktan gelmesi gerekir.
 
 Çağrıldığı yerler:
 - main.get_prices_with_epias_fallback() → GET /api/epias/prices/{period} (manuel akış fiyat durumu)
@@ -32,9 +42,11 @@ kullanılır (PTF ve dahil ise YEKDEM EPİAŞ etiketli güvenilir kaynaktan).
 - main.generate_pdf_for_offer() → POST /offers/{id}/generate-pdf (snapshot kapısı)
 - main.generate_pdf_simple() → POST /generate-pdf-simple (doğrudan API kapısı)
 - main.generate_pdf_direct() → POST /generate-pdf-direct (doğrudan API kapısı)
+- main.generate_html_for_offer() → POST /offers/{id}/generate-html (snapshot kapısı)
+- main.generate_html_direct() → POST /generate-html-direct (doğrudan API kapısı)
 
-Multitenant: piyasa fiyat tabloları tenant kolonu taşımaz (piyasa geneli veri);
-bu modül yalnız OKUR, tenant kapsamına dokunmaz.
+Multitenant: piyasa fiyat tabloları tenant kolonu taşımaz (piyasa geneli veri).
+Bu modül yalnız OKUR ve tenant kapsamına dokunmaz.
 """
 from __future__ import annotations
 
@@ -49,9 +61,13 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
-PROVENANCE_VERSION = 1
+# Sürüm 2: kullanıcı onayıyla doğrulama kaldırıldı, status='final' şartı eklendi.
+# Sürüm 1 snapshot'ları (kullanıcı onaylı olabilir) PDF kapısında doğrulanmış SAYILMAZ.
+PROVENANCE_VERSION = 2
 # Teklif değeri ile DB'den türetilen değerin "aynı" sayılacağı tolerans (TL/MWh).
 PRICE_TOLERANCE_TL_PER_MWH = 0.01
+# Hariç/muaf seçiminde teklif hesabındaki YEKDEM tutarının "sıfır" sayılacağı tolerans (TL).
+AMOUNT_TOLERANCE_TL = 0.01
 
 TRUSTED_REFERENCE_SOURCES = frozenset({"epias_manual", "epias_api", "manual_override"})
 EPIAS_REFERENCE_SOURCES = frozenset({"epias_manual", "epias_api"})
@@ -60,19 +76,62 @@ EPIAS_HOURLY_SOURCES = frozenset({"epias_excel", "epias_api"})
 # mock EPİAŞ senkronunun kayıtta bıraktığı izler.
 DEV_SAMPLE_NOTE_PREFIX = "Sample data"
 MOCK_SYNC_UPDATED_BY = "mock_sync"
+FINAL_STATUS = "final"
+
+YEKDEM_MODE_INCLUDED = "included"
+YEKDEM_MODE_EXCLUDED = "excluded"
+YEKDEM_MODE_EXEMPT = "exempt"
+YEKDEM_MODES = frozenset({YEKDEM_MODE_INCLUDED, YEKDEM_MODE_EXCLUDED, YEKDEM_MODE_EXEMPT})
 
 REASON_PTF_MISSING = "ptf_missing"
+REASON_PTF_UNVERIFIED = "ptf_unverified"
+REASON_PTF_PROVISIONAL = "ptf_provisional"
 REASON_YEKDEM_MISSING = "yekdem_missing"
-REASON_CONFIRMATION_REQUIRED = "confirmation_required"
+REASON_YEKDEM_ZERO_UNVERIFIED = "yekdem_zero_unverified"
+REASON_YEKDEM_UNVERIFIED = "yekdem_unverified"
+REASON_YEKDEM_PROVISIONAL = "yekdem_provisional"
+REASON_YEKDEM_MODE_REQUIRED = "yekdem_mode_required"
+REASON_YEKDEM_MODE_INVALID = "yekdem_mode_invalid"
+REASON_YEKDEM_MODE_CONFLICT = "yekdem_mode_conflict"
+
+PROVISIONAL_REASONS = frozenset({REASON_PTF_PROVISIONAL, REASON_YEKDEM_PROVISIONAL})
 
 REASON_MESSAGES = {
     REASON_PTF_MISSING: "Teklif PTF değeri eksik (0'dan büyük bir değer gerekli).",
-    REASON_YEKDEM_MISSING: (
-        "YEKDEM birim bedeli bilinmiyor: değeri girin ya da 'YEKDEM hariç' seçin."
+    REASON_PTF_UNVERIFIED: (
+        "PTF, dönemin güvenilir kayıtlı değeriyle eşleşmiyor ya da kaynağı "
+        "doğrulanamıyor. Kesin teklif için PTF, Piyasa Fiyatları kaydı ya da "
+        "EPİAŞ saatlik yüklemesiyle birebir aynı olmalıdır."
     ),
-    REASON_CONFIRMATION_REQUIRED: (
-        "Fiyat, dönemin güvenilir kayıtlı değeriyle eşleşmiyor ya da kaynağı "
-        "doğrulanamıyor: PTF/YEKDEM değerlerini kontrol edip açıkça onaylayın."
+    REASON_PTF_PROVISIONAL: (
+        "Dönemin PTF kaydı kesinleşmemiş (provisional). Bu fiyat yalnız TASLAK "
+        "hesapta kullanılabilir; kesin teklif için kaydı Piyasa Fiyatları "
+        "ekranında 'final' yapın."
+    ),
+    REASON_YEKDEM_MISSING: (
+        "YEKDEM birim bedeli bilinmiyor. Dönemin YEKDEM değerini Piyasa Fiyatları "
+        "ekranından girin ya da YEKDEM uygulamasını açıkça 'hariç' veya 'muaf' seçin."
+    ),
+    REASON_YEKDEM_ZERO_UNVERIFIED: (
+        "YEKDEM değeri 0. Kayıtlı 0 eksik veriden ayırt edilemediği için kesin "
+        "teklifte kullanılamaz. Gerçek 0, 'hariç' ve 'muaf' ayrı durumlardır."
+    ),
+    REASON_YEKDEM_UNVERIFIED: (
+        "YEKDEM, dönemin güvenilir kayıtlı değeriyle eşleşmiyor ya da kaynağı "
+        "doğrulanamıyor."
+    ),
+    REASON_YEKDEM_PROVISIONAL: (
+        "Dönemin YEKDEM kaydı kesinleşmemiş (provisional). Bu değer yalnız TASLAK "
+        "hesapta kullanılabilir; kesin teklif için kaydı 'final' yapın."
+    ),
+    REASON_YEKDEM_MODE_REQUIRED: (
+        "YEKDEM uygulaması seçilmedi (faturada YEKDEM kalemi yok). 'Dahil', "
+        "'Hariç' ya da 'Muaf' seçimini açıkça yapın."
+    ),
+    REASON_YEKDEM_MODE_INVALID: "Geçersiz YEKDEM seçimi: 'included', 'excluded' ya da 'exempt' olmalı.",
+    REASON_YEKDEM_MODE_CONFLICT: (
+        "YEKDEM 'hariç' ya da 'muaf' seçildi, ancak teklif hesabında YEKDEM tutarı var. "
+        "Seçim ile hesap çelişiyor."
     ),
 }
 
@@ -85,6 +144,23 @@ def normalize_period(period: Any) -> Optional[str]:
         return None
     p = str(period).strip()
     return p if _PERIOD_RE.match(p) else None
+
+
+def parse_yekdem_mode(raw: Any) -> tuple[Optional[str], bool]:
+    """YEKDEM seçimini (mod, geçerli_mi) olarak döndürür.
+
+    None ya da boş değer → (None, True): seçim yapılmadı (kapı yekdem_mode_required).
+    Tanınmayan değer → (None, False): kapı yekdem_mode_invalid.
+
+    Çağrıldığı yerler:
+    - price_provenance.build_price_provenance()
+    """
+    if raw is None:
+        return (None, True)
+    mode = str(raw).strip().lower()
+    if not mode:
+        return (None, True)
+    return (mode, True) if mode in YEKDEM_MODES else (None, False)
 
 
 def _finite(value: Any) -> Optional[float]:
@@ -105,19 +181,22 @@ class PriceCandidate:
     source_detail: Optional[str]
     trusted: bool
     epias: bool
+    final: bool  # kayıt kesinleşmiş mi (saatlik EPİAŞ verisi her zaman kesin)
 
 
 @dataclass(frozen=True)
 class YekdemResolution:
     """Dönem YEKDEM birim bedelinin çözümü."""
     value: Optional[float]  # None = bilinmiyor
-    status: str  # known | zero_unverified | missing
+    status: str  # known | zero_unverified | invalid | missing
     source: Optional[str]
     trusted: bool
     epias: bool
+    final: bool
+    record_status: Optional[str]  # kaydın durumu (final | provisional); kayıt yoksa None
 
 
-_YEKDEM_MISSING = YekdemResolution(None, "missing", None, False, False)
+_YEKDEM_MISSING = YekdemResolution(None, "missing", None, False, False, False, None)
 
 
 def _reference_record(db: Session, period: str):
@@ -134,10 +213,15 @@ def _reference_record(db: Session, period: str):
 
 
 def reference_trust(record: Any) -> tuple[bool, bool]:
-    """market_reference_prices kaydı için (güvenilir, EPİAŞ etiketli).
+    """market_reference_prices kaydı için (güvenilir kaynak, EPİAŞ etiketli).
 
     Açılıştaki geliştirme örnek verisi ("Sample data (dev)") ve mock senkron
-    izi, kaynak etiketi ne olursa olsun güvenilir SAYILMAZ.
+    izi, kaynak etiketi ne olursa olsun güvenilir SAYILMAZ. Kaydın kesinleşip
+    kesinleşmediği ayrıca reference_is_final() ile denetlenir.
+
+    Çağrıldığı yerler:
+    - price_provenance.resolve_period_yekdem()
+    - price_provenance.effective_ptf_candidates()
     """
     note = str(getattr(record, "source_note", None) or "")
     if note.startswith(DEV_SAMPLE_NOTE_PREFIX) or getattr(record, "updated_by", None) == MOCK_SYNC_UPDATED_BY:
@@ -147,11 +231,25 @@ def reference_trust(record: Any) -> tuple[bool, bool]:
     return (trusted, trusted and source in EPIAS_REFERENCE_SOURCES)
 
 
+def reference_is_final(record: Any) -> bool:
+    """Kayıt AÇIKÇA kesinleşmiş mi (status == 'final')?
+
+    NULL ya da boş durum kesin SAYILMAZ (fail-closed). Canonical şemada kolon
+    zaten NOT NULL'dur.
+
+    Çağrıldığı yerler:
+    - price_provenance.resolve_period_yekdem()
+    - price_provenance.effective_ptf_candidates()
+    """
+    return str(getattr(record, "status", None) or "") == FINAL_STATUS
+
+
 def resolve_period_yekdem(db: Optional[Session], period: Any) -> YekdemResolution:
     """Dönem YEKDEM birim bedeli — kayıt yoksa 'missing' (ASLA sabit/0 ile doldurulmaz).
 
     DB'deki 0 'zero_unverified' döner: değer 0 olarak taşınır (eksikle
-    karışmaz) ama kullanıcı onayı olmadan doğrulanmış sayılmaz.
+    karışmaz) ama kesin teklif için doğrulanmış SAYILMAZ. Kaydın durumu
+    (final/provisional) ayrıca döner.
 
     Çağrıldığı yerler:
     - calculator.get_ptf_yekdem_for_period() → AI akışı YEKDEM'i (eski davranış: kayıt yoksa 0.0)
@@ -168,10 +266,14 @@ def resolve_period_yekdem(db: Optional[Session], period: Any) -> YekdemResolutio
     if value is None:
         return _YEKDEM_MISSING
     source = f"reference:{record.source or 'unknown'}"
+    record_status = str(record.status) if record.status else None
+    final = reference_is_final(record)
     if value == 0.0:
-        return YekdemResolution(0.0, "zero_unverified", source, False, False)
+        return YekdemResolution(0.0, "zero_unverified", source, False, False, final, record_status)
+    if value < 0:
+        return YekdemResolution(value, "invalid", source, False, False, final, record_status)
     trusted, epias = reference_trust(record)
-    return YekdemResolution(value, "known", source, trusted, epias)
+    return YekdemResolution(value, "known", source, trusted, epias, final, record_status)
 
 
 def _hourly_trust(db: Session, period: str) -> tuple[bool, bool]:
@@ -207,28 +309,37 @@ def effective_ptf_candidates(
     record = _reference_record(db, period)
     ref_ptf = _finite(record.ptf_tl_per_mwh) if record is not None else None
     ref_trusted, ref_epias = reference_trust(record) if record is not None else (False, False)
+    ref_final = reference_is_final(record) if record is not None else False
     if record is not None and record.source == "manual_override" and ref_ptf and ref_ptf > 0:
-        return [PriceCandidate(ref_ptf, "manual_override", record.source, ref_trusted, ref_epias)]
+        return [PriceCandidate(ref_ptf, "manual_override", record.source, ref_trusted, ref_epias,
+                               ref_final)]
 
     hourly_trusted, hourly_epias = _hourly_trust(db, period)
     if mp.OFFER_USE_REAL_CONSUMPTION and customer_id:
         cw = mp.consumption_weighted_ptf(db, period, customer_id)
         if cw is not None and cw > 0:
             return [PriceCandidate(cw, f"hourly_consumption:{customer_id}", "hourly",
-                                   hourly_trusted, hourly_epias)]
+                                   hourly_trusted, hourly_epias, True)]
 
     hourly: list[PriceCandidate] = []
     for profile in mp.PROFILE_WEIGHTS:
         wr = mp.weighted_ptf_for_profile(db, period, profile)
         if wr.ptf_tl_per_mwh is not None and wr.ptf_tl_per_mwh > 0:
             hourly.append(PriceCandidate(wr.ptf_tl_per_mwh, f"hourly_weighted:{profile}",
-                                         "hourly", hourly_trusted, hourly_epias))
+                                         "hourly", hourly_trusted, hourly_epias, True))
     if hourly:
         return hourly
 
     if record is not None and ref_ptf and ref_ptf > 0:
-        return [PriceCandidate(ref_ptf, "reference_scalar", record.source, ref_trusted, ref_epias)]
+        return [PriceCandidate(ref_ptf, "reference_scalar", record.source, ref_trusted, ref_epias,
+                               ref_final)]
     return []
+
+
+def _dogrulanmamis(**ek: Any) -> dict[str, Any]:
+    """Doğrulanmamış bileşen için ortak alanlar."""
+    return {"source": None, "trusted": False, "final": False, "system_verified": False,
+            "epias": False, **ek}
 
 
 def build_price_provenance(
@@ -237,24 +348,36 @@ def build_price_provenance(
     period: Any,
     ptf: Any,
     yekdem: Any,
-    yekdem_excluded: bool,
-    user_confirmed: bool,
+    yekdem_mode: Any,
+    mode_basis: str = "user",
     customer_id: Optional[str] = None,
-    exclusion_basis: Optional[str] = None,
+    offer_yekdem_tl: Any = None,
 ) -> dict[str, Any]:
-    """Teklif fiyatının kaynağı + kesinleştirme kararı (JSON'a yazılabilir dict).
+    """Teklif fiyatının kaynağı ve kesinleştirme kararı (JSON'a yazılabilir dict).
 
-    `db=None` → sistem doğrulaması yapılamaz (system_lookup='unavailable');
-    fiyat ancak kullanıcı onayıyla doğrulanır. DB sorgusu hata verirse de aynı
-    (fail-closed; 'error'). Değerler asla değiştirilmez/doldurulmaz — yalnız
+    Karar YALNIZ sunucu verisine dayanır; istemci beyanı parametre olarak bile
+    alınmaz. `db=None` ya da DB hatası → sistem doğrulaması yapılamaz
+    (system_lookup='unavailable'/'error') ve fiyat doğrulanmış SAYILMAZ
+    (fail-closed). Değerler asla değiştirilmez ya da doldurulmaz; yalnız
     sınıflandırılır.
 
-    Çağrıldığı yerler: modül başlığındaki liste (GET fiyat durumu, AI hesabı,
-    POST /offers kapısı, doğrudan PDF uçları).
+    Args:
+        yekdem_mode: 'included' | 'excluded' | 'exempt'. None = seçim yapılmadı
+            (AI akışında faturada YEKDEM kalemi yoksa) → yekdem_mode_required.
+        mode_basis: seçimin dayanağı: 'user' (açık seçim), 'invoice' (faturada
+            YEKDEM kalemi var) ya da 'default' (uç varsayılanı: included).
+        offer_yekdem_tl: teklif hesabındaki YEKDEM tutarı. Hariç/muaf seçiminde
+            0 değilse seçim ile hesap çelişir (yekdem_mode_conflict).
+
+    Çağrıldığı yerler: modül başlığındaki liste. GET fiyat durumu ve AI hesabı
+    doğrudan çağırır; POST /offers ve doğrudan belge (PDF/HTML) uçları
+    offer_price_gate() üzerinden çağırır.
     """
     p = normalize_period(period)
     ptf_value = _finite(ptf)
-    yekdem_value = _finite(yekdem)
+    mode, mode_valid = parse_yekdem_mode(yekdem_mode)
+    included = mode == YEKDEM_MODE_INCLUDED
+    yekdem_value = _finite(yekdem) if included else None
 
     lookup = "ok"
     candidates: list[PriceCandidate] = []
@@ -278,82 +401,138 @@ def build_price_provenance(
         "db_values": sorted({round(c.value, 2) for c in candidates}),
     }
     if ptf_value is None or ptf_value <= 0:
-        ptf_block.update(status="missing", source=None, source_detail=None,
-                         system_verified=False, epias=False)
+        ptf_block.update(_dogrulanmamis(status="missing", source_detail=None))
         reasons.append(REASON_PTF_MISSING)
     else:
-        match = next((c for c in candidates
-                      if abs(c.value - ptf_value) <= PRICE_TOLERANCE_TL_PER_MWH), None)
-        if match is not None:
-            ptf_block.update(status="matched", source=match.source,
-                             source_detail=match.source_detail,
-                             system_verified=match.trusted, epias=match.epias)
+        eslesen = [c for c in candidates if abs(c.value - ptf_value) <= PRICE_TOLERANCE_TL_PER_MWH]
+        # Aynı değere birden çok aday eşleşirse en güçlüsü (güvenilir + kesin) seçilir.
+        match = max(eslesen, key=lambda c: (c.trusted and c.final, c.trusted), default=None)
+        if match is None:
+            ptf_block.update(_dogrulanmamis(status="user_entered", source_detail=None))
+            ptf_block["source"] = "user_entered"
+            reasons.append(REASON_PTF_UNVERIFIED)
         else:
-            ptf_block.update(status="user_entered", source="user_entered",
-                             source_detail=None, system_verified=False, epias=False)
+            ptf_block.update(status="matched", source=match.source,
+                             source_detail=match.source_detail, trusted=match.trusted,
+                             final=match.final, system_verified=match.trusted and match.final,
+                             epias=match.epias)
+            if not match.trusted:
+                reasons.append(REASON_PTF_UNVERIFIED)
+            elif not match.final:
+                reasons.append(REASON_PTF_PROVISIONAL)
 
     # ── YEKDEM ─────────────────────────────────────────────────────────────
+    # Dönemin kendi YEKDEM durumu seçimden BAĞIMSIZ döner: istemci "dahil"e
+    # geçildiğinde değerin kesinleşip kesinleşmediğini buradan gösterir.
+    period_verified = bool(period_yekdem.status == "known" and period_yekdem.trusted
+                           and period_yekdem.final)
     yekdem_block: dict[str, Any] = {
+        "mode": mode,
+        "mode_basis": mode_basis if mode is not None else None,
         "period_status": period_yekdem.status,
         "period_value": period_yekdem.value,
+        "period_record_status": period_yekdem.record_status,
+        "period_trusted": period_yekdem.trusted,
+        "period_verified": period_verified,
     }
-    if yekdem_excluded:
-        yekdem_block.update(mode="excluded", exclusion_basis=exclusion_basis or "user",
-                            value=None, status="excluded", source=None,
-                            system_verified=False, epias=False)
-    elif yekdem_value is None or yekdem_value < 0:
-        yekdem_block.update(mode="included", value=yekdem_value, status="missing",
-                            source=None, system_verified=False, epias=False)
+    if not mode_valid:
+        yekdem_block.update(_dogrulanmamis(value=None, status="mode_invalid"))
+        reasons.append(REASON_YEKDEM_MODE_INVALID)
+    elif mode is None:
+        yekdem_block.update(_dogrulanmamis(value=None, status="mode_required"))
+        reasons.append(REASON_YEKDEM_MODE_REQUIRED)
+    elif not included:
+        # Hariç / muaf: açık seçimdir, değer gerekmez ve teklif fiyatına YEKDEM girmez.
+        yekdem_block.update(_dogrulanmamis(value=None, status=mode))
+        teklif_yekdem = _finite(offer_yekdem_tl)
+        if teklif_yekdem is not None and abs(teklif_yekdem) > AMOUNT_TOLERANCE_TL:
+            reasons.append(REASON_YEKDEM_MODE_CONFLICT)
+    elif yekdem_value is None:
+        yekdem_block.update(_dogrulanmamis(value=None, status="missing"))
         reasons.append(REASON_YEKDEM_MISSING)
+    elif yekdem_value < 0:
+        yekdem_block.update(_dogrulanmamis(value=yekdem_value, status="invalid"))
+        reasons.append(REASON_YEKDEM_UNVERIFIED)
+    elif yekdem_value == 0.0:
+        # Gerçek 0 değer olarak taşınır; eksik veriden ayırt edilemediği için
+        # doğrulanmaz (modül başlığı). Hariç/muaf'a çevrilmez.
+        yekdem_block.update(_dogrulanmamis(value=0.0, status="zero_unverified"))
+        reasons.append(REASON_YEKDEM_ZERO_UNVERIFIED)
+    elif (period_yekdem.status == "known" and period_yekdem.value is not None
+            and abs(period_yekdem.value - yekdem_value) <= PRICE_TOLERANCE_TL_PER_MWH):
+        yekdem_block.update(value=yekdem_value, status="matched", source=period_yekdem.source,
+                            trusted=period_yekdem.trusted, final=period_yekdem.final,
+                            system_verified=period_verified, epias=period_yekdem.epias)
+        if not period_yekdem.trusted:
+            reasons.append(REASON_YEKDEM_UNVERIFIED)
+        elif not period_yekdem.final:
+            reasons.append(REASON_YEKDEM_PROVISIONAL)
     else:
-        yekdem_block.update(mode="included", value=yekdem_value)
-        if (period_yekdem.status == "known" and period_yekdem.value is not None
-                and abs(period_yekdem.value - yekdem_value) <= PRICE_TOLERANCE_TL_PER_MWH):
-            yekdem_block.update(status="matched", source=period_yekdem.source,
-                                system_verified=period_yekdem.trusted,
-                                epias=period_yekdem.epias)
-        elif yekdem_value == 0.0:
-            # Gerçek 0 ancak kullanıcı onayıyla kabul edilir: eksik veri de 0'a
-            # dönüşmüş olabilir (kolon NOT NULL; eski yazımlar 0 bırakıyordu).
-            yekdem_block.update(status="zero", source="zero_requires_confirmation",
-                                system_verified=False, epias=False)
-        else:
-            yekdem_block.update(status="user_entered", source="user_entered",
-                                system_verified=False, epias=False)
-
-    ptf_needs = REASON_PTF_MISSING not in reasons and not ptf_block["system_verified"]
-    yekdem_needs = (not yekdem_excluded and REASON_YEKDEM_MISSING not in reasons
-                    and not yekdem_block["system_verified"])
-    requires_confirmation = ptf_needs or yekdem_needs
-    if requires_confirmation and not user_confirmed:
-        reasons.append(REASON_CONFIRMATION_REQUIRED)
+        yekdem_block.update(_dogrulanmamis(value=yekdem_value, status="user_entered"))
+        yekdem_block["source"] = "user_entered"
+        reasons.append(REASON_YEKDEM_UNVERIFIED)
 
     verified = not reasons
-    epias_basis = bool(
-        verified
-        and ptf_block["system_verified"] and ptf_block["epias"]
-        and (yekdem_excluded or (yekdem_block["system_verified"] and yekdem_block["epias"]))
-    )
-    if not verified:
-        verified_by = None
-    elif requires_confirmation:
-        verified_by = "user"
-    else:
-        verified_by = "system"
+    epias_basis = bool(verified and ptf_block["epias"] and (not included or yekdem_block["epias"]))
     return {
         "version": PROVENANCE_VERSION,
         "period": p,
         "system_lookup": lookup,
         "ptf": ptf_block,
         "yekdem": yekdem_block,
-        "requires_confirmation": requires_confirmation,
-        "user_confirmed": bool(user_confirmed),
         "verified": verified,
-        "verified_by": verified_by,
+        "verified_by": "system" if verified else None,
+        # Doğrulanmamış fiyatla hesap yalnız TASLAK olarak gösterilebilir.
+        "draft_only": not verified,
+        "provisional": any(r in PROVISIONAL_REASONS for r in reasons),
         "epias_basis": epias_basis,
         "blocking_reasons": reasons,
         "messages": [REASON_MESSAGES[r] for r in reasons],
     }
+
+
+def offer_price_gate(
+    db: Optional[Session],
+    *,
+    period: Any,
+    ptf: Any,
+    yekdem: Any,
+    yekdem_mode: Optional[str],
+    customer_id: Optional[str] = None,
+    offer_yekdem_tl: Any = None,
+) -> dict[str, Any]:
+    """Teklif kaydı ve doğrudan belge (PDF/HTML) uçlarının ORTAK fiyat kapısı.
+
+    İstek YEKDEM seçimi göndermezse 'included' kabul edilir (en katı yol:
+    doğrulanmış YEKDEM ister; sessiz "hariç" YOK) ve dayanağı 'default' yazılır.
+    Dönen provenance['verified'] False ise uç 422 (price_block_content) döner.
+    İstemcinin "doğrulandı" beyanı parametre olarak bile alınmaz.
+
+    Çağrıldığı yerler:
+    - main.create_offer() → POST /offers
+    - main.generate_pdf_direct() → POST /generate-pdf-direct
+    - main.generate_pdf_simple() → POST /generate-pdf-simple
+    - main.generate_html_direct() → POST /generate-html-direct
+    """
+    return build_price_provenance(
+        db,
+        period=period,
+        ptf=ptf,
+        yekdem=yekdem,
+        yekdem_mode=yekdem_mode if yekdem_mode is not None else YEKDEM_MODE_INCLUDED,
+        mode_basis="user" if yekdem_mode is not None else "default",
+        customer_id=customer_id,
+        offer_yekdem_tl=offer_yekdem_tl,
+    )
+
+
+def yekdem_applied(provenance: dict[str, Any]) -> bool:
+    """Teklif fiyatına YEKDEM uygulanıyor mu (seçim 'included')? Hariç ve muaf'ta
+    uygulanan YEKDEM 0'dır; ayrım provenance['yekdem']['mode'] alanındadır.
+
+    Çağrıldığı yerler: offer_price_gate() ile aynı uçlar (uygulanan YEKDEM değeri).
+    """
+    return (provenance.get("yekdem") or {}).get("mode") == YEKDEM_MODE_INCLUDED
 
 
 def price_block_content(provenance: dict[str, Any]) -> dict[str, Any]:
@@ -363,6 +542,7 @@ def price_block_content(provenance: dict[str, Any]) -> dict[str, Any]:
     - main.create_offer() → POST /offers
     - main.generate_pdf_simple() → POST /generate-pdf-simple
     - main.generate_pdf_direct() → POST /generate-pdf-direct
+    - main.generate_html_direct() → POST /generate-html-direct
     """
     messages = provenance.get("messages") or []
     return {
@@ -379,14 +559,17 @@ def snapshot_price_verified(calculation_result: Any) -> bool:
     """Kaydedilmiş teklif snapshot'ı sunucuda doğrulanmış fiyat taşıyor mu?
 
     Faz 1 öncesi kayıtlarda provenance YOKTUR → False: kaynağı bilinmeyen
-    geçmiş kayıt doğrulanmış SAYILMAZ ve yeniden hesaplanmaz.
+    geçmiş kayıt doğrulanmış SAYILMAZ ve yeniden hesaplanmaz. Sürüm 1
+    snapshot'ları (kullanıcı onayıyla doğrulanmış olabilir) de False döner.
 
     Çağrıldığı yerler:
     - main.generate_pdf_for_offer() → POST /offers/{id}/generate-pdf
+    - main.generate_html_for_offer() → POST /offers/{id}/generate-html
     """
     if not isinstance(calculation_result, dict):
         return False
     prov = calculation_result.get("meta_price_provenance")
     return (isinstance(prov, dict)
             and prov.get("version") == PROVENANCE_VERSION
-            and prov.get("verified") is True)
+            and prov.get("verified") is True
+            and prov.get("verified_by") == "system")

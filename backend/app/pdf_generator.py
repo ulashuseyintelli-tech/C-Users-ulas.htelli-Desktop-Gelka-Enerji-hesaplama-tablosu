@@ -133,9 +133,14 @@ def fiyat_kaynagi_bayraklari(calculation: CalculationResult) -> dict:
     prov = getattr(calculation, "meta_price_provenance", None) or {}
     ptf = prov.get("ptf") or {}
     yekdem = prov.get("yekdem") or {}
+    mode = yekdem.get("mode")
     return {
         "epias_basis": prov.get("verified") is True and prov.get("epias_basis") is True,
-        "yekdem_excluded": yekdem.get("mode") == "excluded",
+        # "Hariç" ve "muaf" AYRI seçimlerdir (metinleri farklıdır); ikisinde de
+        # teklif fiyatına YEKDEM eklenmez (yekdem_not_applied).
+        "yekdem_excluded": mode == "excluded",
+        "yekdem_exempt": mode == "exempt",
+        "yekdem_not_applied": mode in ("excluded", "exempt"),
         "ptf_reference_scalar": (
             ptf.get("source") == "reference_scalar"
             or getattr(calculation, "meta_pricing_source", "") == "reference_scalar"
@@ -153,7 +158,9 @@ def enerji_bedeli_paragraflari(bayraklar: dict, agreement_multiplier: float) -> 
     Çağrıldığı yerler:
     - pdf_generator._generate_pdf_reportlab()
     """
-    haric = bool(bayraklar.get("yekdem_excluded"))
+    # Hariç ya da muaf: teklif fiyatına YEKDEM eklenmez; metin YEKDEM eklemesinden söz etmez.
+    haric = bool(bayraklar.get("yekdem_not_applied") or bayraklar.get("yekdem_excluded")
+                 or bayraklar.get("yekdem_exempt"))
     epias = bool(bayraklar.get("epias_basis"))
     if epias:
         giris = ("Enerji bedeli, EPİAŞ verileri esas alınarak oluşturulmaktadır. İlgili fatura dönemi için "
@@ -180,11 +187,15 @@ def enerji_bedeli_paragraflari(bayraklar: dict, agreement_multiplier: float) -> 
 
 
 def yekdem_uygulamasi_metni(bayraklar: dict) -> str:
-    """'YEKDEM Uygulaması' paragrafı — açıkça hariç tutulan YEKDEM ayrı yazılır.
+    """'YEKDEM Uygulaması' paragrafı — açıkça seçilen hariç ve muaf AYRI yazılır.
 
     Çağrıldığı yerler:
     - pdf_generator._generate_pdf_reportlab()
     """
+    if bayraklar.get("yekdem_exempt"):
+        # Muaf, hariç ile AYNI DEĞİLDİR: müşteri YEKDEM bedelinden muaftır (açık seçim).
+        return ("Bu teklif, müşterinin YEKDEM bedelinden muaf olduğu bilgisine dayanır; "
+                "enerji birim fiyatına YEKDEM bedeli eklenmemiştir.")
     if bayraklar.get("yekdem_excluded"):
         return "Bu teklifte YEKDEM bedeli enerji birim fiyatına dahil edilmemiştir."
     return ("YEKDEM bedeli tahmini değerdir. EPİAŞ tarafından açıklanacak kesin YEKDEM bedeline göre "
@@ -919,7 +930,9 @@ def _generate_pdf_reportlab(
         ["Mevcut Birim Fiyat", f"{fmt_num(current_unit_price, 4)} TL/kWh", "Teklif Birim Fiyat", f"{fmt_num(offer_unit_price, 4)} TL/kWh"],
         ["Anlaşma Çarpanı", fmt_num(params.agreement_multiplier), "Birim Fiyat Farkı", f"{fmt_num(current_unit_price - offer_unit_price, 4)} TL/kWh"],
         ["Ağırlıklı PTF", f"{fmt_num(params.weighted_ptf_tl_per_mwh)} TL/MWh", "YEKDEM",
-         "Dahil değil" if _fiyat["yekdem_excluded"] else f"{fmt_num(params.yekdem_tl_per_mwh)} TL/MWh"],
+         "Muaf" if _fiyat["yekdem_exempt"] else (
+                     "Dahil değil" if _fiyat["yekdem_excluded"]
+                     else f"{fmt_num(params.yekdem_tl_per_mwh)} TL/MWh")],
     ]
     # 4 eşit sütun
     t = Table(param_data, colWidths=[col4, col4, col4, col4])

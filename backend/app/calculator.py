@@ -185,7 +185,8 @@ def get_ptf_yekdem_for_period(
     YEKDEM her dalda aylık (market_reference_prices); Seviye 1 yalnız PTF.
     Fiyat Doğruluğu Faz 1: YEKDEM bilinmiyorsa None döner (eskiden kayıt yoksa
     0.0, override'da `or 0`); faturada YEKDEM varsa calculate_offer fail-closed
-    olur. DB'deki 0 değer olarak taşınır (price_provenance kullanıcı onayı ister).
+    olur. DB'deki 0 değer olarak taşınır; price_provenance onu doğrulanmamış sıfır
+    sayar ve kesin teklifi engeller.
 
     Returns:
         (ptf_tl_per_mwh, yekdem_tl_per_mwh | None, source, error_message, warning)
@@ -373,11 +374,11 @@ def calculate_offer(
     if should_include_yekdem and yekdem_tl_per_mwh is None:
         raise CalculationError(
             f"Dönem {invoice_period or '-'} için YEKDEM birim bedeli bilinmiyor; faturada "
-            "YEKDEM bedeli var. YEKDEM'i yönetim ekranından (Piyasa Fiyatları) girin ya da "
-            "fiyatı elle girip onaylayın."
+            "YEKDEM bedeli var. YEKDEM'i yönetim ekranından (Piyasa Fiyatları) girin."
         )
-    # YEKDEM hariçken değer teklife girmez; bilinmiyorsa hesapta 0 kullanılır ama
-    # provenance'ta 'excluded' olarak işaretlenir (gerçek 0 ile karışmaz).
+    # Faturada YEKDEM kalemi yoksa değer teklife girmez. Bilinmiyorsa hesap alanında
+    # 0 görünür; provenance'ta ise seçim boş kalır (yekdem_mode_required). Böylece
+    # eksik veri, gerçek 0, hariç ve muaf birbirine karışmaz.
     yekdem_for_calc = yekdem_tl_per_mwh if yekdem_tl_per_mwh is not None else 0.0
 
     # Teklif parametreleri
@@ -616,19 +617,23 @@ def calculate_offer(
         # Mismatch yok veya tolerans içinde - info level
         logger.info(log_msg)
 
-    # Fiyat Doğruluğu Faz 1: fiyatın dönemi/kaynağı (UI onay kutusu ve kalıcı
-    # teklif kapısı bununla karar verir). db yoksa sistem doğrulaması yapılamaz.
+    # Fiyat Doğruluğu Faz 1: fiyatın dönemi, kaynağı ve kayıt durumu. Arayüz taslak
+    # işaretini ve düğme durumunu bununla gösterir; esas kapı POST /offers ve PDF
+    # uçlarındadır. db yoksa sistem doğrulaması yapılamaz. Faturada YEKDEM kalemi
+    # varsa seçim 'included' olur (en katı yol: doğrulanmış değer ister). Kalem
+    # YOKSA "hariç" TAHMİN EDİLMEZ: seçim boş kalır (yekdem_mode_required) ve
+    # kullanıcı dahil / hariç / muaf'ı açıkça seçer. Hesap o durumda YEKDEM'siz
+    # taslak olarak gösterilir.
     meta_price_provenance = None
     if db is not None:
-        from .price_provenance import build_price_provenance
+        from .price_provenance import YEKDEM_MODE_INCLUDED, build_price_provenance
         meta_price_provenance = build_price_provenance(
             db,
             period=invoice_period,
             ptf=ptf_tl_per_mwh,
-            yekdem=yekdem_tl_per_mwh if should_include_yekdem else None,
-            yekdem_excluded=not should_include_yekdem,
-            exclusion_basis="invoice",
-            user_confirmed=False,
+            yekdem=yekdem_tl_per_mwh,
+            yekdem_mode=YEKDEM_MODE_INCLUDED if should_include_yekdem else None,
+            mode_basis="invoice",
             customer_id=params.customer_id,
         )
 

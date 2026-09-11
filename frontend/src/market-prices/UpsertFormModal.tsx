@@ -422,6 +422,11 @@ export const UpsertFormModal: React.FC<UpsertFormModalProps> = ({
                 {allFieldErrors.status}
               </p>
             )}
+            {/* Fiyat Doğruluğu Faz 1 (owner teyidi): durum teklif kapısını belirler. */}
+            <p className="mt-1 text-xs text-gray-500" data-testid="status-hint">
+              Yalnız "{STATUS_LABELS.final}" kayıtlar kesin teklif ve PDF'te kullanılır;
+              "{STATUS_LABELS.provisional}" kayıtlar yalnız taslak hesapta kullanılır.
+            </p>
           </div>
 
           {/* Change Reason */}

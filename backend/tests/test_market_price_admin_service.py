@@ -6,6 +6,7 @@ Tests upsert, bulk operations, lookup, and listing.
 """
 
 import pytest
+from dataclasses import replace
 from decimal import Decimal
 from datetime import datetime
 from unittest.mock import MagicMock, patch
@@ -63,9 +64,28 @@ def sample_record():
 
 class TestUpsertInsert:
     """Tests for INSERT path."""
+
+    def test_insert_without_yekdem_rejected_no_zero_written(self, service, mock_db, sample_input):
+        """Fiyat Doğruluğu Faz 1: yeni PTF dönemi YEKDEM'siz oluşturulamaz; eksik YEKDEM
+        0 olarak YAZILMAZ (DB'ye hiçbir kayıt eklenmez)."""
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
+        result = service.upsert_price(
+            db=mock_db,
+            normalized=sample_input,  # yekdem_value=None
+            updated_by="admin",
+            source="epias_manual",
+        )
+
+        assert result.success is False
+        assert result.error.error_code == ServiceErrorCode.YEKDEM_REQUIRED
+        assert result.error.field == "yekdem_value"
+        mock_db.add.assert_not_called()
+        mock_db.commit.assert_not_called()
     
     def test_insert_new_record(self, service, mock_db, sample_input):
         """New record should be created (+ audit history write)."""
+        sample_input = replace(sample_input, yekdem_value=Decimal("300.00"))  # Faz 1: yeni kayıt YEKDEM ister
         # Setup: no existing record
         mock_db.query.return_value.filter.return_value.first.return_value = None
         
@@ -87,6 +107,7 @@ class TestUpsertInsert:
     
     def test_insert_without_change_reason_ok(self, service, mock_db, sample_input):
         """Insert without change_reason should succeed."""
+        sample_input = replace(sample_input, yekdem_value=Decimal("300.00"))  # Faz 1: yeni kayıt YEKDEM ister
         mock_db.query.return_value.filter.return_value.first.return_value = None
         
         result = service.upsert_price(
@@ -102,6 +123,7 @@ class TestUpsertInsert:
     
     def test_insert_db_conflict(self, service, mock_db, sample_input):
         """DB conflict should return error."""
+        sample_input = replace(sample_input, yekdem_value=Decimal("300.00"))  # Faz 1: yeni kayıt YEKDEM ister
         mock_db.query.return_value.filter.return_value.first.return_value = None
         mock_db.commit.side_effect = IntegrityError("", "", "")
         
@@ -320,8 +342,8 @@ class TestBulkUpsert:
         mock_db.query.return_value.filter.return_value.first.return_value = None
         
         inputs = [
-            NormalizedMarketPriceInput(period="2025-01", value=Decimal("2500"), status="final", price_type="PTF"),
-            NormalizedMarketPriceInput(period="2025-02", value=Decimal("2600"), status="final", price_type="PTF"),
+            NormalizedMarketPriceInput(period="2025-01", value=Decimal("2500"), status="final", price_type="PTF", yekdem_value=Decimal("300")),
+            NormalizedMarketPriceInput(period="2025-02", value=Decimal("2600"), status="final", price_type="PTF", yekdem_value=Decimal("300")),
         ]
         
         result = service.bulk_upsert(
@@ -348,8 +370,8 @@ class TestBulkUpsert:
         ]
         
         inputs = [
-            NormalizedMarketPriceInput(period="2025-01", value=Decimal("2500"), status="final", price_type="PTF"),
-            NormalizedMarketPriceInput(period="2025-02", value=Decimal("2600"), status="final", price_type="PTF"),
+            NormalizedMarketPriceInput(period="2025-01", value=Decimal("2500"), status="final", price_type="PTF", yekdem_value=Decimal("300")),
+            NormalizedMarketPriceInput(period="2025-02", value=Decimal("2600"), status="final", price_type="PTF", yekdem_value=Decimal("300")),
         ]
         
         result = service.bulk_upsert(
@@ -375,8 +397,8 @@ class TestBulkUpsert:
         ]
         
         inputs = [
-            NormalizedMarketPriceInput(period="2025-01", value=Decimal("2500"), status="final", price_type="PTF"),
-            NormalizedMarketPriceInput(period="2025-02", value=Decimal("2600"), status="final", price_type="PTF"),
+            NormalizedMarketPriceInput(period="2025-01", value=Decimal("2500"), status="final", price_type="PTF", yekdem_value=Decimal("300")),
+            NormalizedMarketPriceInput(period="2025-02", value=Decimal("2600"), status="final", price_type="PTF", yekdem_value=Decimal("300")),
         ]
         
         result = service.bulk_upsert(

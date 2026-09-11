@@ -286,9 +286,6 @@ class CanliSunucu:
             return r.status, json.loads(r.read().decode("utf-8"))
 
     def post_offer(self, sorgu: str = "", govde: dict | None = None):
-        # Fiyat Doğruluğu Faz 1: bu testler R2 ham-toplam kapısını ölçer. Sentetik
-        # PTF/YEKDEM disposable DB'de yok → fiyat kapısı açık kullanıcı onayıyla geçilir.
-        sorgu = f"{sorgu}{'&' if '?' in sorgu else '?'}price_confirmed_by_user=true"
         veri = json.dumps(govde or GOVDE_TEMEL).encode("utf-8")
         istek = urllib.request.Request(
             self._url("/offers" + sorgu), data=veri, method="POST",
@@ -356,6 +353,26 @@ def _alembic_yolu() -> Path:
         + ", ".join(str(a) for a in adaylar)
     )
 
+def _kesin_fiyat_yaz(db_yolu: Path) -> None:
+    """Fiyat Doğruluğu Faz 1: teklif fiyatı sunucuda dönemin güvenilir + KESİN (final)
+    kaydıyla doğrulanır (kullanıcı onayı yolu yok). Bu testler R2 ham-toplam kapısını
+    ölçer; sentetik gövdenin (GOVDE_TEMEL) dönem fiyatı disposable DB'ye yazılır."""
+    con = sqlite3.connect(str(db_yolu))
+    try:
+        con.execute(
+            "INSERT INTO market_reference_prices (price_type, period, ptf_tl_per_mwh, "
+            "yekdem_tl_per_mwh, status, source, is_locked, updated_by, change_reason, "
+            "created_at, updated_at) VALUES ('PTF', ?, ?, ?, 'final', 'epias_manual', 0, "
+            "'test', 'R01A sentetik kesin fiyat', datetime('now'), datetime('now'))",
+            (GOVDE_TEMEL["extraction"]["invoice_period"],
+             GOVDE_TEMEL["params"]["weighted_ptf_tl_per_mwh"],
+             GOVDE_TEMEL["params"]["yekdem_tl_per_mwh"]),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
 @pytest.fixture(scope="module")
 def sunucu(tmp_path_factory):
     kok = tmp_path_factory.mktemp("s5r01a_http")
@@ -365,6 +382,7 @@ def sunucu(tmp_path_factory):
     sonuc = subprocess.run([str(alembic), "upgrade", "head"], cwd=str(BACKEND),
                            env=ortam, capture_output=True)
     assert sonuc.returncode == 0, sonuc.stderr.decode("utf-8", "replace")[-800:]
+    _kesin_fiyat_yaz(kok / "uat.db")
 
     s = CanliSunucu(kok)
     s.baslat()

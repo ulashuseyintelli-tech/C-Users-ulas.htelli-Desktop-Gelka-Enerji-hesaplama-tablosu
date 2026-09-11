@@ -112,12 +112,19 @@ def client(db, storage_tmp):
     fastapi_app.dependency_overrides.clear()
 
 
-def _dogrulanmis_fiyat(ptf=2500.0, yekdem=50.0):
-    """Fiyat Doğruluğu Faz 1: PDF yalnız sunucuda doğrulanmış fiyat snapshot'ından
-    üretilir (kullanıcı onaylı provenance GERÇEK fonksiyonla hesaplanır)."""
+def _dogrulanmis_fiyat(db, ptf=2500.0, yekdem=50.0):
+    """Fiyat Doğruluğu Faz 1: PDF yalnız sunucuda doğrulanmış (güvenilir + KESİN)
+    fiyat snapshot'ından üretilir. Dönemin kesin kaydı test DB'sine yazılır ve
+    provenance GERÇEK fonksiyonla hesaplanır (elle uydurulmaz; onay yolu yok)."""
+    from app.database import MarketReferencePrice
     from app.price_provenance import build_price_provenance
-    return build_price_provenance(None, period="2026-01", ptf=ptf, yekdem=yekdem,
-                                  yekdem_excluded=False, user_confirmed=True)
+    if db.query(MarketReferencePrice).filter_by(period="2026-01", price_type="PTF").first() is None:
+        db.add(MarketReferencePrice(period="2026-01", price_type="PTF", ptf_tl_per_mwh=ptf,
+                                    yekdem_tl_per_mwh=yekdem, source="epias_manual",
+                                    status="final", is_locked=0))
+        db.commit()
+    return build_price_provenance(db, period="2026-01", ptf=ptf, yekdem=yekdem,
+                                  yekdem_mode="included")
 
 
 def _teklif(db):
@@ -138,7 +145,7 @@ def _teklif(db):
         savings_amount=192.0,
         savings_ratio=0.0667,
         extraction_result={"meta": {}},
-        calculation_result=dict(HESAP_SONUCU, meta_price_provenance=_dogrulanmis_fiyat()),
+        calculation_result=dict(HESAP_SONUCU, meta_price_provenance=_dogrulanmis_fiyat(db)),
     )
     db.add(o)
     db.flush()

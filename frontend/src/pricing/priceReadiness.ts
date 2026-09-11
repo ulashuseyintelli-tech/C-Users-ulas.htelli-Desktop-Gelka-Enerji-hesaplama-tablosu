@@ -2,30 +2,54 @@
 // Fiyat Doğruluğu Faz 1 — teklif kesinleştirme için PTF/YEKDEM hazırlık durumu
 // =============================================================================
 // Backend kapısının (price_provenance.build_price_provenance → POST /offers 422
-// price_unverified) istemci tarafı yansımasıdır: düğmeleri ve uyarıları yönetir.
-// Esas koruma SUNUCUDADIR; bu modül kullanıcıya erken ve açık geri bildirim verir.
+// price_unverified) istemci tarafı yansımasıdır. Düğmeleri, TASLAK işaretini ve
+// uyarıları yönetir. Esas koruma SUNUCUDADIR; bu modül yalnız erken ve açık geri
+// bildirim verir. Kullanıcı onayı kapıyı AÇMAZ (owner teyidi: doğrulama sunucuda).
 //
-// Üç YEKDEM durumu birbirinden AYRILIR:
-// - bilinmiyor (null)   → kesinleştirme engellenir
-// - değer (0 dahil)     → 0, DB'de "girilmedi" ile karışabildiği için HER ZAMAN açık onay ister
-// - "YEKDEM hariç"      → açık seçim; değer gerekmez
+// Kesin teklif için:
+// - PTF, sunucunun doğruladığı (güvenilir + KESİN/final) dönem değeriyle aynı olmalı;
+// - YEKDEM uygulaması AÇIKÇA seçilmeli: dahil / hariç / muaf;
+// - dahilse YEKDEM, dönemin güvenilir + kesin kaydıyla aynı olmalı.
+// provisional (kesinleşmemiş) kayıttan gelen fiyat yalnız TASLAK hesapta kullanılır.
+//
+// YEKDEM durumları birbirine EŞİTLENMEZ:
+// - bilinmiyor (null) → engel
+// - gerçek 0          → değer olarak gösterilir; kayıtlı 0 eksik veriden ayırt
+//                       edilemediği için Faz 1'de kesin teklifte kullanılamaz
+// - hariç / muaf      → açık seçimler; değer gerekmez, PDF metinleri farklıdır
 //
 // Çağrıldığı yerler:
-// - App.tsx → PDF İndir / teklif kaydı düğmeleri, handleDownloadPdf kapısı, fiyat paneli uyarıları
+// - App.tsx → PDF İndir / teklif kaydı düğmeleri, handleDownloadPdf kapısı, fiyat paneli
+// - pricing/PriceDraftBanner.tsx → TASLAK işareti ve gerekçe listesi
+// - pricing/YekdemModeSelector.tsx → seçenek etiketleri
 // =============================================================================
+
+export type YekdemMode = 'included' | 'excluded' | 'exempt';
+
+export const YEKDEM_MODE_LABELS: Record<YekdemMode, string> = {
+  included: 'Dahil',
+  excluded: 'Hariç',
+  exempt: 'Muaf',
+};
 
 export interface PriceProvenanceComponent {
   value?: number | null;
   status?: string;
   source?: string | null;
   source_detail?: string | null;
+  trusted?: boolean;
+  final?: boolean;
   system_verified?: boolean;
   epias?: boolean;
-  mode?: 'included' | 'excluded';
-  exclusion_basis?: string;
+  db_values?: number[];
+  // YEKDEM'e özgü: seçim ve dönemin kendi durumu (seçimden bağımsız)
+  mode?: YekdemMode | null;
+  mode_basis?: string | null;
   period_status?: string;
   period_value?: number | null;
-  db_values?: number[];
+  period_record_status?: string | null;
+  period_trusted?: boolean;
+  period_verified?: boolean;
 }
 
 export interface PriceProvenance {
@@ -34,10 +58,10 @@ export interface PriceProvenance {
   system_lookup?: string;
   ptf?: PriceProvenanceComponent;
   yekdem?: PriceProvenanceComponent;
-  requires_confirmation?: boolean;
-  user_confirmed?: boolean;
   verified?: boolean;
-  verified_by?: 'system' | 'user' | null;
+  verified_by?: 'system' | null;
+  draft_only?: boolean;
+  provisional?: boolean;
   epias_basis?: boolean;
   blocking_reasons?: string[];
   messages?: string[];
@@ -46,43 +70,83 @@ export interface PriceProvenance {
 export interface PriceReadinessInput {
   ptf: number | null;
   yekdem: number | null;
-  /** YEKDEM teklife dahil mi (manuel: "YEKDEM hariç" seçili değil; AI: faturaya göre) */
-  yekdemIncluded: boolean;
+  /** YEKDEM uygulaması (açık seçim); null = seçilmedi */
+  yekdemMode: YekdemMode | null;
   /** Sunucunun EKRANDAKİ değerler için döndürdüğü kaynak (değerler elle değiştiyse geçersiz) */
   provenance: PriceProvenance | null | undefined;
   valuesEditedByUser: boolean;
-  userConfirmed: boolean;
 }
 
 export interface PriceReadiness {
+  /** Kesin teklif ve PDF için hazır (sunucu kapısının yansıması) */
   ready: boolean;
+  /** Ekrandaki hesap TASLAK: fiyat eksik, doğrulanmamış ya da kesinleşmemiş */
+  draft: boolean;
+  /** En az bir fiyat kesinleşmemiş (provisional) kayıttan geliyor */
+  provisional: boolean;
   ptfMissing: boolean;
   yekdemMissing: boolean;
-  requiresConfirmation: boolean;
+  modeRequired: boolean;
   reasons: string[];
 }
 
 const sonluSayi = (v: number | null | undefined): v is number =>
   typeof v === 'number' && Number.isFinite(v);
 
-export function evaluatePriceReadiness(input: PriceReadinessInput): PriceReadiness {
-  const ptfMissing = !(sonluSayi(input.ptf) && input.ptf > 0);
-  const yekdemMissing = input.yekdemIncluded && !(sonluSayi(input.yekdem) && input.yekdem >= 0);
-  const prov = input.valuesEditedByUser ? null : input.provenance ?? null;
-  const ptfSistemce = prov?.ptf?.system_verified === true;
-  const yekdemSistemce =
-    !input.yekdemIncluded || (prov?.yekdem?.system_verified === true && input.yekdem !== 0);
-  const requiresConfirmation = !ptfMissing && !yekdemMissing && (!ptfSistemce || !yekdemSistemce);
+/** Sunucu toleransıyla aynı (0,01 TL/MWh). */
+const ayni = (a: number | null | undefined, b: number | null | undefined): boolean =>
+  sonluSayi(a) && sonluSayi(b) && Math.abs(a - b) <= 0.01;
 
+export function evaluatePriceReadiness(input: PriceReadinessInput): PriceReadiness {
   const reasons: string[] = [];
-  if (ptfMissing) reasons.push('Teklif PTF değeri eksik.');
-  if (yekdemMissing) {
-    reasons.push("YEKDEM birim bedeli bilinmiyor: değer girin ya da 'YEKDEM hariç' seçin.");
+  const ptfMissing = !(sonluSayi(input.ptf) && input.ptf > 0);
+  const modeRequired = input.yekdemMode === null;
+  const included = input.yekdemMode === 'included';
+  const yekdemMissing = included && !sonluSayi(input.yekdem);
+  // Elle değiştirilen değerler sunucuda doğrulanmadı: eldeki kaynak bilgisi geçersizdir.
+  const prov = input.valuesEditedByUser ? null : input.provenance ?? null;
+  let provisional = false;
+
+  if (ptfMissing) {
+    reasons.push('Teklif PTF değeri eksik.');
+  } else if (input.valuesEditedByUser) {
+    reasons.push('Fiyat elle değiştirildi ve sunucuda doğrulanmadı. Kesin teklif için kayıtlı dönem fiyatına dönün.');
+  } else if (!prov?.ptf) {
+    reasons.push('Fiyat kaynağı bilinmiyor: sunucu doğrulaması yok.');
+  } else if (prov.ptf.system_verified !== true) {
+    if (prov.ptf.status === 'matched' && prov.ptf.trusted === true && prov.ptf.final === false) {
+      provisional = true;
+      reasons.push('PTF dönem kaydı kesinleşmemiş (provisional). Yalnız taslak hesapta kullanılabilir.');
+    } else {
+      reasons.push('PTF kaynağı doğrulanmadı: dönemin kesin kaydıyla eşleşmiyor.');
+    }
   }
-  if (requiresConfirmation && !input.userConfirmed) {
-    reasons.push('Fiyat kaynağı doğrulanmadı: PTF/YEKDEM değerlerini kontrol edip onaylayın.');
+
+  if (modeRequired) {
+    reasons.push("YEKDEM uygulaması seçilmedi: 'Dahil', 'Hariç' ya da 'Muaf' seçin.");
+  } else if (included) {
+    const y = prov?.yekdem;
+    if (yekdemMissing) {
+      reasons.push("YEKDEM birim bedeli bilinmiyor. Piyasa Fiyatları'ndan girin ya da 'Hariç'/'Muaf' seçin.");
+    } else if (input.yekdem === 0) {
+      reasons.push('YEKDEM 0: kayıtlı 0 eksik veriden ayırt edilemediği için kesin teklifte kullanılamaz.');
+    } else if (input.valuesEditedByUser || !prov) {
+      // Gerekçe PTF satırında zaten bildirildi (elle değişiklik / kaynak yok).
+    } else if (!y) {
+      reasons.push('YEKDEM kaynağı bilinmiyor.');
+    } else if (!(y.period_verified === true && ayni(input.yekdem, y.period_value))) {
+      if (y.period_status === 'known' && y.period_trusted === true
+          && y.period_record_status !== 'final' && ayni(input.yekdem, y.period_value)) {
+        provisional = true;
+        reasons.push('YEKDEM dönem kaydı kesinleşmemiş (provisional). Yalnız taslak hesapta kullanılabilir.');
+      } else {
+        reasons.push('YEKDEM kaynağı doğrulanmadı: dönemin kesin kaydıyla eşleşmiyor.');
+      }
+    }
   }
-  return { ready: reasons.length === 0, ptfMissing, yekdemMissing, requiresConfirmation, reasons };
+
+  const ready = reasons.length === 0;
+  return { ready, draft: !ready, provisional, ptfMissing, yekdemMissing, modeRequired, reasons };
 }
 
 /** Fiyat kaynağının kısa Türkçe etiketi (panel ve sonuç rozeti). */

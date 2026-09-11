@@ -89,28 +89,31 @@ describe('getEpiasPrices — SoT-X weighted PTF query', () => {
   });
 });
 
-describe('createOffer — Fiyat Doğruluğu Faz 1 bayrakları', () => {
+describe('createOffer — Fiyat Doğruluğu Faz 1 YEKDEM seçimi', () => {
   afterEach(() => { vi.restoreAllMocks(); });
   const params = { weighted_ptf_tl_per_mwh: 2500, yekdem_tl_per_mwh: null, agreement_multiplier: 1.01 };
 
-  it('kullanıcı onayı ve "YEKDEM hariç" query param olarak gider; hariçte YEKDEM gövdede null', async () => {
+  it('hariç ve muaf seçimleri ayrı query param değeri olarak gider; YEKDEM gövdede null kalır', async () => {
     const spy = vi.spyOn(api, 'post').mockResolvedValue({ data: { id: 1 } } as any);
-    await createOffer({} as any, {} as any, params, undefined,
-      { invoice_total_raw: 2880, price_confirmed_by_user: true, yekdem_excluded: true });
+    for (const mod of ['excluded', 'exempt'] as const) {
+      await createOffer({} as any, {} as any, params, undefined, { invoice_total_raw: 2880, yekdem_mode: mod });
+    }
     const [url, govde, ayar] = spy.mock.calls[0] as any[];
     expect(url).toBe('/offers');
     expect(govde.params.yekdem_tl_per_mwh).toBeNull();
-    expect(ayar.params).toMatchObject({ invoice_total_raw: 2880, price_confirmed_by_user: true, yekdem_excluded: true });
+    expect(ayar.params).toMatchObject({ invoice_total_raw: 2880, yekdem_mode: 'excluded' });
+    expect((spy.mock.calls[1] as any[])[2].params.yekdem_mode).toBe('exempt');
   });
 
-  it('onay/hariç yoksa bayrak GÖNDERİLMEZ (sunucu varsayılanı: onaysız, dahil)', async () => {
+  it('kullanıcı onayı bayrağı hiç gönderilmez; seçim yoksa yekdem_mode da gitmez (sunucu: dahil)', async () => {
     const spy = vi.spyOn(api, 'post').mockResolvedValue({ data: { id: 1 } } as any);
     await createOffer({} as any, {} as any, { ...params, yekdem_tl_per_mwh: 0 }, undefined,
-      { invoice_total_raw: 2880 });
+      { invoice_total_raw: 2880, yekdem_mode: null });
     const [, govde, ayar] = spy.mock.calls[0] as any[];
     expect(govde.params.yekdem_tl_per_mwh).toBe(0); // gerçek 0 korunur, null'a dönmez
     expect(ayar.params).not.toHaveProperty('price_confirmed_by_user');
     expect(ayar.params).not.toHaveProperty('yekdem_excluded');
+    expect(ayar.params).not.toHaveProperty('yekdem_mode');
   });
 
   it('price_unverified reddi okunur mesajla yüzeye çıkar', async () => {

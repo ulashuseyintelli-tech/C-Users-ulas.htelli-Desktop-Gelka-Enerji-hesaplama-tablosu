@@ -1,14 +1,21 @@
 """
-Fiyat Doğruluğu Faz 1 — eksik ya da doğrulanmamış PTF/YEKDEM ile teklif KESİNLEŞMEZ.
+Fiyat Doğruluğu Faz 1 — eksik, doğrulanmamış ya da kesinleşmemiş PTF/YEKDEM ile
+teklif KESİNLEŞMEZ.
 
-Owner GO kapsamı (hedefli):
-- eksik veri (PTF/YEKDEM kaydı yok) → null/bilinmiyor; varsayılan sabit YOK
-- gerçek sıfır (saatlik 0 TL/MWh saatleri; açıkça girilen YEKDEM 0) eksikten AYRI
-- açıkça seçilen "YEKDEM hariç" gerçek 0'dan AYRI
-- API'den doğrudan kayıt/PDF denemesi (POST /offers, /offers/{id}/generate-pdf,
-  /generate-pdf-simple, /generate-pdf-direct) sunucuda reddedilir
+Owner GO + teyit kapsamı (hedefli):
+- eksik veri (PTF/YEKDEM kaydı yok) → null/bilinmiyor; varsayılan sabit YOK; 0 yazılmaz
+- gerçek sıfır (saatlik 0 TL/MWh saatleri; YEKDEM 0) eksikten, hariçten ve muaftan
+  AYRI; kayıtlı YEKDEM 0 eksik veriden ayırt edilemediği için kesinleşemez
+- açıkça seçilen "YEKDEM hariç" ve "YEKDEM muaf" birbirinden AYRI (PDF metinleri farklı)
+- provisional kayıt yalnız TASLAK hesapta; POST /offers ve PDF uçları reddeder
+- doğrulama YALNIZ sunucuda: istemcinin "doğrulandı" beyanı (price_confirmed_by_user)
+  hiçbir kapıyı açmaz
+- API'den doğrudan kayıt/belge denemesi (POST /offers, /offers/{id}/generate-pdf,
+  /offers/{id}/generate-html, /generate-pdf-simple, /generate-pdf-direct,
+  /generate-html-direct) sunucuda reddedilir
 - mevcut ağırlıklı PTF öncelikleri korunur (manual_override > tüketim > saatlik > referans)
-- ortak fiyat yazımında mevcut admin yetkisi; EPİAŞ otomatik çekimi kapalı
+- ortak fiyat yazımında mevcut admin yetkisi; ana ekran kaydı yalnız TASLAK yazar ve
+  kesin kaydı değiştiremez; yeni dönem YEKDEM'siz oluşturulamaz; EPİAŞ çekimi kapalı
 Dönem yarışı frontend testindedir: frontend/src/pricing/__tests__/usePeriodPriceFetch.test.tsx
 
 Ağ YOK: EPİAŞ istemcisine her erişim testi patlatır (autouse). Veritabanı in-memory
@@ -20,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
@@ -27,6 +35,9 @@ from fastapi.testclient import TestClient
 
 PERIOD = "2099-01"
 DATE = "2099-01-01"
+# Yönetim doğrulayıcısı gelecek dönemi reddeder (FUTURE_PERIOD); yönetim yolu testleri
+# geçmiş bir dönem kullanır.
+GECMIS_DONEM = "2024-03"
 # 10→T1 (Gündüz), 19→T2 (Puant), 2→T3 (Gece)
 MARKET = [(10, 1000.0), (19, 3000.0), (2, 500.0)]
 DUZ = 1500.0     # (1000 + 3000 + 500) / 3
@@ -55,6 +66,8 @@ HESAP_SONUCU = {
     "savings_ratio": 0.0667,
     "unit_price_savings_ratio": 0.075,
 }
+# Hariç/muaf seçiminde teklif hesabında YEKDEM tutarı olamaz (seçim–hesap tutarlılığı).
+HARIC_HESAP = {"offer_yekdem_tl": 0.0}
 
 PDF_FORM = {
     "consumption_kwh": "1000",
@@ -128,12 +141,13 @@ def _saatlik(db, kayitlar=MARKET, period=PERIOD, source="epias_excel"):
     db.commit()
 
 
-def _referans(db, ptf, yekdem, source="epias_manual", note=None, period=PERIOD):
+def _referans(db, ptf, yekdem, source="epias_manual", note=None, period=PERIOD, status="final"):
+    """Dönem referans kaydı. Varsayılan: güvenilir kaynak + KESİN (final)."""
     from app.database import MarketReferencePrice
 
     db.add(MarketReferencePrice(period=period, price_type="PTF", ptf_tl_per_mwh=ptf,
                                 yekdem_tl_per_mwh=yekdem, source=source, source_note=note,
-                                is_locked=0, status="final"))
+                                is_locked=0, status=status))
     db.commit()
 
 
@@ -154,7 +168,7 @@ def _fatura(yek_tl=None, period=PERIOD):
     )
 
 
-def _teklif_cagir(db, *, ptf, yekdem, onay=False, haric=False, period=PERIOD, calc_ek=None):
+def _teklif_cagir(db, *, ptf, yekdem, mod=None, period=PERIOD, calc_ek=None):
     """POST /offers uç fonksiyonunu doğrudan çağırır (TestClient asılma notu, modül başlığı)."""
     from app.main import create_offer
     from app.models import CalculationResult, FieldValue, InvoiceExtraction, OfferParams
@@ -170,7 +184,7 @@ def _teklif_cagir(db, *, ptf, yekdem, onay=False, haric=False, period=PERIOD, ca
     return asyncio.run(create_offer(
         extraction=ext, calculation=calc, params=params, customer_id=None,
         invoice_total_raw="2880", operator_confirmed_warnings=False,
-        price_confirmed_by_user=onay, yekdem_excluded=haric, db=db,
+        yekdem_mode=mod, db=db,
     ))
 
 
@@ -197,8 +211,17 @@ def _kayitli_teklif(db, provenance=None):
     return o
 
 
+def _kesin_provenance(db, ptf=2500.0, yekdem=50.0, source="epias_manual"):
+    """Dönemin güvenilir + KESİN kaydı yazılır; provenance GERÇEK fonksiyonla hesaplanır."""
+    from app.price_provenance import build_price_provenance
+
+    _referans(db, ptf, yekdem, source=source)
+    return build_price_provenance(db, period=PERIOD, ptf=ptf, yekdem=yekdem,
+                                  yekdem_mode="included")
+
+
 # ═══════════════════════════════════════════════════════════════════════════
-# 1) GET /api/epias/prices — eksik veri, gerçek sıfır, kaynak güveni
+# 1) GET /api/epias/prices — eksik veri, gerçek sıfır, kaynak güveni, provisional
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestDonemFiyatiOkuma:
@@ -209,10 +232,10 @@ class TestDonemFiyatiOkuma:
         assert b["ptf_tl_per_mwh"] is None and b["yekdem_tl_per_mwh"] is None
         assert b["weighted_ptf_tl_per_mwh"] is None
         assert b["source"] == "not_found" and b["yekdem_status"] == "missing"
-        assert b["weighted_ptf_source"] == "not_found"
+        assert b["weighted_ptf_source"] == "not_found" and b["record_status"] is None
         prov = b["price_provenance"]
-        assert prov["verified"] is False
-        assert set(prov["blocking_reasons"]) == {"ptf_missing", "yekdem_missing"}
+        assert prov["verified"] is False and prov["draft_only"] is True
+        assert prov["blocking_reasons"] == ["ptf_missing", "yekdem_missing"]
         assert "2974" not in r.text and "364" not in r.text, "varsayılan sabit sızdı"
 
     def test_saatlik_var_referans_yok_yekdem_bilinmiyor_sifir_degil(self, client, db):
@@ -223,7 +246,8 @@ class TestDonemFiyatiOkuma:
         assert b["ptf_source_warning"] is None
         assert b["yekdem_tl_per_mwh"] is None and b["yekdem_status"] == "missing"
         prov = b["price_provenance"]
-        assert prov["ptf"]["system_verified"] is True and prov["ptf"]["epias"] is True
+        assert prov["ptf"]["system_verified"] is True and prov["ptf"]["final"] is True
+        assert prov["ptf"]["epias"] is True
         assert prov["blocking_reasons"] == ["yekdem_missing"]
 
     def test_saatlik_gercek_sifir_saatleri_eksik_sayilmaz(self, client, db):
@@ -231,31 +255,45 @@ class TestDonemFiyatiOkuma:
         b = client.get(f"/api/epias/prices/{PERIOD}?profile=duz").json()
         assert b["weighted_ptf_tl_per_mwh"] == pytest.approx(1000.0), "0 TL/MWh saatler ortalamaya girer"
 
-    def test_db_yekdem_sifir_deger_olarak_tasinir_ve_onay_ister(self, client, db):
-        _referans(db, 2500.0, 0.0)
+    def test_db_yekdem_sifir_deger_olarak_tasinir_ve_kesinlesemez(self, client, db):
+        _referans(db, 2500.0, 0.0)  # güvenilir kaynak + final olsa bile
         b = client.get(f"/api/epias/prices/{PERIOD}?profile=duz").json()
         assert b["yekdem_tl_per_mwh"] == 0.0, "0 değeri null'a çevrilmemeli"
         assert b["yekdem_status"] == "zero_unverified"
         prov = b["price_provenance"]
-        assert prov["requires_confirmation"] is True
-        assert prov["blocking_reasons"] == ["confirmation_required"]
+        assert prov["ptf"]["system_verified"] is True
+        assert prov["yekdem"]["status"] == "zero_unverified" and prov["yekdem"]["value"] == 0.0
+        assert prov["yekdem"]["period_verified"] is False
+        assert prov["blocking_reasons"] == ["yekdem_zero_unverified"]
 
     def test_gelistirme_ornek_verisi_dogrulanmis_sayilmaz(self, client, db):
         _referans(db, 2500.0, 300.0, source="epias_manual", note="Sample data (dev)")
         prov = client.get(f"/api/epias/prices/{PERIOD}").json()["price_provenance"]
         assert prov["ptf"]["system_verified"] is False and prov["ptf"]["epias"] is False
-        assert prov["requires_confirmation"] is True
+        assert prov["blocking_reasons"] == ["ptf_unverified", "yekdem_unverified"]
 
-    def test_guvenilir_manuel_kayit_onaysiz_dogrulanir_ama_epias_degil(self, client, db):
+    def test_kesin_manuel_kayit_dogrulanir_ama_epias_degil(self, client, db):
         _referans(db, 2508.8, 235.63, source="manual_override")
         prov = client.get(f"/api/epias/prices/{PERIOD}").json()["price_provenance"]
         assert prov["verified"] is True and prov["verified_by"] == "system"
+        assert prov["draft_only"] is False
         assert prov["epias_basis"] is False, "manual_override EPİAŞ etiketi taşımaz"
 
-    def test_epias_etiketli_kayit_epias_temelli(self, client, db):
+    def test_epias_etiketli_kesin_kayit_epias_temelli(self, client, db):
         _referans(db, 2508.8, 235.63, source="epias_manual")
         prov = client.get(f"/api/epias/prices/{PERIOD}").json()["price_provenance"]
         assert prov["verified"] is True and prov["epias_basis"] is True
+
+    def test_provisional_kayit_degerleri_tasir_ama_yalniz_taslak(self, client, db):
+        _referans(db, 2508.8, 235.63, source="manual_override", status="provisional")
+        b = client.get(f"/api/epias/prices/{PERIOD}").json()
+        assert b["weighted_ptf_tl_per_mwh"] == pytest.approx(2508.8)
+        assert b["yekdem_tl_per_mwh"] == pytest.approx(235.63)
+        assert b["record_status"] == "provisional"
+        prov = b["price_provenance"]
+        assert prov["verified"] is False and prov["draft_only"] is True
+        assert prov["provisional"] is True
+        assert prov["blocking_reasons"] == ["ptf_provisional", "yekdem_provisional"]
 
     def test_admin_donem_okuma_varsayilan_uretmez(self, client):
         """GET /admin/market-prices/{period}: kayıt yoksa null + not_found (eski: 2974.1/364.0 'default')."""
@@ -267,7 +305,7 @@ class TestDonemFiyatiOkuma:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 2) AI yolu (calculate_offer) — sessiz YEKDEM=0 kapalı
+# 2) AI yolu (calculate_offer) — sessiz YEKDEM=0 ve tahmini "hariç" kapalı
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestAIHesapYolu:
@@ -279,15 +317,17 @@ class TestAIHesapYolu:
         with pytest.raises(CalculationError, match="YEKDEM"):
             calculate_offer(_fatura(yek_tl=120.0), OfferParams(), db=db)
 
-    def test_faturada_yekdem_yok_haric_isaretlenir(self, db):
+    def test_faturada_yekdem_yok_secim_bos_haric_tahmin_edilmez(self, db):
         from app.calculator import calculate_offer
         from app.models import OfferParams
 
         _saatlik(db)
         sonuc = calculate_offer(_fatura(), OfferParams(), db=db)
-        assert sonuc.offer_yekdem_tl == 0
-        yek = sonuc.meta_price_provenance["yekdem"]
-        assert yek["mode"] == "excluded" and yek["exclusion_basis"] == "invoice"
+        assert sonuc.offer_yekdem_tl == 0  # taslak hesap YEKDEM'siz gösterilir
+        prov = sonuc.meta_price_provenance
+        assert prov["yekdem"]["mode"] is None and prov["yekdem"]["status"] == "mode_required"
+        assert prov["blocking_reasons"] == ["yekdem_mode_required"]
+        assert prov["draft_only"] is True
 
     def test_override_yekdem_verilmezse_sessiz_sifir_yok(self, db):
         from app.calculator import CalculationError, calculate_offer
@@ -297,18 +337,20 @@ class TestAIHesapYolu:
         with pytest.raises(CalculationError, match="YEKDEM"):
             calculate_offer(_fatura(yek_tl=120.0), params, db=db)
 
-    def test_override_acik_sifir_yekdem_deger_ama_onay_ister(self, db):
+    def test_override_acik_sifir_yekdem_deger_ama_kesinlesemez(self, db):
         from app.calculator import calculate_offer
         from app.models import OfferParams
 
         params = OfferParams(use_reference_prices=False, weighted_ptf_tl_per_mwh=2000.0,
                              yekdem_tl_per_mwh=0.0)
         sonuc = calculate_offer(_fatura(yek_tl=120.0), params, db=db)
-        yek = sonuc.meta_price_provenance["yekdem"]
-        assert yek["mode"] == "included" and yek["status"] == "zero" and yek["value"] == 0.0
-        assert sonuc.meta_price_provenance["requires_confirmation"] is True
+        prov = sonuc.meta_price_provenance
+        yek = prov["yekdem"]
+        assert yek["mode"] == "included" and yek["status"] == "zero_unverified" and yek["value"] == 0.0
+        assert "yekdem_zero_unverified" in prov["blocking_reasons"]
+        assert prov["verified"] is False
 
-    def test_dogrulanmis_db_fiyati_ai_yolunda_onay_istemez(self, db):
+    def test_kesin_db_fiyati_ai_yolunda_dogrulanir(self, db):
         from app.calculator import calculate_offer
         from app.models import OfferParams
 
@@ -317,10 +359,22 @@ class TestAIHesapYolu:
         prov = sonuc.meta_price_provenance
         assert sonuc.meta_pricing_source == "reference_scalar"
         assert prov["verified"] is True and prov["epias_basis"] is True
+        assert prov["yekdem"]["mode"] == "included" and prov["yekdem"]["mode_basis"] == "invoice"
+
+    def test_provisional_db_fiyati_ai_yolunda_yalniz_taslak_hesap(self, db):
+        from app.calculator import calculate_offer
+        from app.models import OfferParams
+
+        _referans(db, 2508.8, 235.63, source="epias_manual", status="provisional")
+        sonuc = calculate_offer(_fatura(yek_tl=120.0), OfferParams(), db=db)
+        assert sonuc.offer_yekdem_tl > 0  # taslak hesap provisional değerle YAPILIR
+        prov = sonuc.meta_price_provenance
+        assert prov["verified"] is False and prov["provisional"] is True
+        assert prov["blocking_reasons"] == ["ptf_provisional", "yekdem_provisional"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 3) POST /offers — sunucu kapısı + snapshot'ta dönem/kaynak/kullanıcı doğrulaması
+# 3) POST /offers — sunucu kapısı + snapshot'ta dönem/kaynak/durum/YEKDEM seçimi
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestTeklifKaydiKapisi:
@@ -329,65 +383,123 @@ class TestTeklifKaydiKapisi:
 
         kod, govde = _yanit(_teklif_cagir(db, ptf=2974.1, yekdem=364.0))
         assert kod == 422 and govde["error"]["code"] == "price_unverified"
-        assert govde["error"]["blocking_reasons"] == ["confirmation_required"]
+        assert govde["error"]["blocking_reasons"] == ["ptf_unverified", "yekdem_unverified"]
         assert db.query(Offer).count() == 0
 
     def test_ptf_eksik_422(self, db):
-        kod, govde = _yanit(_teklif_cagir(db, ptf=None, yekdem=300.0, onay=True))
+        _referans(db, 2500.0, 300.0)
+        kod, govde = _yanit(_teklif_cagir(db, ptf=None, yekdem=300.0))
         assert kod == 422 and govde["error"]["blocking_reasons"] == ["ptf_missing"]
 
-    def test_yekdem_eksik_ve_haric_secilmemis_422(self, db):
-        kod, govde = _yanit(_teklif_cagir(db, ptf=2500.0, yekdem=None, onay=True))
+    def test_yekdem_eksik_ve_secim_dahil_422(self, db):
+        _referans(db, 2500.0, 300.0)
+        kod, govde = _yanit(_teklif_cagir(db, ptf=2500.0, yekdem=None))
         assert kod == 422 and govde["error"]["blocking_reasons"] == ["yekdem_missing"]
+        assert govde["error"]["price_provenance"]["yekdem"]["mode_basis"] == "default"
 
-    def test_yekdem_sifir_onaysiz_422(self, db):
-        _referans(db, 2500.0, 300.0, source="epias_manual")  # PTF sistemce doğrulanır
+    def test_gercek_sifir_yekdem_kesinlesemez_haric_degil(self, db):
+        from app.database import Offer
+
+        _referans(db, 2500.0, 300.0)
+        kod, govde = _yanit(_teklif_cagir(db, ptf=2500.0, yekdem=0.0, mod="included"))
+        assert kod == 422 and govde["error"]["blocking_reasons"] == ["yekdem_zero_unverified"]
+        yek = govde["error"]["price_provenance"]["yekdem"]
+        assert yek["mode"] == "included" and yek["value"] == 0.0
+        assert yek["status"] == "zero_unverified"
+        assert db.query(Offer).count() == 0
+
+    def test_kayitli_sifir_yekdem_de_kesinlesemez(self, db):
+        _referans(db, 2500.0, 0.0)  # güvenilir kaynak + final; 0 yine doğrulanmaz
         kod, govde = _yanit(_teklif_cagir(db, ptf=2500.0, yekdem=0.0))
-        assert kod == 422 and govde["error"]["blocking_reasons"] == ["confirmation_required"]
-        assert govde["error"]["price_provenance"]["yekdem"]["status"] == "zero"
+        assert kod == 422 and govde["error"]["blocking_reasons"] == ["yekdem_zero_unverified"]
 
     def test_acik_haric_kaydedilir_ve_gercek_sifirdan_ayrilir(self, db):
         from app.database import Offer
 
-        kod, _ = _yanit(_teklif_cagir(db, ptf=2500.0, yekdem=None, onay=True, haric=True))
+        _referans(db, 2500.0, 300.0)
+        kod, _ = _yanit(_teklif_cagir(db, ptf=2500.0, yekdem=None, mod="excluded",
+                                      calc_ek=HARIC_HESAP))
         assert kod == 200
         o = db.query(Offer).one()
-        assert o.yekdem == 0.0
+        assert o.yekdem == 0.0  # uygulanan YEKDEM; hariç/muaf ayrımı snapshot'ta
         yek = o.calculation_result["meta_price_provenance"]["yekdem"]
-        assert yek["mode"] == "excluded" and yek["exclusion_basis"] == "user"
+        assert yek["mode"] == "excluded" and yek["mode_basis"] == "user"
+        assert yek["value"] is None and yek["status"] == "excluded"
 
-    def test_gercek_sifir_onayla_kaydedilir_haric_degil(self, db):
+    def test_acik_muaf_haricten_ayri_kaydedilir(self, db):
         from app.database import Offer
 
-        kod, _ = _yanit(_teklif_cagir(db, ptf=2500.0, yekdem=0.0, onay=True))
+        _referans(db, 2500.0, 300.0)
+        kod, _ = _yanit(_teklif_cagir(db, ptf=2500.0, yekdem=None, mod="exempt",
+                                      calc_ek=HARIC_HESAP))
         assert kod == 200
-        prov = db.query(Offer).one().calculation_result["meta_price_provenance"]
-        assert prov["yekdem"]["mode"] == "included" and prov["yekdem"]["value"] == 0.0
-        assert prov["yekdem"]["status"] == "zero" and prov["verified_by"] == "user"
+        o = db.query(Offer).one()
+        yek = o.calculation_result["meta_price_provenance"]["yekdem"]
+        assert yek["mode"] == "exempt" and yek["status"] == "exempt"
+        assert o.yekdem == 0.0
 
-    def test_guvenilir_db_fiyati_onaysiz_kaydedilir_donem_ve_kaynak_snapshotta(self, db):
+    def test_muaf_secip_hesapta_yekdem_birakmak_celiski_422(self, db):
+        from app.database import Offer
+
+        _referans(db, 2500.0, 300.0)
+        # HESAP_SONUCU offer_yekdem_tl=50 → "muaf" seçimiyle çelişir
+        kod, govde = _yanit(_teklif_cagir(db, ptf=2500.0, yekdem=300.0, mod="exempt"))
+        assert kod == 422 and govde["error"]["blocking_reasons"] == ["yekdem_mode_conflict"]
+        assert db.query(Offer).count() == 0
+
+    def test_gecersiz_yekdem_secimi_422(self, db):
+        _referans(db, 2500.0, 300.0)
+        kod, govde = _yanit(_teklif_cagir(db, ptf=2500.0, yekdem=300.0, mod="belki"))
+        assert kod == 422 and govde["error"]["blocking_reasons"] == ["yekdem_mode_invalid"]
+
+    def test_provisional_fiyat_kesin_teklif_olamaz_422(self, db):
+        from app.database import Offer
+
+        _referans(db, 2508.8, 235.63, source="manual_override", status="provisional")
+        kod, govde = _yanit(_teklif_cagir(db, ptf=2508.8, yekdem=235.63))
+        assert kod == 422
+        assert govde["error"]["blocking_reasons"] == ["ptf_provisional", "yekdem_provisional"]
+        assert govde["error"]["price_provenance"]["provisional"] is True
+        assert db.query(Offer).count() == 0
+
+    def test_provisional_ptf_haric_seciminde_de_engellenir(self, db):
+        _referans(db, 2508.8, 235.63, source="manual_override", status="provisional")
+        kod, govde = _yanit(_teklif_cagir(db, ptf=2508.8, yekdem=None, mod="excluded",
+                                          calc_ek=HARIC_HESAP))
+        assert kod == 422 and govde["error"]["blocking_reasons"] == ["ptf_provisional"]
+
+    def test_kesin_db_fiyati_kaydedilir_donem_kaynak_durum_snapshotta(self, db):
         from app.database import Offer
 
         _referans(db, 2508.8, 235.63, source="manual_override")
-        kod, _ = _yanit(_teklif_cagir(db, ptf=2508.8, yekdem=235.63))
+        kod, _ = _yanit(_teklif_cagir(db, ptf=2508.8, yekdem=235.63, mod="included"))
         assert kod == 200
-        prov = db.query(Offer).one().calculation_result["meta_price_provenance"]
-        assert prov["period"] == PERIOD and prov["verified_by"] == "system"
-        assert prov["ptf"]["source"] == "manual_override" and prov["user_confirmed"] is False
+        o = db.query(Offer).one()
+        prov = o.calculation_result["meta_price_provenance"]
+        assert prov["version"] == 2 and prov["period"] == PERIOD
+        assert prov["verified_by"] == "system" and prov["draft_only"] is False
+        assert prov["ptf"]["source"] == "manual_override" and prov["ptf"]["final"] is True
+        assert prov["yekdem"]["period_record_status"] == "final"
+        assert "user_confirmed" not in prov and "requires_confirmation" not in prov
+        assert o.yekdem == pytest.approx(235.63)
 
-    def test_istemcinin_provenance_iddiasi_ezilir(self, db):
+    def test_istemcinin_provenance_iddiasi_kapiyi_acmaz_ve_ezilir(self, db):
         from app.database import Offer
 
-        sahte = {"version": 1, "verified": True, "epias_basis": True, "verified_by": "system"}
-        kod, _ = _yanit(_teklif_cagir(db, ptf=2500.0, yekdem=300.0, onay=True,
+        sahte = {"version": 2, "verified": True, "epias_basis": True, "verified_by": "system"}
+        kod, _ = _yanit(_teklif_cagir(db, ptf=2500.0, yekdem=300.0,
+                                      calc_ek={"meta_price_provenance": sahte}))
+        assert kod == 422, "istemcinin 'doğrulandı' iddiası kapıyı açmamalı"
+        assert db.query(Offer).count() == 0
+        _referans(db, 2500.0, 300.0, source="manual_override")
+        kod, _ = _yanit(_teklif_cagir(db, ptf=2500.0, yekdem=300.0,
                                       calc_ek={"meta_price_provenance": sahte}))
         assert kod == 200
         prov = db.query(Offer).one().calculation_result["meta_price_provenance"]
-        assert prov["epias_basis"] is False and prov["verified_by"] == "user"
-        assert prov["system_lookup"] == "ok"
+        assert prov["epias_basis"] is False and prov["system_lookup"] == "ok"
 
-    def test_http_sozlesmesi_query_param_adlari(self, client, db):
-        """Ret yolları TestClient ile: yeni query param'lar HTTP'den gerçekten okunuyor."""
+    def test_http_istemci_onay_bayragi_kapiyi_acmaz(self, client, db):
+        """Ret yolları TestClient ile: eski 'price_confirmed_by_user' beyanı hiçbir kapıyı açmaz."""
         from app.database import Offer
 
         govde = {
@@ -396,16 +508,21 @@ class TestTeklifKaydiKapisi:
                 "consumption_kwh": {"value": 1000.0, "confidence": 1.0},
                 "current_active_unit_price_tl_per_kwh": {"value": 2.0, "confidence": 1.0},
             },
-            "calculation": HESAP_SONUCU,
-            "params": {"weighted_ptf_tl_per_mwh": 2500.0, "agreement_multiplier": 1.01},
+            "calculation": {**HESAP_SONUCU, **HARIC_HESAP},
+            "params": {"weighted_ptf_tl_per_mwh": 2500.0, "yekdem_tl_per_mwh": 300.0,
+                       "agreement_multiplier": 1.01},
         }
-        r = client.post("/offers", json=govde,
-                        params={"invoice_total_raw": "2880", "price_confirmed_by_user": "true"})
-        assert r.status_code == 422 and r.json()["error"]["blocking_reasons"] == ["yekdem_missing"]
-        r2 = client.post("/offers", json=govde,
-                         params={"invoice_total_raw": "2880", "yekdem_excluded": "true"})
+        onay = {"invoice_total_raw": "2880", "price_confirmed_by_user": "true"}
+        r = client.post("/offers", json=govde, params=onay)
+        assert r.status_code == 422
+        assert r.json()["error"]["blocking_reasons"] == ["ptf_unverified", "yekdem_unverified"]
+        r2 = client.post("/offers", json=govde, params={**onay, "yekdem_mode": "excluded"})
         assert r2.status_code == 422
-        assert r2.json()["error"]["blocking_reasons"] == ["confirmation_required"]
+        assert r2.json()["error"]["blocking_reasons"] == ["ptf_unverified"]
+        _referans(db, 2500.0, 300.0, source="manual_override", status="provisional")
+        r3 = client.post("/offers", json=govde, params=onay)
+        assert r3.status_code == 422
+        assert r3.json()["error"]["blocking_reasons"] == ["ptf_provisional", "yekdem_provisional"]
         assert db.query(Offer).count() == 0
 
 
@@ -425,17 +542,23 @@ class TestPdfKapilari:
         assert o.pdf_ref is None
 
     def test_dogrulanmamis_snapshot_409(self, client, db):
-        o = _kayitli_teklif(db, {"version": 1, "verified": False})
+        o = _kayitli_teklif(db, {"version": 2, "verified": False})
+        with patch("app.pdf_generator.generate_and_store_offer_pdf") as uretici:
+            r = client.post(f"/offers/{o.id}/generate-pdf")
+        assert r.status_code == 409
+        uretici.assert_not_called()
+
+    def test_surum1_kullanici_onayli_snapshot_409(self, client, db):
+        """Sürüm 1 snapshot'ı kullanıcı onayıyla 'doğrulanmış' olabilir → PDF yok."""
+        o = _kayitli_teklif(db, {"version": 1, "verified": True, "verified_by": "user"})
         with patch("app.pdf_generator.generate_and_store_offer_pdf") as uretici:
             r = client.post(f"/offers/{o.id}/generate-pdf")
         assert r.status_code == 409
         uretici.assert_not_called()
 
     def test_dogrulanmis_snapshot_uretir(self, client, db):
-        from app.price_provenance import build_price_provenance
-
-        prov = build_price_provenance(None, period=PERIOD, ptf=2500.0, yekdem=50.0,
-                                      yekdem_excluded=False, user_confirmed=True)
+        prov = _kesin_provenance(db)
+        assert prov["verified"] is True
         o = _kayitli_teklif(db, prov)
         cagrilar = []
 
@@ -454,23 +577,35 @@ class TestPdfKapilari:
         r = client.post("/generate-pdf-simple", data=PDF_FORM)
         assert r.status_code == 422 and r.json()["error"]["code"] == "invalid_ptf"
 
-    def test_simple_yekdem_gonderilmezse_varsayilan_yok(self, client):
-        r = client.post("/generate-pdf-simple",
-                        data={**PDF_FORM, "weighted_ptf_tl_per_mwh": "2500",
-                              "price_confirmed_by_user": "true"})
+    def test_simple_yekdem_gonderilmezse_varsayilan_yok(self, client, db):
+        _referans(db, 2500.0, 300.0)
+        r = client.post("/generate-pdf-simple", data={**PDF_FORM, "weighted_ptf_tl_per_mwh": "2500"})
         assert r.status_code == 422
         assert r.json()["error"]["blocking_reasons"] == ["yekdem_missing"]
 
-    def test_simple_onaysiz_422(self, client):
-        r = client.post("/generate-pdf-simple",
-                        data={**PDF_FORM, "weighted_ptf_tl_per_mwh": "2500",
-                              "yekdem_tl_per_mwh": "300"})
+    def test_simple_dogrulanmamis_fiyat_onay_bayragiyla_da_422(self, client):
+        with patch("app.main.generate_offer_pdf_bytes") as uretici:
+            r = client.post("/generate-pdf-simple",
+                            data={**PDF_FORM, "weighted_ptf_tl_per_mwh": "2500",
+                                  "yekdem_tl_per_mwh": "300", "price_confirmed_by_user": "true"})
         assert r.status_code == 422
-        assert r.json()["error"]["blocking_reasons"] == ["confirmation_required"]
+        assert r.json()["error"]["blocking_reasons"] == ["ptf_unverified", "yekdem_unverified"]
+        uretici.assert_not_called()
 
-    def test_simple_onayli_uretir_epias_iddiasi_yok(self, client):
+    def test_simple_provisional_422(self, client, db):
+        _referans(db, 2500.0, 300.0, status="provisional")
+        with patch("app.main.generate_offer_pdf_bytes") as uretici:
+            r = client.post("/generate-pdf-simple",
+                            data={**PDF_FORM, "weighted_ptf_tl_per_mwh": "2500",
+                                  "yekdem_tl_per_mwh": "300"})
+        assert r.status_code == 422
+        assert r.json()["error"]["blocking_reasons"] == ["ptf_provisional", "yekdem_provisional"]
+        uretici.assert_not_called()
+
+    def test_simple_kesin_fiyat_ve_haric_secimi_uretir_epias_iddiasi_yok(self, client, db):
         from app.pdf_generator import generate_offer_pdf_bytes as gercek
 
+        _referans(db, 2500.0, 300.0, source="manual_override")
         yakalanan = {}
 
         def sarmal(*a, **kw):
@@ -480,23 +615,42 @@ class TestPdfKapilari:
         with patch("app.main.generate_offer_pdf_bytes", side_effect=sarmal):
             r = client.post("/generate-pdf-simple",
                             data={**PDF_FORM, "weighted_ptf_tl_per_mwh": "2500",
-                                  "yekdem_excluded": "true", "price_confirmed_by_user": "true"})
+                                  "yekdem_mode": "excluded"})
         assert r.status_code == 200
         prov = yakalanan["calc"].meta_price_provenance
-        assert prov["epias_basis"] is False and prov["yekdem"]["mode"] == "excluded"
+        assert prov["verified_by"] == "system" and prov["epias_basis"] is False
+        assert prov["yekdem"]["mode"] == "excluded"
         assert yakalanan["params"].yekdem_tl_per_mwh == 0.0
 
-    def test_direct_onaysiz_422_uretici_cagrilmaz(self, client):
+    def test_simple_muaf_uretir_haricten_ayri(self, client, db):
+        _referans(db, 2500.0, 300.0, source="epias_manual")
+        yakalanan = {}
+
+        def sahte(*a, **kw):
+            yakalanan["calc"], yakalanan["params"] = a[1], a[2]
+            return b"%PDF-1.4 sentetik muaf teklif"
+
+        with patch("app.main.generate_offer_pdf_bytes", side_effect=sahte):
+            r = client.post("/generate-pdf-simple",
+                            data={**PDF_FORM, "weighted_ptf_tl_per_mwh": "2500",
+                                  "yekdem_mode": "exempt"})
+        assert r.status_code == 200
+        prov = yakalanan["calc"].meta_price_provenance
+        assert prov["yekdem"]["mode"] == "exempt" and prov["epias_basis"] is True
+        assert yakalanan["params"].yekdem_tl_per_mwh == 0.0
+
+    def test_direct_dogrulanmamis_onay_bayragiyla_da_422_uretici_cagrilmaz(self, client):
         govde = {"extraction": {"invoice_period": PERIOD}, "calculation": HESAP_SONUCU,
                  "params": {"weighted_ptf_tl_per_mwh": 2500.0, "yekdem_tl_per_mwh": 300.0,
                             "agreement_multiplier": 1.01}}
         with patch("app.main.generate_offer_pdf") as uretici:
-            r = client.post("/generate-pdf-direct", json=govde)
+            r = client.post("/generate-pdf-direct?price_confirmed_by_user=true", json=govde)
         assert r.status_code == 422 and r.json()["error"]["code"] == "price_unverified"
         uretici.assert_not_called()
 
-    def test_direct_istemci_provenance_iddiasi_ezilir(self, client, tmp_path):
-        sahte_prov = {"version": 1, "verified": True, "epias_basis": True}
+    def test_direct_istemci_provenance_iddiasi_ezilir(self, client, db, tmp_path):
+        _referans(db, 2500.0, 300.0, source="manual_override")
+        sahte_prov = {"version": 2, "verified": True, "epias_basis": True}
         govde = {"extraction": {"invoice_period": PERIOD},
                  "calculation": {**HESAP_SONUCU, "meta_price_provenance": sahte_prov},
                  "params": {"weighted_ptf_tl_per_mwh": 2500.0, "yekdem_tl_per_mwh": 300.0,
@@ -510,14 +664,53 @@ class TestPdfKapilari:
             return str(dosya)
 
         with patch("app.main.generate_offer_pdf", side_effect=sahte):
-            r = client.post("/generate-pdf-direct?price_confirmed_by_user=true", json=govde)
+            r = client.post("/generate-pdf-direct", json=govde)
         assert r.status_code == 200
         prov = yakalanan["calc"].meta_price_provenance
-        assert prov["epias_basis"] is False and prov["system_lookup"] == "unavailable"
+        assert prov["epias_basis"] is False and prov["system_lookup"] == "ok"
+        assert prov["verified_by"] == "system"
+
+    def test_direct_haric_secip_hesapta_yekdem_birakmak_422(self, client, db):
+        _referans(db, 2500.0, 300.0)
+        govde = {"extraction": {"invoice_period": PERIOD}, "calculation": HESAP_SONUCU,
+                 "params": {"weighted_ptf_tl_per_mwh": 2500.0, "yekdem_tl_per_mwh": 300.0,
+                            "agreement_multiplier": 1.01}}
+        with patch("app.main.generate_offer_pdf") as uretici:
+            r = client.post("/generate-pdf-direct?yekdem_mode=excluded", json=govde)
+        assert r.status_code == 422
+        assert r.json()["error"]["blocking_reasons"] == ["yekdem_mode_conflict"]
+        uretici.assert_not_called()
+
+
+    def test_kayitli_teklif_html_dogrulanmamis_409(self, client, db):
+        """HTML teklif belgesi de PDF ile AYNI snapshot kapısından geçer."""
+        o = _kayitli_teklif(db)  # Faz 1 öncesi: provenance yok
+        r = client.post(f"/offers/{o.id}/generate-html")
+        assert r.status_code == 409
+        assert r.json()["detail"]["error"] == "price_unverified"
+
+    def test_kayitli_teklif_html_dogrulanmis_uretir(self, client, db):
+        o = _kayitli_teklif(db, _kesin_provenance(db))
+        r = client.post(f"/offers/{o.id}/generate-html")
+        assert r.status_code == 200 and "text/html" in r.headers["content-type"]
+
+    def test_html_direct_istemci_iddiasi_kapiyi_acmaz_epias_yazdirmaz(self, client, db):
+        sahte_prov = {"version": 2, "verified": True, "epias_basis": True, "verified_by": "system"}
+        govde = {"extraction": {"invoice_period": PERIOD,
+                                "consumption_kwh": {"value": 1000.0, "confidence": 1.0}},
+                 "calculation": {**HESAP_SONUCU, "meta_price_provenance": sahte_prov},
+                 "params": {"weighted_ptf_tl_per_mwh": 2500.0, "yekdem_tl_per_mwh": 300.0,
+                            "agreement_multiplier": 1.01}}
+        r = client.post("/generate-html-direct?price_confirmed_by_user=true", json=govde)
+        assert r.status_code == 422 and r.json()["error"]["code"] == "price_unverified"
+        _referans(db, 2500.0, 300.0, source="manual_override")  # kesin ama EPİAŞ etiketli değil
+        r2 = client.post("/generate-html-direct", json=govde)
+        assert r2.status_code == 200
+        assert "EPİAŞ verileri esas alınarak" not in r2.text, "istemcinin EPİAŞ iddiası belgeye sızdı"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 5) PDF metni — doğrulanmamış fiyat "EPİAŞ verisi" diye sunulmaz
+# 5) PDF metni — doğrulanmamış fiyat "EPİAŞ verisi" diye sunulmaz; hariç ≠ muaf
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestPdfMetni:
@@ -547,13 +740,39 @@ class TestPdfMetni:
         assert "dahil edilmemiştir" in yekdem_uygulamasi_metni(bayrak)
         assert "YEKDEM" not in enerji_bedeli_paragraflari(bayrak, 1.0)[0]
 
+    def test_muaf_metni_haricten_ve_dahilden_farkli(self):
+        from app.pdf_generator import enerji_bedeli_paragraflari, yekdem_uygulamasi_metni
+
+        muaf = {"epias_basis": False, "yekdem_exempt": True, "yekdem_not_applied": True,
+                "ptf_reference_scalar": False}
+        haric = {"epias_basis": False, "yekdem_excluded": True, "yekdem_not_applied": True,
+                 "ptf_reference_scalar": False}
+        dahil = {"epias_basis": False, "ptf_reference_scalar": False}
+        m, h, d = (yekdem_uygulamasi_metni(x) for x in (muaf, haric, dahil))
+        assert "muaf olduğu bilgisine" in m and "dahil edilmemiştir" not in m
+        assert "dahil edilmemiştir" in h and "muaf" not in h
+        assert len({m, h, d}) == 3
+        assert "YEKDEM" not in enerji_bedeli_paragraflari(muaf, 1.0)[0]
+
+    def test_bayraklar_secimden_turer(self):
+        from app.models import CalculationResult
+        from app.pdf_generator import fiyat_kaynagi_bayraklari
+
+        beklenen = {"excluded": (True, False, True), "exempt": (False, True, True),
+                    "included": (False, False, False)}
+        for mod, (haric, muaf, uygulanmaz) in beklenen.items():
+            b = fiyat_kaynagi_bayraklari(CalculationResult(
+                **HESAP_SONUCU, meta_price_provenance={"yekdem": {"mode": mod}}))
+            assert (b["yekdem_excluded"], b["yekdem_exempt"], b["yekdem_not_applied"]) == \
+                (haric, muaf, uygulanmaz)
+
     def test_provenance_yoksa_epias_false(self):
         from app.models import CalculationResult
         from app.pdf_generator import fiyat_kaynagi_bayraklari
 
         assert fiyat_kaynagi_bayraklari(CalculationResult(**HESAP_SONUCU))["epias_basis"] is False
 
-    def test_html_sablonu_kaynaga_gore(self):
+    def test_html_sablonu_kaynaga_ve_secime_gore(self):
         from app.models import CalculationResult, FieldValue, InvoiceExtraction, OfferParams
         from app.pdf_generator import generate_offer_html
 
@@ -568,9 +787,37 @@ class TestPdfMetni:
             ext, CalculationResult(**HESAP_SONUCU, meta_price_provenance=epias_prov), params)
         assert "EPİAŞ verileri esas alınarak" in dogrulanmis
 
+        sifir = OfferParams(weighted_ptf_tl_per_mwh=2500.0, yekdem_tl_per_mwh=0.0)
+        muaf = generate_offer_html(ext, CalculationResult(
+            **HESAP_SONUCU, meta_price_provenance={"verified": True, "yekdem": {"mode": "exempt"}}), sifir)
+        haric = generate_offer_html(ext, CalculationResult(
+            **HESAP_SONUCU, meta_price_provenance={"verified": True, "yekdem": {"mode": "excluded"}}), sifir)
+        assert "muaf olduğu bilgisine" in muaf and "<td>Muaf</td>" in muaf
+        assert "dahil edilmemiştir" in haric and "<td>Dahil değil</td>" in haric
+        assert "muaf olduğu bilgisine" not in haric
+
+    def test_reportlab_pdf_muaf_ve_haric_metni_ayri(self):
+        pypdfium2 = pytest.importorskip("pypdfium2")
+        from app.models import CalculationResult, FieldValue, InvoiceExtraction, OfferParams
+        from app.pdf_generator import generate_offer_pdf_bytes
+
+        ext = InvoiceExtraction(invoice_period=PERIOD,
+                                consumption_kwh=FieldValue(value=1000.0, confidence=1.0))
+        params = OfferParams(weighted_ptf_tl_per_mwh=2500.0, yekdem_tl_per_mwh=0.0)
+        metinler = {}
+        for mod in ("exempt", "excluded"):
+            calc = CalculationResult(**HESAP_SONUCU, meta_price_provenance={
+                "verified": True, "epias_basis": False, "yekdem": {"mode": mod}})
+            belge = pypdfium2.PdfDocument(generate_offer_pdf_bytes(ext, calc, params))
+            ham = " ".join(belge[i].get_textpage().get_text_bounded() for i in range(len(belge)))
+            metinler[mod] = " ".join(ham.split())
+        assert "muaf olduğu bilgisine" in metinler["exempt"] and "Muaf" in metinler["exempt"]
+        assert "dahil edilmemiştir" in metinler["excluded"] and "Dahil değil" in metinler["excluded"]
+        assert "muaf olduğu bilgisine" not in metinler["excluded"]
+
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 6) Ortak fiyat yazımı — mevcut yetki; EPİAŞ senkronu kapalı
+# 6) Ana ekran fiyat kaydı (ortak yazım) — mevcut yetki; yalnız TASLAK; EPİAŞ kapalı
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestOrtakFiyatYazimi:
@@ -588,17 +835,63 @@ class TestOrtakFiyatYazimi:
     def test_ptf_guncellemesi_yekdemi_sifirla_ezmez(self, client, db):
         from app.database import MarketReferencePrice
 
-        _referans(db, 2500.0, 300.0, source="manual_override")
+        _referans(db, 2500.0, 300.0, source="manual_override", status="provisional")
         r = client.post(f"/api/epias/prices/{PERIOD}", json={"ptf_tl_per_mwh": 2600.0})
         assert r.status_code == 200
         kayit = db.query(MarketReferencePrice).filter_by(period=PERIOD).one()
         db.refresh(kayit)
         assert kayit.ptf_tl_per_mwh == 2600.0 and kayit.yekdem_tl_per_mwh == 300.0
+        assert kayit.status == "provisional"
+
+    def test_ana_ekran_kaydi_yalniz_taslak_yazar(self, client, db):
+        from app.database import MarketReferencePrice
+
+        r = client.post(f"/api/epias/prices/{PERIOD}",
+                        json={"ptf_tl_per_mwh": 2600.0, "yekdem_tl_per_mwh": 310.0})
+        assert r.status_code == 200 and r.json()["record_status"] == "provisional"
+        kayit = db.query(MarketReferencePrice).filter_by(period=PERIOD).one()
+        assert kayit.status == "provisional" and kayit.source == "manual_override"
+        prov = client.get(f"/api/epias/prices/{PERIOD}").json()["price_provenance"]
+        assert prov["draft_only"] is True
+        assert prov["blocking_reasons"] == ["ptf_provisional", "yekdem_provisional"]
+
+    def test_ana_ekran_kaydi_kesin_kaydi_degistiremez_409(self, client, db):
+        from app.database import MarketReferencePrice
+
+        _referans(db, 2500.0, 300.0, source="epias_manual")
+        r = client.post(f"/api/epias/prices/{PERIOD}",
+                        json={"ptf_tl_per_mwh": 2600.0, "yekdem_tl_per_mwh": 300.0})
+        assert r.status_code == 409
+        r2 = client.post(f"/api/epias/prices/{PERIOD}",
+                         json={"ptf_tl_per_mwh": 2500.0, "yekdem_tl_per_mwh": 310.0})
+        assert r2.status_code == 409
+        kayit = db.query(MarketReferencePrice).filter_by(period=PERIOD).one()
+        db.refresh(kayit)
+        assert (kayit.ptf_tl_per_mwh, kayit.yekdem_tl_per_mwh, kayit.status, kayit.source) == \
+            (2500.0, 300.0, "final", "epias_manual")
+
+    def test_ana_ekran_kaydi_kesin_kayitta_ayni_deger_islem_yok(self, client, db):
+        from app.database import MarketReferencePrice
+
+        _referans(db, 2500.0, 300.0, source="epias_manual")
+        r = client.post(f"/api/epias/prices/{PERIOD}", json={"ptf_tl_per_mwh": 2500.0})
+        assert r.status_code == 200 and r.json()["record_status"] == "final"
+        kayit = db.query(MarketReferencePrice).filter_by(period=PERIOD).one()
+        db.refresh(kayit)
+        assert kayit.status == "final" and kayit.source == "epias_manual"
 
     def test_yeni_donem_yekdemsiz_422_kayit_yok(self, client, db):
         from app.database import MarketReferencePrice
 
         r = client.post(f"/api/epias/prices/{PERIOD}", json={"ptf_tl_per_mwh": 2600.0})
+        assert r.status_code == 422
+        assert db.query(MarketReferencePrice).count() == 0
+
+    def test_ana_ekran_yekdem_sifir_kaydedilmez_422(self, client, db):
+        from app.database import MarketReferencePrice
+
+        r = client.post(f"/api/epias/prices/{PERIOD}",
+                        json={"ptf_tl_per_mwh": 2600.0, "yekdem_tl_per_mwh": 0})
         assert r.status_code == 422
         assert db.query(MarketReferencePrice).count() == 0
 
@@ -620,7 +913,90 @@ class TestOrtakFiyatYazimi:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 7) Mevcut ağırlıklı PTF öncelikleri — kapı zinciri birebir izler
+# 7) Yetkili yönetim yolu — yeni dönem YEKDEM ister; toplu içe aktarma 0 yazmaz
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestYonetimKaydiYekdem:
+    def test_servis_yeni_ptf_kaydi_yekdemsiz_reddedilir_sifir_yazilmaz(self, db):
+        from app.database import MarketReferencePrice
+        from app.market_price_admin_service import MarketPriceAdminService, ServiceErrorCode
+        from app.market_price_validator import NormalizedMarketPriceInput
+
+        sonuc = MarketPriceAdminService().upsert_price(
+            db, NormalizedMarketPriceInput(period=GECMIS_DONEM, value=Decimal("2500.00"),
+                                           status="final"),
+            updated_by="test", source="epias_manual")
+        assert sonuc.success is False
+        assert sonuc.error.error_code == ServiceErrorCode.YEKDEM_REQUIRED
+        assert sonuc.error.field == "yekdem_value"
+        assert db.query(MarketReferencePrice).count() == 0
+
+    def test_servis_yekdemli_yeni_kayit_ve_ptf_only_guncelleme(self, db):
+        from app.database import MarketReferencePrice
+        from app.market_price_admin_service import MarketPriceAdminService
+        from app.market_price_validator import NormalizedMarketPriceInput
+
+        servis = MarketPriceAdminService()
+        ilk = servis.upsert_price(
+            db, NormalizedMarketPriceInput(period=GECMIS_DONEM, value=Decimal("2500.00"),
+                                           status="provisional", yekdem_value=Decimal("300.00")),
+            updated_by="test", source="epias_manual")
+        assert ilk.success and ilk.created
+        guncel = servis.upsert_price(
+            db, NormalizedMarketPriceInput(period=GECMIS_DONEM, value=Decimal("2550.00"),
+                                           status="final"),
+            updated_by="test", source="epias_manual", change_reason="kesinleşti")
+        assert guncel.success and not guncel.created
+        kayit = db.query(MarketReferencePrice).one()
+        assert (kayit.ptf_tl_per_mwh, kayit.yekdem_tl_per_mwh, kayit.status) == (2550.0, 300.0, "final")
+
+    def test_yonetim_api_yekdemsiz_yeni_donem_400_yekdemli_kesin_kayit_dogrulanir(self, client, db):
+        from app.database import MarketReferencePrice
+
+        r = client.post("/admin/market-prices",
+                        json={"period": GECMIS_DONEM, "value": 2500, "status": "final"})
+        assert r.status_code == 400
+        assert r.json()["detail"]["error_code"] == "YEKDEM_REQUIRED"
+        assert r.json()["detail"]["field"] == "yekdem_value"
+        assert db.query(MarketReferencePrice).count() == 0
+        r2 = client.post("/admin/market-prices",
+                         json={"period": GECMIS_DONEM, "value": 2500, "status": "final",
+                               "yekdem_value": 300})
+        assert r2.status_code == 200 and r2.json()["action"] == "created"
+        prov = client.get(f"/api/epias/prices/{GECMIS_DONEM}").json()["price_provenance"]
+        assert prov["verified"] is True and prov["epias_basis"] is True
+
+    def test_toplu_onizleme_yeni_donemi_saymaz_uygulama_sifir_yazmaz(self, db):
+        from app.bulk_importer import BulkImporter
+        from app.database import MarketReferencePrice
+
+        aktarici = BulkImporter()
+        satirlar = aktarici.parse_csv(f"period,value,status\n{GECMIS_DONEM},2500.00,final\n")
+        onizleme = aktarici.preview(db, satirlar)
+        assert onizleme.new_records == 0 and onizleme.invalid_rows == 1
+        assert onizleme.errors[0]["error_code"] == "YEKDEM_REQUIRED"
+        sonuc = aktarici.apply(db, satirlar, updated_by="test")
+        assert sonuc.accepted_count == 0
+        assert sonuc.rejected_rows[0]["error_code"] == "YEKDEM_REQUIRED"
+        assert db.query(MarketReferencePrice).count() == 0
+
+    def test_toplu_ice_aktarma_mevcut_donemin_ptfsini_gunceller_yekdeme_dokunmaz(self, db):
+        from app.bulk_importer import BulkImporter
+        from app.database import MarketReferencePrice
+
+        _referans(db, 2400.0, 300.0, period=GECMIS_DONEM, status="provisional")
+        aktarici = BulkImporter()
+        satirlar = aktarici.parse_csv(f"period,value,status\n{GECMIS_DONEM},2500.00,provisional\n")
+        assert aktarici.preview(db, satirlar).updates == 1
+        sonuc = aktarici.apply(db, satirlar, updated_by="test", change_reason="toplu")
+        assert sonuc.accepted_count == 1
+        kayit = db.query(MarketReferencePrice).one()
+        db.refresh(kayit)
+        assert (kayit.ptf_tl_per_mwh, kayit.yekdem_tl_per_mwh) == (2500.0, 300.0)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 8) Mevcut ağırlıklı PTF öncelikleri — kapı zinciri birebir izler
 # ═══════════════════════════════════════════════════════════════════════════
 
 class TestOnceliklerKorunur:
@@ -630,10 +1006,10 @@ class TestOnceliklerKorunur:
         _saatlik(db)
         _referans(db, 900.0, 300.0, source="epias_manual")
         prov = build_price_provenance(db, period=PERIOD, ptf=900.0, yekdem=300.0,
-                                      yekdem_excluded=False, user_confirmed=False)
+                                      yekdem_mode="included")
         assert prov["ptf"]["status"] == "user_entered", "sistem saatliği seçerdi"
         prov2 = build_price_provenance(db, period=PERIOD, ptf=PUANT, yekdem=300.0,
-                                       yekdem_excluded=False, user_confirmed=False)
+                                       yekdem_mode="included")
         assert prov2["ptf"]["source"] == "hourly_weighted:puant_agir"
         assert prov2["verified"] is True and prov2["epias_basis"] is True
 
@@ -643,18 +1019,51 @@ class TestOnceliklerKorunur:
         _saatlik(db)
         _referans(db, 1234.5, 300.0, source="manual_override")
         prov = build_price_provenance(db, period=PERIOD, ptf=PUANT, yekdem=300.0,
-                                      yekdem_excluded=False, user_confirmed=False)
+                                      yekdem_mode="included")
         assert prov["ptf"]["status"] == "user_entered", "sistem manual_override'ı seçerdi"
         prov2 = build_price_provenance(db, period=PERIOD, ptf=1234.5, yekdem=300.0,
-                                       yekdem_excluded=False, user_confirmed=False)
+                                       yekdem_mode="included")
         assert prov2["ptf"]["source"] == "manual_override" and prov2["verified"] is True
 
-    def test_snapshot_dogrulamasi_surum_ve_bayrak_ister(self):
+    def test_provisional_manual_override_saatligi_ezer_ama_kesinlesmez(self, db):
+        from app.price_provenance import build_price_provenance
+
+        _saatlik(db)
+        _referans(db, 1234.5, 300.0, source="manual_override", status="provisional")
+        prov = build_price_provenance(db, period=PERIOD, ptf=1234.5, yekdem=300.0,
+                                      yekdem_mode="included")
+        assert prov["ptf"]["source"] == "manual_override"
+        assert prov["blocking_reasons"] == ["ptf_provisional", "yekdem_provisional"]
+
+    def test_kesinlik_yalniz_acik_final_durumu(self):
+        from types import SimpleNamespace
+        from app.price_provenance import reference_is_final
+
+        assert reference_is_final(SimpleNamespace(status="final")) is True
+        for durum in ("provisional", None, "", "FINAL"):
+            assert reference_is_final(SimpleNamespace(status=durum)) is False
+
+    def test_db_hatasinda_fail_closed(self):
+        from unittest.mock import MagicMock
+        from sqlalchemy.exc import OperationalError
+        from app.price_provenance import build_price_provenance
+
+        db = MagicMock()
+        db.query.side_effect = OperationalError("SELECT", {}, Exception("kilitli"))
+        prov = build_price_provenance(db, period=PERIOD, ptf=2500.0, yekdem=300.0,
+                                      yekdem_mode="included")
+        assert prov["system_lookup"] == "error" and prov["verified"] is False
+
+    def test_snapshot_dogrulamasi_surum_ve_sistem_dogrulamasi_ister(self):
         from app.price_provenance import snapshot_price_verified
 
         assert not snapshot_price_verified({})
         assert not snapshot_price_verified({"meta_price_provenance": {"verified": True}})
-        assert snapshot_price_verified({"meta_price_provenance": {"version": 1, "verified": True}})
+        assert not snapshot_price_verified({"meta_price_provenance": {"version": 1, "verified": True}})
+        assert not snapshot_price_verified(
+            {"meta_price_provenance": {"version": 2, "verified": True, "verified_by": "user"}})
+        assert snapshot_price_verified(
+            {"meta_price_provenance": {"version": 2, "verified": True, "verified_by": "system"}})
 
 
 class TestSabitTohumlamaYok:

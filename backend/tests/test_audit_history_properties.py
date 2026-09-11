@@ -13,6 +13,7 @@ Properties tested:
 """
 
 import pytest
+from dataclasses import replace
 from decimal import Decimal
 from datetime import datetime
 from unittest.mock import MagicMock
@@ -111,6 +112,7 @@ class TestProperty1UpsertHistoryCorrectness:
         self, normalized, updated_by, source
     ):
         """INSERT path: action='INSERT', old_value=None, old_status=None."""
+        normalized = replace(normalized, yekdem_value=Decimal("300.00"))  # Faz 1: yeni kayıt YEKDEM ister
         service = MarketPriceAdminService()
         mock_db = MagicMock()
         mock_db.query.return_value.filter.return_value.first.return_value = None

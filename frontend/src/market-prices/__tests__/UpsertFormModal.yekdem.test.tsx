@@ -72,4 +72,12 @@ describe('UpsertFormModal — YEKDEM alanı', () => {
     await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
     expect(submit.mock.calls[0][0]).not.toHaveProperty('yekdem_value');
   });
+
+  it('durum alanı yalnız kesinleşmiş kaydın kesin teklifte kullanıldığını söyler', () => {
+    ac();
+    const ipucu = screen.getByTestId('status-hint');
+    expect(ipucu).toHaveTextContent('Kesinleşmiş');
+    expect(ipucu).toHaveTextContent('kesin teklif ve PDF');
+    expect(ipucu).toHaveTextContent('yalnız taslak');
+  });
 });

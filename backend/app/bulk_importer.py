@@ -224,6 +224,14 @@ class BulkImporter:
     ) -> ImportPreview:
         """Preview import results without committing.
         Validates: Requirements 6.1, 6.2, 6.3
+
+        Fiyat Doğruluğu Faz 1: toplu içe aktarma yalnız PTF taşır. Kaydı olmayan
+        PTF dönemi YEKDEM'siz oluşturulamaz (servis YEKDEM_REQUIRED ile reddeder;
+        eksik YEKDEM 0 olarak saklanmaz). Önizleme bu satırları "yeni kayıt"
+        diye SAYMAZ; satır hatası olarak gösterir (apply ile tutarlı).
+
+        Çağrıldığı yerler:
+        - main.import_preview() → POST /admin/market-prices/import/preview
         """
         valid_rows = 0
         invalid_rows = 0
@@ -242,11 +250,20 @@ class BulkImporter:
                         "error_code": err.error_code.value if hasattr(err.error_code, 'value') else str(err.error_code),
                     })
                 continue
-            valid_rows += 1
             existing = db.query(MarketReferencePrice).filter(
                 MarketReferencePrice.price_type == price_type,
                 MarketReferencePrice.period == row.period,
             ).first()
+            if existing is None and price_type == "PTF":
+                invalid_rows += 1
+                errors.append({
+                    "row": row.row_number, "field": "yekdem_value",
+                    "error": (f"Donem {row.period} icin kayit yok: yeni donem YEKDEM ister. "
+                              "Kaydi Piyasa Fiyatlari formundan PTF ve YEKDEM ile olusturun."),
+                    "error_code": "YEKDEM_REQUIRED",
+                })
+                continue
+            valid_rows += 1
             if existing is None:
                 new_records += 1
             else:

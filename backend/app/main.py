@@ -1918,21 +1918,21 @@ async def create_offer(
     # Ham metin alınıp parse_invoice_total_raw() ile AÇIKÇA doğrulanır.
     invoice_total_raw: Optional[str] = None,
     operator_confirmed_warnings: bool = False,
-    # Fiyat Doğruluğu Faz 1: kullanıcının fiyatı açıkça doğruladığı ve "YEKDEM
-    # hariç"i açıkça seçtiği bilgisi (query param; OfferParams şeması değişmedi).
-    # Sunucu fiyat kaynağını KENDİSİ hesaplar; bu bayraklar yalnız kullanıcı
-    # beyanıdır ve snapshot'a aynen yazılır.
-    price_confirmed_by_user: bool = False,
-    yekdem_excluded: bool = False,
+    # Fiyat Doğruluğu Faz 1: YEKDEM uygulamasının AÇIK seçimi (query param;
+    # OfferParams şeması değişmedi): included | excluded | exempt. Gönderilmezse
+    # 'included' (en katı yol: doğrulanmış YEKDEM ister; sessiz "hariç" YOK).
+    # Fiyat doğrulaması YALNIZ sunucudadır: istemcinin "doğrulandı" beyanı alınmaz.
+    yekdem_mode: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """Teklifi kaydet ve arşivle.
 
-    Fiyat Doğruluğu Faz 1 — eksik ya da doğrulanmamış PTF/YEKDEM ile teklif
-    KAYDEDİLMEZ (422 price_unverified; R2 kapısından sonra, persist'ten önce).
-    Fiyatın dönemi, kaynağı ve kullanıcı doğrulaması SUNUCUDA hesaplanıp
-    snapshot'a (calculation_result.meta_price_provenance) yazılır; istemcinin
-    gönderdiği provenance kullanılmaz.
+    Fiyat Doğruluğu Faz 1 — eksik, doğrulanmamış ya da kesinleşmemiş
+    (provisional) PTF/YEKDEM ile teklif KAYDEDİLMEZ (422 price_unverified; R2
+    kapısından sonra, persist'ten önce). Fiyatın dönemi, kaynağı, kayıt durumu
+    ve YEKDEM seçimi SUNUCUDA hesaplanıp snapshot'a
+    (calculation_result.meta_price_provenance) yazılır; istemcinin gönderdiği
+    provenance kullanılmaz.
 
     Çağrıldığı yerler:
     - frontend/src/api.ts createOffer() ← App.tsx handleDownloadPdf (manuel + AI teklif kaydı)
@@ -2010,19 +2010,21 @@ async def create_offer(
 
     # 6) Fiyat Doğruluğu Faz 1 — sunucu kapısı (yalnız düğmeye bırakılmaz).
     #    R2 kapısından SONRA, persist'ten ÖNCE çalışır; rette yan etki oluşmaz.
-    from .price_provenance import build_price_provenance, price_block_content
-    _prov = build_price_provenance(
+    #    Karar yalnız DB'ye dayanır: fiyat, dönemin güvenilir ve KESİN (final)
+    #    kaydıyla eşleşmelidir. Provisional, eksik ya da uyuşmayan fiyat 422 alır.
+    from .price_provenance import offer_price_gate, price_block_content, yekdem_applied
+    _prov = offer_price_gate(
         db,
         period=extraction.invoice_period,
         ptf=params.weighted_ptf_tl_per_mwh,
-        yekdem=None if yekdem_excluded else params.yekdem_tl_per_mwh,
-        yekdem_excluded=yekdem_excluded,
-        exclusion_basis="invoice" if _kaynak == "extraction" else "user",
-        user_confirmed=price_confirmed_by_user,
+        yekdem=params.yekdem_tl_per_mwh,
+        yekdem_mode=yekdem_mode,
         customer_id=params.customer_id,
+        offer_yekdem_tl=calculation.offer_yekdem_tl,
     )
     if not _prov["verified"]:
         return JSONResponse(status_code=422, content=price_block_content(_prov))
+    _yekdem_dahil = yekdem_applied(_prov)
     _calc_json = calculation.model_dump()
     _calc_json["meta_price_provenance"] = _prov  # istemcinin gönderdiği değer EZİLİR
 
@@ -2036,9 +2038,10 @@ async def create_offer(
         demand_qty=extraction.demand_qty.value,
         demand_unit_price=extraction.demand_unit_price_tl_per_unit.value,
         weighted_ptf=params.weighted_ptf_tl_per_mwh,
-        # offers.yekdem NOT NULL: "YEKDEM hariç" 0 olarak saklanır; hariç/gerçek 0
-        # ayrımı snapshot'taki meta_price_provenance.yekdem.mode alanındadır.
-        yekdem=0.0 if yekdem_excluded else params.yekdem_tl_per_mwh,
+        # offers.yekdem NOT NULL = teklif fiyatına UYGULANAN YEKDEM. Hariç ve muaf'ta
+        # uygulanan değer 0'dır; hariç/muaf ayrımı snapshot'taki
+        # meta_price_provenance.yekdem.mode alanındadır (gerçek 0 kesinleşemez).
+        yekdem=params.yekdem_tl_per_mwh if _yekdem_dahil else 0.0,
         agreement_multiplier=params.agreement_multiplier,
         current_total=calculation.current_total_with_vat_tl,
         offer_total=calculation.offer_total_with_vat_tl,
@@ -2712,10 +2715,32 @@ async def download_offer_pdf(
 
 @app.post("/offers/{offer_id}/generate-html", response_class=HTMLResponse)
 async def generate_html_for_offer(offer_id: int, db: Session = Depends(get_db)):
-    """Kayıtlı teklif için HTML oluştur"""
+    """Kayıtlı teklif için HTML oluştur.
+
+    Fiyat Doğruluğu Faz 1: müşteri belgesiyle aynı içeriği üreten bu uç, PDF ucuyla
+    (generate_pdf_for_offer) AYNI snapshot kapısını uygular. Fiyatı sunucuda
+    doğrulanmamış (Faz 1 öncesi ya da eksik) teklif belgeye dökülmez; geçmiş kayıt
+    yeniden hesaplanmaz.
+
+    Çağrıldığı yerler: YOK (frontend/electron'da referans yok; doğrudan API yolu).
+    """
     offer = db.query(Offer).filter(Offer.id == offer_id).first()
     if not offer:
         raise HTTPException(status_code=404, detail="Teklif bulunamadı")
+    from .price_provenance import snapshot_price_verified
+    if not snapshot_price_verified(offer.calculation_result):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "price_unverified",
+                "message": (
+                    "Bu teklifin fiyat kaynağı doğrulanmamış (fiyat doğrulaması öncesi "
+                    "kaydedilmiş ya da eksik). Teklif belgesi üretilmez; teklifi "
+                    "doğrulanmış PTF/YEKDEM ile yeniden oluşturun."
+                ),
+                "offer_id": offer.id,
+            },
+        )
     
     extraction = InvoiceExtraction(**offer.extraction_result)
     calculation = CalculationResult(**offer.calculation_result)
@@ -2745,8 +2770,10 @@ async def generate_pdf_direct(
     params: OfferParams,
     customer_name: Optional[str] = None,
     customer_company: Optional[str] = None,
-    price_confirmed_by_user: bool = False,  # Faz 1: kullanıcı fiyatı açıkça doğruladı
-    yekdem_excluded: bool = False,  # Faz 1: açıkça seçilen "YEKDEM hariç"
+    # Fiyat Doğruluğu Faz 1: YEKDEM uygulamasının açık seçimi (included | excluded |
+    # exempt; gönderilmezse included). Fiyat DB'de doğrulanır; istemci beyanı alınmaz.
+    yekdem_mode: Optional[str] = None,
+    db: Session = Depends(get_db),
 ):
     """
     Kaydetmeden direkt PDF oluştur.
@@ -2761,23 +2788,24 @@ async def generate_pdf_direct(
     Çağrıldığı yerler: YOK (frontend'de referans sıfır; runtime graph'ta
     ölü uç — bkz. S5-R03B kapanış raporu).
     """
-    # Fiyat Doğruluğu Faz 1: doğrudan API ile doğrulanmamış fiyatla PDF üretilemez.
-    # Bu uçta DB bağımlılığı yoktur → sistem doğrulaması yapılamaz; fiyat ancak
-    # açık kullanıcı onayıyla kabul edilir ve PDF "EPİAŞ verileri esas alınarak"
-    # DEMEZ. İstemcinin gönderdiği provenance ezilir.
-    from .price_provenance import build_price_provenance, price_block_content
-    _prov_direct = build_price_provenance(
-        None,
+    # Fiyat Doğruluğu Faz 1: doğrudan API ile doğrulanmamış ya da kesinleşmemiş
+    # fiyatla PDF üretilemez. Fiyat, POST /offers ile AYNI kuralla DB'de doğrulanır
+    # (güvenilir + final kayıt). İstemcinin gönderdiği provenance ezilir ve
+    # "doğrulandı" beyanı alınmaz.
+    from .price_provenance import offer_price_gate, price_block_content, yekdem_applied
+    _prov_direct = offer_price_gate(
+        db,
         period=extraction.invoice_period,
         ptf=params.weighted_ptf_tl_per_mwh,
-        yekdem=None if yekdem_excluded else params.yekdem_tl_per_mwh,
-        yekdem_excluded=yekdem_excluded,
-        user_confirmed=price_confirmed_by_user,
+        yekdem=params.yekdem_tl_per_mwh,
+        yekdem_mode=yekdem_mode,
+        customer_id=params.customer_id,
+        offer_yekdem_tl=calculation.offer_yekdem_tl,
     )
     if not _prov_direct["verified"]:
         return JSONResponse(status_code=422, content=price_block_content(_prov_direct))
     calculation = calculation.model_copy(update={"meta_price_provenance": _prov_direct})
-    if yekdem_excluded:
+    if not yekdem_applied(_prov_direct):
         params = params.model_copy(update={"yekdem_tl_per_mwh": 0.0})
 
     try:
@@ -2840,8 +2868,10 @@ async def generate_pdf_simple(
     offer_validity_days: int = Form(15),  # Teklif geçerlilik süresi (gün)
     operator_confirmed_warnings: bool = Form(False),  # R2: %10-40 mismatch onayı
     invoice_total_raw: float = Form(0),  # R2: operatörün girdiği/extract edilen HAM toplam (re-derive için)
-    price_confirmed_by_user: bool = Form(False),  # Faz 1: kullanıcı fiyatı açıkça doğruladı
-    yekdem_excluded: bool = Form(False),  # Faz 1: açıkça seçilen "YEKDEM hariç"
+    # Fiyat Doğruluğu Faz 1: YEKDEM uygulamasının açık seçimi (included | excluded |
+    # exempt; gönderilmezse included). Fiyat DB'de doğrulanır; istemci beyanı alınmaz.
+    yekdem_mode: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
 ):
     """Basit parametrelerle PDF oluştur.
 
@@ -2851,7 +2881,7 @@ async def generate_pdf_simple(
     """
     # ── P0 guard: Teklif PTF zorunlu — PTF<=0 → çöp teklif (manuel modda boş PTF). ──
     # Çağrıldığı yerler: api.ts downloadPdf → App.tsx handleDownloadPdf (manuel+AI) + Electron.
-    # YEKDEM'e dokunulmaz (0/tahmini/kesin meşru); yalnızca PTF zorunluluğu kapatılır.
+    # YEKDEM ve fiyatın kaynağı aşağıdaki Faz 1 kapısında DB'ye karşı doğrulanır.
     if weighted_ptf_tl_per_mwh is None or weighted_ptf_tl_per_mwh <= 0:
         return JSONResponse(
             status_code=422,
@@ -2888,20 +2918,19 @@ async def generate_pdf_simple(
         return JSONResponse(status_code=422, content=_sonuc_simple.reddet)
 
     # ── Fiyat Doğruluğu Faz 1: doğrudan API kapısı (semafordan ÖNCE) ──
-    # Bu uçta DB bağımlılığı yoktur → sistem doğrulaması yapılamaz; fiyat ancak
-    # açık kullanıcı onayıyla kabul edilir ve PDF "EPİAŞ verileri" DEMEZ.
-    from .price_provenance import build_price_provenance, price_block_content
-    _prov_simple = build_price_provenance(
-        None,
+    # Fiyat, POST /offers ile AYNI kuralla DB'de doğrulanır (güvenilir + final kayıt).
+    # İstemcinin "doğrulandı" beyanı alınmaz; doğrulanmamış fiyatla PDF üretilmez.
+    from .price_provenance import offer_price_gate, price_block_content, yekdem_applied
+    _prov_simple = offer_price_gate(
+        db,
         period=invoice_period,
         ptf=weighted_ptf_tl_per_mwh,
-        yekdem=None if yekdem_excluded else yekdem_tl_per_mwh,
-        yekdem_excluded=yekdem_excluded,
-        user_confirmed=price_confirmed_by_user,
+        yekdem=yekdem_tl_per_mwh,
+        yekdem_mode=yekdem_mode,
     )
     if not _prov_simple["verified"]:
         return JSONResponse(status_code=422, content=price_block_content(_prov_simple))
-    if yekdem_excluded:
+    if not yekdem_applied(_prov_simple):
         yekdem_tl_per_mwh = 0.0
 
     import time as _time
@@ -3152,9 +3181,36 @@ async def generate_html_direct(
     calculation: CalculationResult,
     params: OfferParams,
     customer_name: Optional[str] = None,
-    customer_company: Optional[str] = None
+    customer_company: Optional[str] = None,
+    # Fiyat Doğruluğu Faz 1: YEKDEM uygulamasının açık seçimi (included | excluded |
+    # exempt; gönderilmezse included). Fiyat DB'de doğrulanır; istemci beyanı alınmaz.
+    yekdem_mode: Optional[str] = None,
+    db: Session = Depends(get_db),
 ):
-    """Kaydetmeden direkt HTML oluştur"""
+    """Kaydetmeden direkt HTML oluştur.
+
+    Fiyat Doğruluğu Faz 1: /generate-pdf-direct ile AYNI kapı. Doğrulanmamış ya da
+    kesinleşmemiş fiyatla teklif belgesi üretilmez (422 price_unverified). İstemcinin
+    gönderdiği provenance ezilir; belge doğrulanmamış fiyatı "EPİAŞ verisi" diye
+    SUNAMAZ.
+
+    Çağrıldığı yerler: YOK (frontend/electron'da referans yok; doğrudan API yolu).
+    """
+    from .price_provenance import offer_price_gate, price_block_content, yekdem_applied
+    _prov_html = offer_price_gate(
+        db,
+        period=extraction.invoice_period,
+        ptf=params.weighted_ptf_tl_per_mwh,
+        yekdem=params.yekdem_tl_per_mwh,
+        yekdem_mode=yekdem_mode,
+        customer_id=params.customer_id,
+        offer_yekdem_tl=calculation.offer_yekdem_tl,
+    )
+    if not _prov_html["verified"]:
+        return JSONResponse(status_code=422, content=price_block_content(_prov_html))
+    calculation = calculation.model_copy(update={"meta_price_provenance": _prov_html})
+    if not yekdem_applied(_prov_html):
+        params = params.model_copy(update={"yekdem_tl_per_mwh": 0.0})
     html_content = generate_offer_html(
         extraction, calculation, params,
         customer_name=customer_name,
@@ -5478,9 +5534,11 @@ async def get_prices_with_epias_fallback(
       2974.1 / 364.0 kaldırıldı). EPİAŞ otomatik çekimi KAPALI: `auto_fetch`
       geriye uyum için kabul edilir ama ETKİSİZDİR.
     - YEKDEM kaydı yoksa null ("missing"); DB'de 0 ise 0 döner ve
-      "zero_unverified" işaretlenir (gerçek 0 ile eksik veri ayrılır).
-    - price_provenance: bu değerlerle teklif kesinleşebilir mi, kullanıcı onayı
-      gerekiyor mu (POST /offers kapısıyla aynı hesap).
+      "zero_unverified" işaretlenir (değer taşınır, kesin teklifte kullanılamaz).
+    - price_provenance: bu değerlerle teklif kesinleşebilir mi (POST /offers
+      kapısıyla aynı hesap; YEKDEM 'dahil' varsayılır). Kayıt provisional ise
+      draft_only=True olur ve değerler yalnız TASLAK hesapta kullanılır.
+    - record_status: kaydın durumu (final | provisional); kayıt yoksa null.
 
     SoT-X Seviye 1: hourly_market_prices'tan profil-ağırlıklı PTF
     (weighted_ptf_*). Profil seçimi: explicit profile → tariff_group default →
@@ -5523,7 +5581,7 @@ async def get_prices_with_epias_fallback(
         consumption_weighted_ptf,
         OFFER_USE_REAL_CONSUMPTION,
     )
-    from .price_provenance import resolve_period_yekdem, build_price_provenance
+    from .price_provenance import YEKDEM_MODE_INCLUDED, build_price_provenance, resolve_period_yekdem
 
     # Faz 1: yalnız DB — EPİAŞ çağrısı ve varsayılan fiyat YOK (auto_fetch etkisiz).
     prices = get_market_prices(db, period)
@@ -5570,15 +5628,17 @@ async def get_prices_with_epias_fallback(
             f"Dönem {period} için geçerli PTF bulunamadı (saatlik yok, referans <= 0)."
         )
 
-    # Faz 1: YEKDEM kaydı yoksa null; 0 kaydı değer olarak taşınır (onay ister).
+    # Faz 1: YEKDEM kaydı yoksa null; 0 kaydı değer olarak taşınır (kesinleşemez).
     yekdem = resolve_period_yekdem(db, period)
     provenance = build_price_provenance(
         db,
         period=period,
         ptf=weighted_ptf,
         yekdem=yekdem.value,
-        yekdem_excluded=False,
-        user_confirmed=False,
+        # Ekrandaki değerin durumu 'dahil' varsayımıyla hesaplanır. Hariç/muaf seçimi
+        # arayüzde yapılır; dönemin YEKDEM durumu seçimden bağımsız döner.
+        yekdem_mode=YEKDEM_MODE_INCLUDED,
+        mode_basis="default",
         customer_id=customer_id,
     )
 
@@ -5595,6 +5655,7 @@ async def get_prices_with_epias_fallback(
             else "Kayıt yok — varsayılan fiyat kullanılmaz (EPİAŞ otomatik çekimi kapalı)"
         ),
         "is_locked": prices.is_locked if prices is not None else False,
+        "record_status": prices.status if prices is not None else None,
         "weighted_ptf_tl_per_mwh": weighted_ptf,
         "weighted_ptf_profile": eff_profile,
         "weighted_ptf_source": weighted_source,
@@ -5619,8 +5680,13 @@ async def save_period_prices(
     - Mevcut admin yetkisi uygulanır (ADMIN_API_KEY_ENABLED=true iken X-Admin-Key zorunlu).
     - ptf_tl_per_mwh zorunlu; gönderilmezse 422 (eskiden 0 yazılıp doğrulamaya düşüyordu).
     - yekdem_tl_per_mwh gönderilmezse mevcut kaydın YEKDEM'i KORUNUR (eskiden 0
-      ile eziliyordu); yeni dönem kaydında YEKDEM zorunludur (422). Açıkça
-      gönderilen 0 kaydedilir ve tekliflerde kullanıcı onayı ister.
+      ile eziliyordu); yeni dönem kaydında YEKDEM zorunludur (422).
+    - Owner teyidi: YEKDEM 0 ya da negatif kaydedilmez (422). Kayıtlı 0 eksik
+      veriden ayırt edilemez; teklifte YEKDEM uygulanmayacaksa 'hariç'/'muaf' seçilir.
+    - Bu hızlı kayıt YALNIZ TASLAK (status='provisional') değer yazar. Kesinleşmiş
+      (final) kaydın değeri buradan değiştirilemez (409); aynı değer gönderilirse
+      işlem yapılmaz. Kesinleştirme yetkili Piyasa Fiyatları ekranındadır (final
+      koruması + değişiklik geçmişi).
 
     Çağrıldığı yerler:
     - frontend/src/App.tsx "💾 PTF/YEKDEM Kaydet" (adminApi → X-Admin-Key varsa gönderilir)
@@ -5638,17 +5704,62 @@ async def save_period_prices(
     if ptf is None:
         raise HTTPException(status_code=422, detail="ptf_tl_per_mwh gerekli")
 
-    if yekdem is None:
-        mevcut = get_market_prices(db, period)
-        if mevcut is None:
+    try:
+        ptf = float(ptf)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="ptf_tl_per_mwh sayı olmalı")
+
+    mevcut = get_market_prices(db, period)
+    if yekdem is not None:
+        try:
+            yekdem = float(yekdem)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="yekdem_tl_per_mwh sayı olmalı")
+        if not yekdem > 0:
+            # Owner teyidi: kayıtlı 0 eksik veriden ayırt edilemez; kesin teklifte
+            # kullanılamayacak bir değer kalıcılaştırılmaz. Hariç/muaf teklif
+            # ekranında açık bir seçimdir (price_provenance).
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    "Yeni dönem kaydında yekdem_tl_per_mwh zorunludur "
-                    "(YEKDEM gerçekten 0 ise açıkça 0 gönderin)."
+                    "YEKDEM 0 ya da negatif kaydedilemez: kayıtlı 0 eksik veriden ayırt "
+                    "edilemez. YEKDEM teklife eklenmeyecekse teklif ekranında 'Hariç' ya "
+                    "da 'Muaf' seçin."
                 ),
             )
+    elif mevcut is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Yeni dönem kaydında yekdem_tl_per_mwh zorunludur "
+                "(eksik YEKDEM 0 olarak kaydedilmez)."
+            ),
+        )
+    else:
         yekdem = mevcut.yekdem_tl_per_mwh  # mevcut YEKDEM korunur (0 ile ezilmez)
+
+    # Owner teyidi: bu hızlı kayıt yolu KESİNLEŞMİŞ (final) kaydı değiştiremez; aynı
+    # değerler gönderilirse işlem yapılmaz. Düzeltme yetkili Piyasa Fiyatları ekranında
+    # yapılır (final koruması + değişiklik geçmişi). Durumu boş eski kayıt da kesin sayılır.
+    if mevcut is not None and mevcut.status == "final":
+        ayni = (abs(float(mevcut.ptf_tl_per_mwh) - ptf) <= 0.005
+                and abs(float(mevcut.yekdem_tl_per_mwh) - float(yekdem)) <= 0.005)
+        if not ayni:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Dönem fiyatı kesinleşmiş (final) ve bu ekrandan değiştirilemez. "
+                    "Düzeltme için Piyasa Fiyatları ekranını kullanın."
+                ),
+            )
+        return {
+            "status": "ok",
+            "period": period,
+            "ptf_tl_per_mwh": mevcut.ptf_tl_per_mwh,
+            "yekdem_tl_per_mwh": mevcut.yekdem_tl_per_mwh,
+            "record_status": "final",
+            "message": "Değişiklik yok: kesin kayıt aynı değerde.",
+        }
 
     result = upsert_market_prices(
         db=db,
@@ -5656,6 +5767,7 @@ async def save_period_prices(
         ptf_tl_per_mwh=ptf,
         yekdem_tl_per_mwh=yekdem,
         source="manual_override",
+        status="provisional",  # Faz 1: hızlı kayıt yalnız TASLAK değer yazar
     )
     
     success, message = result
@@ -5667,6 +5779,7 @@ async def save_period_prices(
         "period": period,
         "ptf_tl_per_mwh": ptf,
         "yekdem_tl_per_mwh": yekdem,
+        "record_status": "provisional",
         "message": message,
     }
 

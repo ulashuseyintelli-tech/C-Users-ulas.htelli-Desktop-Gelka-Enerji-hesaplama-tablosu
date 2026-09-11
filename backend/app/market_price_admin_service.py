@@ -45,6 +45,9 @@ class ServiceErrorCode(str, Enum):
     PERIOD_LOCKED = "PERIOD_LOCKED"
     FINAL_RECORD_PROTECTED = "FINAL_RECORD_PROTECTED"
     STATUS_DOWNGRADE_FORBIDDEN = "STATUS_DOWNGRADE_FORBIDDEN"
+    # Fiyat Doğruluğu Faz 1: yeni PTF dönem kaydı YEKDEM'siz oluşturulamaz
+    # (eksik YEKDEM 0 olarak saklanmaz; kolon NOT NULL, migration yok).
+    YEKDEM_REQUIRED = "YEKDEM_REQUIRED"
     
     # Lookup errors
     PERIOD_NOT_FOUND = "PERIOD_NOT_FOUND"
@@ -255,7 +258,33 @@ class MarketPriceAdminService:
         captured_at: Optional[datetime],
         warnings: List[str],
     ) -> UpsertResult:
-        """Handle INSERT path."""
+        """Handle INSERT path.
+
+        Fiyat Doğruluğu Faz 1 (owner teyidi): eksik YEKDEM 0 ile TEMSİL EDİLMEZ.
+        yekdem_tl_per_mwh kolonu NOT NULL olduğu için (migration yok) YEKDEM'siz
+        yeni PTF dönem kaydı REDDEDİLİR (YEKDEM_REQUIRED, alan yekdem_value).
+        Eskiden 0 yazılıyordu ve tekliflerde "gerçek 0"dan ayırt edilemiyordu.
+        Mevcut kaydın PTF-only güncellemesi etkilenmez; YEKDEM'e dokunulmaz.
+
+        Çağrıldığı yerler:
+        - MarketPriceAdminService.upsert_price() ← main.upsert_market_price() → POST /admin/market-prices
+        - MarketPriceAdminService.upsert_price() ← bulk_importer.BulkImporter.apply() → POST /admin/market-prices/import/apply
+        - MarketPriceAdminService.bulk_upsert() → upsert_price() üzerinden
+        """
+        if normalized.price_type == "PTF" and normalized.yekdem_value is None:
+            return UpsertResult(
+                success=False,
+                created=False,
+                changed=False,
+                error=ServiceError(
+                    error_code=ServiceErrorCode.YEKDEM_REQUIRED,
+                    field="yekdem_value",
+                    message=(
+                        f"Yeni dönem ({normalized.period}) kaydı için YEKDEM birim bedeli "
+                        "zorunludur; eksik YEKDEM 0 olarak kaydedilmez."
+                    ),
+                ),
+            )
         now = datetime.utcnow()
         
         try:
@@ -263,6 +292,8 @@ class MarketPriceAdminService:
                 price_type=normalized.price_type,
                 period=normalized.period,
                 ptf_tl_per_mwh=float(normalized.value),
+                # PTF dışı tiplerde YEKDEM anlamsızdır (kolon NOT NULL → 0). PTF'te
+                # yukarıdaki kapı nedeniyle değer HER ZAMAN açıkça verilmiştir.
                 yekdem_tl_per_mwh=(
                     float(normalized.yekdem_value) if normalized.yekdem_value is not None else 0
                 ),

@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { PriceProvenance } from './pricing/priceReadiness';
+import type { PriceProvenance, YekdemMode } from './pricing/priceReadiness';
 
 export const API_BASE = 'http://127.0.0.1:8000';
 
@@ -258,9 +258,10 @@ export async function createOffer(
   // `computed_total` / `current_total` / teklif toplamı buraya ASLA
   // konulmaz — guard'ı anlamsız kılar.
   guard: { invoice_total_raw: number; operator_confirmed_warnings?: boolean;
-    // Fiyat Doğruluğu Faz 1: açık kullanıcı doğrulaması ve açık "YEKDEM hariç" seçimi.
-    // Sunucu fiyat kaynağını KENDİSİ hesaplar; eksik/doğrulanmamışta 422 price_unverified.
-    price_confirmed_by_user?: boolean; yekdem_excluded?: boolean }
+    // Fiyat Doğruluğu Faz 1: YEKDEM uygulamasının AÇIK seçimi (dahil / hariç / muaf).
+    // Fiyat doğrulaması YALNIZ sunucudadır (kullanıcı onayı bayrağı YOK). Eksik,
+    // doğrulanmamış ya da kesinleşmemiş (provisional) fiyatta 422 price_unverified.
+    yekdem_mode?: YekdemMode | null }
 ): Promise<CreateOfferResponse> {
   try {
     const response = await api.post(
@@ -274,8 +275,8 @@ export async function createOffer(
           ...(guard.operator_confirmed_warnings
             ? { operator_confirmed_warnings: true }
             : {}),
-          ...(guard.price_confirmed_by_user ? { price_confirmed_by_user: true } : {}),
-          ...(guard.yekdem_excluded ? { yekdem_excluded: true } : {}),
+          // Gönderilmezse sunucu 'included' kabul eder (en katı yol; sessiz "hariç" YOK).
+          ...(guard.yekdem_mode ? { yekdem_mode: guard.yekdem_mode } : {}),
         },
       }
     );
@@ -1068,8 +1069,10 @@ export interface EpiasPricesResponse {
   source_description: string;
   source_detail?: string | null;
   is_locked?: boolean;
-  // Fiyat Doğruluğu Faz 1: YEKDEM null = bilinmiyor; 0 = kayıtlı sıfır (onay ister)
-  yekdem_status?: 'known' | 'zero_unverified' | 'missing';
+  // Fiyat Doğruluğu Faz 1: YEKDEM null = bilinmiyor; 0 = kayıtlı sıfır (eksik veriden
+  // ayırt edilemediği için kesin teklifte kullanılamaz). record_status: final | provisional.
+  yekdem_status?: 'known' | 'zero_unverified' | 'invalid' | 'missing';
+  record_status?: string | null;
   yekdem_source?: string | null;
   // SoT-X Seviye 1: profil-ağırlıklı PTF (additive — eski alanlar korunur)
   weighted_ptf_tl_per_mwh?: number | null;

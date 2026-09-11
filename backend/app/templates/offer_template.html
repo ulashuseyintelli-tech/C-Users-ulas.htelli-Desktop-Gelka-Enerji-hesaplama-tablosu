@@ -169,16 +169,18 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 {% if epias_basis %}
 <p class="explanation">Enerji bedeli, piyasa mevzuatına uygun şekilde EPİAŞ verileri esas alınarak oluşturulmaktadır. İlgili fatura dönemi için EPİAŞ saatlik Piyasa Takas Fiyatları (PTF) ile abonenin saatlik veya profillenmiş tüketim değerleri kullanılarak <b>Ağırlıklı PTF</b> hesaplanır.</p>
 {% else %}
-<p class="explanation">Enerji bedeli, bu teklifte belirtilen PTF{% if not yekdem_excluded %} ve YEKDEM{% endif %} birim {% if yekdem_excluded %}bedeli{% else %}bedelleri{% endif %} esas alınarak hesaplanmıştır.</p>
+<p class="explanation">Enerji bedeli, bu teklifte belirtilen PTF{% if not yekdem_not_applied %} ve YEKDEM{% endif %} birim {% if yekdem_not_applied %}bedeli{% else %}bedelleri{% endif %} esas alınarak hesaplanmıştır.</p>
 {% endif %}
-{% if yekdem_excluded %}
+{% if yekdem_not_applied %}
 <p class="explanation">Bu bedel, sözleşmede belirlenen anlaşma fiyat katsayısı (<b>{{ agreement_multiplier | number(2) }}</b>) ile çarpılarak nihai enerji bedeline ulaşılır.</p>
 {% else %}
 <p class="explanation">Ağırlıklı PTF üzerine ilgili dönem YEKDEM birim bedeli eklenerek toplam enerji birim maliyeti oluşturulur. Bu maliyet, sözleşmede belirlenen anlaşma fiyat katsayısı (<b>{{ agreement_multiplier | number(2) }}</b>) ile çarpılarak nihai enerji bedeline ulaşılır.</p>
 {% endif %}
 
 <p class="section-label">YEKDEM Uygulaması</p>
-{% if yekdem_excluded %}
+{% if yekdem_exempt %}
+<p class="explanation">Bu teklif, müşterinin YEKDEM bedelinden muaf olduğu bilgisine dayanır; enerji birim fiyatına YEKDEM bedeli eklenmemiştir.</p>
+{% elif yekdem_excluded %}
 <p class="explanation">Bu teklifte YEKDEM bedeli enerji birim fiyatına dahil edilmemiştir.</p>
 {% else %}
 <p class="explanation">YEKDEM bedeli, EPİAŞ tarafından ilgili dönem için kesinleştirilmediği durumlarda tahmini olarak faturalandırılabilir. Gerçekleşen değer açıklandığında, tahmini değer ile oluşan fark izleyen dönemlerde mahsup edilerek dengelenir.</p>
@@ -208,7 +210,7 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 <colgroup><col style="width:25%"><col style="width:25%"><col style="width:25%"><col style="width:25%"></colgroup>
 <tr><th>Mevcut Birim Fiyat</th><td>{{ current_unit_price | number(4) }} TL/kWh</td><th>Teklif Birim Fiyat</th><td>{{ offer_unit_price | number(4) }} TL/kWh</td></tr>
 <tr><th>Anlaşma Çarpanı</th><td>{{ agreement_multiplier | number(2) }}</td><th>Birim Fiyat Farkı</th><td>{{ (current_unit_price - offer_unit_price) | number(4) }} TL/kWh</td></tr>
-<tr><th>Ağırlıklı PTF</th><td>{{ weighted_ptf | number(2) }} TL/MWh</td><th>YEKDEM</th><td>{% if yekdem_excluded %}Dahil değil{% else %}{{ yekdem | number(2) }} TL/MWh{% endif %}</td></tr>
+<tr><th>Ağırlıklı PTF</th><td>{{ weighted_ptf | number(2) }} TL/MWh</td><th>YEKDEM</th><td>{% if yekdem_exempt %}Muaf{% elif yekdem_excluded %}Dahil değil{% else %}{{ yekdem | number(2) }} TL/MWh{% endif %}</td></tr>
 </table>
 
 <!-- Fatura Bilgileri -->
