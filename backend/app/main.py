@@ -1919,7 +1919,7 @@ async def create_offer(
     invoice_total_raw: Optional[str] = None,
     operator_confirmed_warnings: bool = False,
     # Fiyat Doğruluğu Faz 1: YEKDEM uygulamasının AÇIK seçimi (query param;
-    # OfferParams şeması değişmedi): included | excluded | exempt. Gönderilmezse
+    # OfferParams şeması değişmedi): included | excluded. Gönderilmezse
     # 'included' (en katı yol: doğrulanmış YEKDEM ister; sessiz "hariç" YOK).
     # Fiyat doğrulaması YALNIZ sunucudadır: istemcinin "doğrulandı" beyanı alınmaz.
     yekdem_mode: Optional[str] = None,
@@ -2038,9 +2038,10 @@ async def create_offer(
         demand_qty=extraction.demand_qty.value,
         demand_unit_price=extraction.demand_unit_price_tl_per_unit.value,
         weighted_ptf=params.weighted_ptf_tl_per_mwh,
-        # offers.yekdem NOT NULL = teklif fiyatına UYGULANAN YEKDEM. Hariç ve muaf'ta
-        # uygulanan değer 0'dır; hariç/muaf ayrımı snapshot'taki
-        # meta_price_provenance.yekdem.mode alanındadır (gerçek 0 kesinleşemez).
+        # offers.yekdem NOT NULL = teklif fiyatına UYGULANAN YEKDEM. Hariç seçiminde
+        # uygulanan değer 0'dır; hariç ile gerçek 0 ayrımı snapshot'taki
+        # meta_price_provenance.yekdem.mode alanındadır (gerçek 0 yalnız açık ve kesin
+        # giriş kaydıyla doğrulanır).
         yekdem=params.yekdem_tl_per_mwh if _yekdem_dahil else 0.0,
         agreement_multiplier=params.agreement_multiplier,
         current_total=calculation.current_total_with_vat_tl,
@@ -2770,8 +2771,8 @@ async def generate_pdf_direct(
     params: OfferParams,
     customer_name: Optional[str] = None,
     customer_company: Optional[str] = None,
-    # Fiyat Doğruluğu Faz 1: YEKDEM uygulamasının açık seçimi (included | excluded |
-    # exempt; gönderilmezse included). Fiyat DB'de doğrulanır; istemci beyanı alınmaz.
+    # Fiyat Doğruluğu Faz 1: YEKDEM uygulamasının açık seçimi (included | excluded;
+    # gönderilmezse included). Fiyat DB'de doğrulanır; istemci beyanı alınmaz.
     yekdem_mode: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
@@ -2868,8 +2869,8 @@ async def generate_pdf_simple(
     offer_validity_days: int = Form(15),  # Teklif geçerlilik süresi (gün)
     operator_confirmed_warnings: bool = Form(False),  # R2: %10-40 mismatch onayı
     invoice_total_raw: float = Form(0),  # R2: operatörün girdiği/extract edilen HAM toplam (re-derive için)
-    # Fiyat Doğruluğu Faz 1: YEKDEM uygulamasının açık seçimi (included | excluded |
-    # exempt; gönderilmezse included). Fiyat DB'de doğrulanır; istemci beyanı alınmaz.
+    # Fiyat Doğruluğu Faz 1: YEKDEM uygulamasının açık seçimi (included | excluded;
+    # gönderilmezse included). Fiyat DB'de doğrulanır; istemci beyanı alınmaz.
     yekdem_mode: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
@@ -3182,8 +3183,8 @@ async def generate_html_direct(
     params: OfferParams,
     customer_name: Optional[str] = None,
     customer_company: Optional[str] = None,
-    # Fiyat Doğruluğu Faz 1: YEKDEM uygulamasının açık seçimi (included | excluded |
-    # exempt; gönderilmezse included). Fiyat DB'de doğrulanır; istemci beyanı alınmaz.
+    # Fiyat Doğruluğu Faz 1: YEKDEM uygulamasının açık seçimi (included | excluded;
+    # gönderilmezse included). Fiyat DB'de doğrulanır; istemci beyanı alınmaz.
     yekdem_mode: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
@@ -5635,7 +5636,7 @@ async def get_prices_with_epias_fallback(
         period=period,
         ptf=weighted_ptf,
         yekdem=yekdem.value,
-        # Ekrandaki değerin durumu 'dahil' varsayımıyla hesaplanır. Hariç/muaf seçimi
+        # Ekrandaki değerin durumu 'dahil' varsayımıyla hesaplanır. Hariç seçimi
         # arayüzde yapılır; dönemin YEKDEM durumu seçimden bağımsız döner.
         yekdem_mode=YEKDEM_MODE_INCLUDED,
         mode_basis="default",
@@ -5681,8 +5682,10 @@ async def save_period_prices(
     - ptf_tl_per_mwh zorunlu; gönderilmezse 422 (eskiden 0 yazılıp doğrulamaya düşüyordu).
     - yekdem_tl_per_mwh gönderilmezse mevcut kaydın YEKDEM'i KORUNUR (eskiden 0
       ile eziliyordu); yeni dönem kaydında YEKDEM zorunludur (422).
-    - Owner teyidi: YEKDEM 0 ya da negatif kaydedilmez (422). Kayıtlı 0 eksik
-      veriden ayırt edilemez; teklifte YEKDEM uygulanmayacaksa 'hariç'/'muaf' seçilir.
+    - YEKDEM negatif ya da sayı dışı kaydedilmez (422). Owner teyidi: gerçek 0 yasak
+      DEĞİLDİR ve kaydedilir; ancak bu hızlı kayıt açık sıfır satırı (geçmiş) yazmaz.
+      Buradan yazılan 0, Piyasa Fiyatları ekranında açıkça 0 girilip kesinleşene kadar
+      teklif kapısında "anlamı doğrulanmamış sıfır" kalır (price_provenance).
     - Bu hızlı kayıt YALNIZ TASLAK (status='provisional') değer yazar. Kesinleşmiş
       (final) kaydın değeri buradan değiştirilemez (409); aynı değer gönderilirse
       işlem yapılmaz. Kesinleştirme yetkili Piyasa Fiyatları ekranındadır (final
@@ -5715,17 +5718,12 @@ async def save_period_prices(
             yekdem = float(yekdem)
         except (TypeError, ValueError):
             raise HTTPException(status_code=422, detail="yekdem_tl_per_mwh sayı olmalı")
-        if not yekdem > 0:
-            # Owner teyidi: kayıtlı 0 eksik veriden ayırt edilemez; kesin teklifte
-            # kullanılamayacak bir değer kalıcılaştırılmaz. Hariç/muaf teklif
-            # ekranında açık bir seçimdir (price_provenance).
+        if not yekdem >= 0:
+            # Negatif ya da NaN YEKDEM kaydedilmez. Gerçek 0 kabul edilir (owner teyidi);
+            # bu yol yalnız TASLAK yazar ve açık sıfır satırı üretmez (price_provenance).
             raise HTTPException(
                 status_code=422,
-                detail=(
-                    "YEKDEM 0 ya da negatif kaydedilemez: kayıtlı 0 eksik veriden ayırt "
-                    "edilemez. YEKDEM teklife eklenmeyecekse teklif ekranında 'Hariç' ya "
-                    "da 'Muaf' seçin."
-                ),
+                detail="YEKDEM negatif ya da geçersiz olamaz: 0 ya da pozitif bir sayı girin.",
             )
     elif mevcut is None:
         raise HTTPException(

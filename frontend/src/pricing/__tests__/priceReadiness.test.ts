@@ -2,13 +2,14 @@ import { describe, it, expect } from 'vitest';
 import {
   evaluatePriceReadiness,
   priceSourceLabel,
+  YEKDEM_MODE_LABELS,
   type PriceProvenance,
   type PriceReadinessInput,
 } from '../priceReadiness';
 
 // Fiyat Doğruluğu Faz 1 (owner teyidi): istemci kapısı sunucunun yansımasıdır.
-// Eksik veri, gerçek sıfır, hariç, muaf ve provisional TASLAK ayrı durumlardır;
-// kullanıcı onayı yolu YOKTUR.
+// Eksik veri, açık (kesin) sıfır, anlamı bilinmeyen sıfır, hariç ve provisional TASLAK
+// ayrı durumlardır; "muaf" seçeneği ve kullanıcı onayı yolu YOKTUR.
 
 const kesin: PriceProvenance = {
   version: 2,
@@ -64,16 +65,15 @@ describe('evaluatePriceReadiness', () => {
     expect(r.yekdemMissing).toBe(true);
   });
 
-  it('hariç ve muaf açık seçimleri YEKDEM değeri istemez (PTF yine kesin olmalı)', () => {
-    for (const mod of ['excluded', 'exempt'] as const) {
-      const r = evaluatePriceReadiness({ ...temel, yekdem: null, yekdemMode: mod });
-      expect(r.yekdemMissing).toBe(false);
-      expect(r.ready).toBe(true);
-    }
+  it('hariç açık seçimi YEKDEM değeri istemez (PTF yine kesin olmalı); "muaf" seçeneği yok', () => {
+    const r = evaluatePriceReadiness({ ...temel, yekdem: null, yekdemMode: 'excluded' });
+    expect(r.yekdemMissing).toBe(false);
+    expect(r.ready).toBe(true);
     const provisionalPtf = evaluatePriceReadiness({
-      ...temel, yekdem: null, yekdemMode: 'exempt', provenance: provisionalKayit,
+      ...temel, yekdem: null, yekdemMode: 'excluded', provenance: provisionalKayit,
     });
     expect(provisionalPtf.ready).toBe(false);
+    expect(Object.keys(YEKDEM_MODE_LABELS)).toEqual(['included', 'excluded']);
   });
 
   it('YEKDEM seçimi yapılmadı (AI: faturada kalem yok) → engel; "hariç" tahmin edilmez', () => {
@@ -83,13 +83,33 @@ describe('evaluatePriceReadiness', () => {
     expect(r.reasons.join(' ')).toContain('seçilmedi');
   });
 
-  it('gerçek 0 YEKDEM eksik sayılmaz ama kesinleşemez; hariç/muaf ile karışmaz', () => {
-    const sifir = evaluatePriceReadiness({ ...temel, yekdem: 0 });
+  it('açık giriş kaydı olmayan (anlamı bilinmeyen) 0 eksik sayılmaz ama kesinleşemez', () => {
+    const eskiSifir: PriceProvenance = {
+      ...kesin,
+      yekdem: {
+        ...kesin.yekdem, period_status: 'zero_unverified', period_value: 0,
+        period_trusted: false, period_verified: false, period_zero_audit_id: null,
+      },
+    };
+    const sifir = evaluatePriceReadiness({ ...temel, yekdem: 0, provenance: eskiSifir });
     expect(sifir.yekdemMissing).toBe(false);
     expect(sifir.ready).toBe(false);
     expect(sifir.reasons.join(' ')).toContain('YEKDEM 0');
     // Aynı ekranda hariç seçimi 0 değerinden bağımsızdır.
-    expect(evaluatePriceReadiness({ ...temel, yekdem: 0, yekdemMode: 'excluded' }).ready).toBe(true);
+    expect(evaluatePriceReadiness({
+      ...temel, yekdem: 0, yekdemMode: 'excluded', provenance: eskiSifir,
+    }).ready).toBe(true);
+  });
+
+  it('yetkili ekrandan açık ve kesin girilmiş gerçek 0 hazırdır; ekrandaki farklı değer değildir', () => {
+    const acikSifir: PriceProvenance = {
+      ...kesin,
+      yekdem: { ...kesin.yekdem, period_value: 0, period_zero_audit_id: 7 },
+    };
+    const r = evaluatePriceReadiness({ ...temel, yekdem: 0, provenance: acikSifir });
+    expect(r.ready).toBe(true);
+    expect(r.yekdemMissing).toBe(false);
+    expect(evaluatePriceReadiness({ ...temel, yekdem: 5, provenance: acikSifir }).ready).toBe(false);
   });
 
   it('provisional PTF ve YEKDEM → TASLAK (provisional=true), kesin teklif için hazır değil', () => {

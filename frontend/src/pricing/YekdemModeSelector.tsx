@@ -1,9 +1,10 @@
 // =============================================================================
-// Fiyat Doğruluğu Faz 1 — YEKDEM uygulamasının AÇIK seçimi (dahil / hariç / muaf)
+// Fiyat Doğruluğu Faz 1 — YEKDEM uygulamasının AÇIK seçimi (dahil / hariç)
 // =============================================================================
-// Hariç ve muaf AYRI seçimlerdir; PDF metinleri farklıdır. Gerçek 0 bir seçim
-// değil, bir değerdir. Faturada YEKDEM kalemi yoksa (AI akışı) seçim boş gelir
-// ve kullanıcı açıkça seçer; "hariç" tahmin edilmez.
+// Doğrulanmış bir muafiyet kuralı olmadığı için "muaf" seçeneği yoktur. Gerçek 0
+// bir seçim değil, bir değerdir (yetkili ekrandan açıkça girilir). Faturada
+// YEKDEM kalemi yoksa (AI akışı) seçim boş gelir ve kullanıcı açıkça seçer;
+// "hariç" tahmin edilmez.
 //
 // Çağrıldığı yerler:
 // - App.tsx → fiyat paneli (manuel + AI akışı)
@@ -17,12 +18,11 @@ interface YekdemModeSelectorProps {
   disabled?: boolean;
 }
 
-const SIRA: YekdemMode[] = ['included', 'excluded', 'exempt'];
+const SIRA: YekdemMode[] = ['included', 'excluded'];
 
 const ACIKLAMA: Record<YekdemMode, string> = {
   included: 'YEKDEM enerji birim fiyatına eklenir (dönemin kesin değeri gerekir)',
   excluded: 'YEKDEM enerji birim fiyatına eklenmez',
-  exempt: 'Müşteri YEKDEM bedelinden muaf',
 };
 
 export function YekdemModeSelector({ value, onChange, disabled }: YekdemModeSelectorProps) {

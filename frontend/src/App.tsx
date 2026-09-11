@@ -236,7 +236,7 @@ function App() {
   // AI hesabının meta_price_provenance'ı) ve YEKDEM uygulamasının açık seçimi.
   // Owner teyidi: kullanıcı onayı kapıyı AÇMAZ; fiyat sunucuda doğrulanır.
   const [priceProvenance, setPriceProvenance] = useState<PriceProvenance | null>(null);
-  // dahil / hariç / muaf; null = seçilmedi (AI: faturada YEKDEM kalemi yoksa kullanıcı seçer)
+  // dahil / hariç; null = seçilmedi (AI: faturada YEKDEM kalemi yoksa kullanıcı seçer)
   const [yekdemMode, setYekdemMode] = useState<YekdemMode | null>('included');
   const [priceRefreshKey, setPriceRefreshKey] = useState(0);   // kayıt sonrası kaynağı yeniden oku
   const [multiplier, setMultiplier] = useState(1.01);
@@ -410,7 +410,7 @@ function App() {
       const current_vat_tl = current_vat_matrah_tl * vatRate;
       const current_total_with_vat_tl = current_vat_matrah_tl + current_vat_tl;
       
-      // Faz 1: YEKDEM uygulaması AÇIK seçimdir (dahil / hariç / muaf). Eskiden
+      // Faz 1: YEKDEM uygulaması AÇIK seçimdir (dahil / hariç). Eskiden
       // `yekdemPrice > 0` idi: bilinmeyen YEKDEM, gerçek 0 ve "hariç" birbirine karışıyordu.
       const includeYekdem = yekdemMode === 'included';
       const offerBasePrice = includeYekdem ? (ptfKwh + yekdemKwh) : ptfKwh;
@@ -510,7 +510,7 @@ function App() {
     // Faturadan okunan toplam (SOURCE OF TRUTH) - backend hesaplamasını kullan
     const current_total_with_vat_tl = backendCalc?.current_total_with_vat_tl ?? (current_vat_matrah_tl + current_vat_tl);
     
-    // Fiyat Doğruluğu Faz 1: YEKDEM uygulaması AÇIK seçimdir (dahil / hariç / muaf).
+    // Fiyat Doğruluğu Faz 1: YEKDEM uygulaması AÇIK seçimdir (dahil / hariç).
     // Faturada YEKDEM kalemi varsa seçim 'dahil' gelir; yoksa boş gelir ve kullanıcı
     // seçer ("hariç" tahmin edilmez). Seçim yokken hesap YEKDEM'siz taslak gösterilir.
     const includeYekdem = yekdemMode === 'included';
@@ -862,7 +862,7 @@ function App() {
       const prov = (response.calculation?.meta_price_provenance ?? null) as PriceProvenance | null;
       setPriceProvenance(prov);
       // YEKDEM seçimi: faturada YEKDEM kalemi varsa 'dahil'; yoksa BOŞ (kullanıcı
-      // dahil / hariç / muaf'ı açıkça seçer; "hariç" tahmin edilmez).
+      // dahil / hariç seçimini açıkça yapar; "hariç" tahmin edilmez).
       setYekdemMode(response.calculation?.meta_include_yekdem_in_offer ? 'included' : null);
       if (useReferencePrices && response.calculation) {
         const backendPtf = response.calculation.meta_ptf_tl_per_mwh;
@@ -1017,7 +1017,7 @@ function App() {
       };
       const paramsForOffer = {
         weighted_ptf_tl_per_mwh: kesinPtf,
-        // Faz 1: hariç / muaf → null (değer yok; seçim yekdem_mode ile ayrıca gider).
+        // Faz 1: hariç → null (değer yok; seçim yekdem_mode ile ayrıca gider).
         // Dahilse bilinen değer. Eski `: 0` hariç ile gerçek 0'ı karıştırıyordu.
         yekdem_tl_per_mwh: liveCalculation.include_yekdem ? yekdemPrice : null,
         agreement_multiplier: multiplier,
@@ -1386,12 +1386,12 @@ function App() {
                   </div>
                   <div>
                     {(() => {
-                      // Faz 1: YEKDEM uygulaması AÇIK seçimdir (dahil / hariç / muaf); manuel ve AI
-                      // akışında aynıdır. Değer null = bilinmiyor (boş), 0 = gerçek sıfır (gösterilir,
-                      // kesin teklifte kullanılamaz). Sabit "2026 Öngörü" preset listesi KALDIRILDI.
+                      // Faz 1: YEKDEM uygulaması AÇIK seçimdir (dahil / hariç); manuel ve AI
+                      // akışında aynıdır. Değer null = bilinmiyor (boş), 0 = sıfır değeri (gösterilir;
+                      // kesin teklif için dönemin açık ve kesin sıfır kaydı gerekir, sunucu doğrular).
+                      // Sabit "2026 Öngörü" preset listesi KALDIRILDI.
                       const yekdemUygulanmaz = yekdemMode !== 'included';
                       const modEtiketi = yekdemMode === 'excluded' ? '(hariç)'
-                        : yekdemMode === 'exempt' ? '(muaf)'
                         : yekdemMode === null ? '(seçilmedi)' : null;
                       return (
                         <>
@@ -1403,7 +1403,7 @@ function App() {
                             type="number"
                             className={`w-full px-2 py-1.5 text-sm border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 focus:border-primary-500 outline-none ${yekdemUygulanmaz ? 'bg-gray-100 text-gray-400' : ''}`}
                             value={yekdemUygulanmaz || yekdemPrice === null ? '' : yekdemPrice}
-                            placeholder={yekdemMode === 'excluded' ? 'hariç' : yekdemMode === 'exempt' ? 'muaf' : 'bilinmiyor'}
+                            placeholder={yekdemMode === 'excluded' ? 'hariç' : 'bilinmiyor'}
                             onChange={(e) => {
                               const n = parseFloat(e.target.value);
                               setYekdemPrice(e.target.value === '' || !Number.isFinite(n) ? null : n);
@@ -1439,7 +1439,8 @@ function App() {
                         const period = manualMode ? manualValues.invoice_period : (result?.extraction?.invoice_period || '');
                         if (!period) return;
                         // Faz 1: PTF zorunlu; YEKDEM bilinmiyorsa/hariçse GÖNDERİLMEZ (sunucu mevcut
-                        // YEKDEM'i korur, yeni dönemde ister). 0 ile doldurma YOK.
+                        // YEKDEM'i korur, yeni dönemde ister). 0 ile doldurma YOK; açıkça girilen
+                        // gerçek 0 gönderilir (taslak yazılır; kesin teyit Piyasa Fiyatları'nda).
                         if (ptfPrice === null || !(ptfPrice > 0)) {
                           setError("Kaydetmek için 0'dan büyük bir PTF değeri girin.");
                           return;
@@ -1450,7 +1451,7 @@ function App() {
                           // X-Admin-Key'i (girilmişse) ekler; sunucu require_admin_key uygular.
                           await adminApi.post(`/api/epias/prices/${period}`, {
                             ptf_tl_per_mwh: ptfPrice,
-                            ...(yekdemIncluded && yekdemPrice !== null && yekdemPrice > 0 ? { yekdem_tl_per_mwh: yekdemPrice } : {}),
+                            ...(yekdemIncluded && yekdemPrice !== null && yekdemPrice >= 0 ? { yekdem_tl_per_mwh: yekdemPrice } : {}),
                           });
                           setError(null);  // basaridan once eski hata banner'ini temizle
                           setPriceModified(false);

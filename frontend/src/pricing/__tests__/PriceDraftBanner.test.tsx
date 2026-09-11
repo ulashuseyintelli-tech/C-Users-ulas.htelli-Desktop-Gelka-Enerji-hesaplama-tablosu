@@ -6,7 +6,8 @@ import { evaluatePriceReadiness, type PriceProvenance, type PriceReadinessInput 
 
 // Fiyat Doğruluğu Faz 1 (owner teyidi): provisional ya da doğrulanmamış fiyatla
 // hesap AÇIKÇA "TASLAK" işaretlenir ve onay kutusu yoktur. YEKDEM seçimi
-// dahil / hariç / muaf olarak ayrı ayrı yapılır.
+// dahil / hariç olarak açıkça yapılır; doğrulanmış muafiyet kuralı olmadığından
+// "muaf" seçeneği yoktur.
 
 const provisionalKayit: PriceProvenance = {
   version: 2,
@@ -64,20 +65,20 @@ describe('PriceDraftBanner', () => {
 });
 
 describe('YekdemModeSelector', () => {
-  it('üç ayrı seçenek sunar; seçim yoksa hiçbiri işaretli değildir', () => {
+  it('yalnız dahil ve hariç seçeneklerini sunar (muaf yok); seçim yoksa hiçbiri işaretli değildir', () => {
     render(<YekdemModeSelector value={null} onChange={vi.fn()} />);
     const secenekler = screen.getAllByRole('radio') as HTMLInputElement[];
-    expect(secenekler.map((s) => s.value)).toEqual(['included', 'excluded', 'exempt']);
+    expect(secenekler.map((s) => s.value)).toEqual(['included', 'excluded']);
     expect(secenekler.every((s) => !s.checked)).toBe(true);
+    expect(screen.queryByLabelText('Muaf')).toBeNull();
     expect(screen.getByText('(seçilmedi)')).toBeInTheDocument();
   });
 
-  it('muaf ve hariç ayrı değerler olarak bildirilir', () => {
+  it('hariç seçimi ayrı değer olarak bildirilir', () => {
     const degisti = vi.fn();
     render(<YekdemModeSelector value="included" onChange={degisti} />);
-    fireEvent.click(screen.getByLabelText('Muaf'));
     fireEvent.click(screen.getByLabelText('Hariç'));
-    expect(degisti.mock.calls.map((c) => c[0])).toEqual(['exempt', 'excluded']);
+    expect(degisti.mock.calls.map((c) => c[0])).toEqual(['excluded']);
     expect((screen.getByLabelText('Dahil') as HTMLInputElement).checked).toBe(true);
   });
 });

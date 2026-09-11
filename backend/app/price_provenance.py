@@ -12,15 +12,22 @@ Owner teyidi (provenance sürüm 2):
   (status='final') kaydıyla birebir eşleşmelidir. 'provisional' kayıttan gelen
   fiyat YALNIZ açıkça işaretlenmiş TASLAK hesapta kullanılabilir
   (draft_only=True, provisional=True); POST /offers ve PDF uçları reddeder.
-- YEKDEM uygulaması açık bir seçimdir; aşağıdaki durumlar birbirine EŞİTLENMEZ:
-  * included (dahil): değer, dönemin güvenilir + kesin kaydıyla eşleşmelidir.
-  * excluded (hariç): YEKDEM enerji birim fiyatına eklenmez (açık seçim).
-  * exempt (muaf): müşteri YEKDEM'den muaftır (açık seçim; hariç ile AYNI DEĞİL).
-  * gerçek 0: included + değer 0. DB kolonu NOT NULL'dur ve eski yazımlar
-    girilmemiş YEKDEM'i 0 bırakıyordu; kayıtlı 0 eksik veriden AYIRT EDİLEMEZ.
-    Bu yüzden Faz 1'de doğrulanmış SAYILMAZ (yekdem_zero_unverified). Değer 0
-    olarak taşınır; null'a, hariç'e ya da muaf'a çevrilmez.
+- YEKDEM uygulaması açık bir seçimdir: included (dahil) | excluded (hariç).
+  Doğrulanmış bir muafiyet kuralı olmadığı için "muaf" seçeneği YOKTUR.
+  Aşağıdaki durumlar birbirine EŞİTLENMEZ:
+  * dahil: değer, dönemin güvenilir + kesin kaydıyla eşleşmelidir.
+  * hariç: YEKDEM enerji birim fiyatına eklenmez (açık seçim).
   * eksik: dönem kaydı yok (None). 0 ile temsil edilmez.
+  * gerçek 0: yetkili Piyasa Fiyatları ekranından AÇIKÇA girilen 0, mevcut denetim
+    tablosuna (price_change_history, price_type='YEKDEM') ayrı bir satır olarak
+    yazılır. Kaydın EN SON geçmiş satırı bu açık sıfır satırıysa (durum ve kaynak
+    kayıtla aynı), kayıt kesin ve kaynağı güvenilirse sıfır GERÇEK kabul edilir ve
+    doğrulanır. YEKDEM yeniden girilmeden yapılan sonraki güncelleme ya da başka bir
+    yolun yazımı teyidi düşürür (fail-closed).
+  * anlamı bilinmeyen 0: denetim satırı olmayan (eski) sıfır otomatik gerçek ya da
+    eksik SAYILMAZ. Değer 0 olarak taşınır ama kesin teklifte kullanılmaz
+    (yekdem_zero_unverified). Kolon NOT NULL (varsayılan 0) olduğu için ayrım
+    kolonda değil denetim kaydındadır; migration gerekmez.
 
 Sistem doğrulaması (güvenilir kaynak):
 - market_reference_prices: source ∈ {epias_manual, epias_api, manual_override}
@@ -44,6 +51,8 @@ kaynaktan gelmesi gerekir.
 - main.generate_pdf_direct() → POST /generate-pdf-direct (doğrudan API kapısı)
 - main.generate_html_for_offer() → POST /offers/{id}/generate-html (snapshot kapısı)
 - main.generate_html_direct() → POST /generate-html-direct (doğrudan API kapısı)
+- market_price_admin_service.MarketPriceAdminService._handle_insert() / _handle_update() → YEKDEM_AUDIT_PRICE_TYPE (açık sıfır satırı yazımı)
+- market_price_admin_service.MarketPriceAdminService.get_history() → GET /admin/market-prices/history?price_type=YEKDEM
 
 Multitenant: piyasa fiyat tabloları tenant kolonu taşımaz (piyasa geneli veri).
 Bu modül yalnız OKUR ve tenant kapsamına dokunmaz.
@@ -66,7 +75,7 @@ logger = logging.getLogger(__name__)
 PROVENANCE_VERSION = 2
 # Teklif değeri ile DB'den türetilen değerin "aynı" sayılacağı tolerans (TL/MWh).
 PRICE_TOLERANCE_TL_PER_MWH = 0.01
-# Hariç/muaf seçiminde teklif hesabındaki YEKDEM tutarının "sıfır" sayılacağı tolerans (TL).
+# Hariç seçiminde teklif hesabındaki YEKDEM tutarının "sıfır" sayılacağı tolerans (TL).
 AMOUNT_TOLERANCE_TL = 0.01
 
 TRUSTED_REFERENCE_SOURCES = frozenset({"epias_manual", "epias_api", "manual_override"})
@@ -77,11 +86,14 @@ EPIAS_HOURLY_SOURCES = frozenset({"epias_excel", "epias_api"})
 DEV_SAMPLE_NOTE_PREFIX = "Sample data"
 MOCK_SYNC_UPDATED_BY = "mock_sync"
 FINAL_STATUS = "final"
+# Açıkça girilen YEKDEM=0'ın denetim satırı: price_change_history.price_type değeri.
+# Satır, YEKDEM'i taşıyan PTF kaydına (price_record_id) bağlanır. Geçmiş ucu bu tipi
+# zaten belgeler ("PTF, SMF, YEKDEM"); PTF geçmiş görünümü bu satırları içermez.
+YEKDEM_AUDIT_PRICE_TYPE = "YEKDEM"
 
 YEKDEM_MODE_INCLUDED = "included"
 YEKDEM_MODE_EXCLUDED = "excluded"
-YEKDEM_MODE_EXEMPT = "exempt"
-YEKDEM_MODES = frozenset({YEKDEM_MODE_INCLUDED, YEKDEM_MODE_EXCLUDED, YEKDEM_MODE_EXEMPT})
+YEKDEM_MODES = frozenset({YEKDEM_MODE_INCLUDED, YEKDEM_MODE_EXCLUDED})
 
 REASON_PTF_MISSING = "ptf_missing"
 REASON_PTF_UNVERIFIED = "ptf_unverified"
@@ -110,11 +122,13 @@ REASON_MESSAGES = {
     ),
     REASON_YEKDEM_MISSING: (
         "YEKDEM birim bedeli bilinmiyor. Dönemin YEKDEM değerini Piyasa Fiyatları "
-        "ekranından girin ya da YEKDEM uygulamasını açıkça 'hariç' veya 'muaf' seçin."
+        "ekranından girin ya da YEKDEM uygulamasını açıkça 'hariç' seçin."
     ),
     REASON_YEKDEM_ZERO_UNVERIFIED: (
-        "YEKDEM değeri 0. Kayıtlı 0 eksik veriden ayırt edilemediği için kesin "
-        "teklifte kullanılamaz. Gerçek 0, 'hariç' ve 'muaf' ayrı durumlardır."
+        "Kayıtlı YEKDEM 0 için Piyasa Fiyatları ekranında yapılmış geçerli bir açık "
+        "giriş kaydı yok (eski ya da anlamı doğrulanmamış sıfır); kesin teklifte "
+        "kullanılamaz. Gerçek sıfırsa YEKDEM'i Piyasa Fiyatları ekranında 0 olarak "
+        "açıkça girin ve kaydı kesinleştirin."
     ),
     REASON_YEKDEM_UNVERIFIED: (
         "YEKDEM, dönemin güvenilir kayıtlı değeriyle eşleşmiyor ya da kaynağı "
@@ -125,12 +139,15 @@ REASON_MESSAGES = {
         "hesapta kullanılabilir; kesin teklif için kaydı 'final' yapın."
     ),
     REASON_YEKDEM_MODE_REQUIRED: (
-        "YEKDEM uygulaması seçilmedi (faturada YEKDEM kalemi yok). 'Dahil', "
-        "'Hariç' ya da 'Muaf' seçimini açıkça yapın."
+        "YEKDEM uygulaması seçilmedi (faturada YEKDEM kalemi yok). 'Dahil' ya da "
+        "'Hariç' seçimini açıkça yapın."
     ),
-    REASON_YEKDEM_MODE_INVALID: "Geçersiz YEKDEM seçimi: 'included', 'excluded' ya da 'exempt' olmalı.",
+    REASON_YEKDEM_MODE_INVALID: (
+        "Geçersiz YEKDEM seçimi: 'included' ya da 'excluded' olmalı "
+        "(doğrulanmış bir muafiyet kuralı tanımlı değil)."
+    ),
     REASON_YEKDEM_MODE_CONFLICT: (
-        "YEKDEM 'hariç' ya da 'muaf' seçildi, ancak teklif hesabında YEKDEM tutarı var. "
+        "YEKDEM 'hariç' seçildi, ancak teklif hesabında YEKDEM tutarı var. "
         "Seçim ile hesap çelişiyor."
     ),
 }
@@ -150,7 +167,7 @@ def parse_yekdem_mode(raw: Any) -> tuple[Optional[str], bool]:
     """YEKDEM seçimini (mod, geçerli_mi) olarak döndürür.
 
     None ya da boş değer → (None, True): seçim yapılmadı (kapı yekdem_mode_required).
-    Tanınmayan değer → (None, False): kapı yekdem_mode_invalid.
+    Tanınmayan değer ('exempt' dahil) → (None, False): kapı yekdem_mode_invalid.
 
     Çağrıldığı yerler:
     - price_provenance.build_price_provenance()
@@ -194,6 +211,8 @@ class YekdemResolution:
     epias: bool
     final: bool
     record_status: Optional[str]  # kaydın durumu (final | provisional); kayıt yoksa None
+    # Kayıtlı 0 için açık giriş kanıtı: price_change_history satırının id'si.
+    zero_audit_id: Optional[int] = None
 
 
 _YEKDEM_MISSING = YekdemResolution(None, "missing", None, False, False, False, None)
@@ -210,6 +229,40 @@ def _reference_record(db: Session, period: str):
         )
         .first()
     )
+
+
+def _acik_sifir_kaydi(db: Session, record: Any):
+    """Kayıtlı 0'ı hâlâ temsil eden açık giriş satırı (price_change_history); yoksa None.
+
+    Geçmiş tablosunu YALNIZ yetkili yönetim servisi yazar; açıkça girilen YEKDEM=0
+    için PTF satırından sonra ayrı bir satır (price_type='YEKDEM', new_value=0) ekler.
+    Satır kayıtlı 0'ı ancak şu durumda temsil eder:
+    - kaydın EN SON geçmiş satırıdır (id sırası; saat çözünürlüğüne bağlı değil).
+      YEKDEM yeniden girilmeden yapılan sonraki yetkili güncelleme (ör. taslağı
+      kesinleştirme, PTF düzeltme) yeni bir PTF satırı yazar ve teyidi düşürür;
+    - durumu ve kaynağı kaydın bugünkü durumu/kaynağıyla aynıdır. Geçmiş yazmayan
+      başka bir yolun (hızlı kayıt, betik, senkron) sonraki yazımı kaynağı ya da
+      durumu değiştirir ve teyidi düşürür.
+    Kilit aç/kapa geçmiş satırı yazmaz ve durum/kaynağa dokunmaz; teyidi etkilemez.
+
+    Çağrıldığı yerler:
+    - price_provenance.resolve_period_yekdem() → kayıtlı 0'ın açık giriş kanıtı
+    """
+    from .database import PriceChangeHistory
+
+    son = (
+        db.query(PriceChangeHistory)
+        .filter(PriceChangeHistory.price_record_id == record.id)
+        .order_by(PriceChangeHistory.id.desc())
+        .first()
+    )
+    if (son is None or son.price_type != YEKDEM_AUDIT_PRICE_TYPE
+            or _finite(son.new_value) != 0.0):
+        return None
+    if (str(son.new_status or "") != str(record.status or "")
+            or str(son.source or "") != str(record.source or "")):
+        return None
+    return son
 
 
 def reference_trust(record: Any) -> tuple[bool, bool]:
@@ -247,9 +300,11 @@ def reference_is_final(record: Any) -> bool:
 def resolve_period_yekdem(db: Optional[Session], period: Any) -> YekdemResolution:
     """Dönem YEKDEM birim bedeli — kayıt yoksa 'missing' (ASLA sabit/0 ile doldurulmaz).
 
-    DB'deki 0 'zero_unverified' döner: değer 0 olarak taşınır (eksikle
-    karışmaz) ama kesin teklif için doğrulanmış SAYILMAZ. Kaydın durumu
-    (final/provisional) ayrıca döner.
+    Kayıtlı 0 için ayrım denetim kaydıyla yapılır (kolon NOT NULL, varsayılan 0):
+    - Geçerli bir açık sıfır satırı varsa (_acik_sifir_kaydi) sıfır açıkça girilmiştir:
+      'known'. Kayıt kesinse kesin gerçek sıfır; taslaksa yalnız taslak.
+    - Yoksa 'zero_unverified': eski ya da anlamı doğrulanmamış sıfır. Otomatik gerçek
+      ya da eksik SAYILMAZ; değer 0 olarak taşınır ve kesin teklifte kullanılmaz.
 
     Çağrıldığı yerler:
     - calculator.get_ptf_yekdem_for_period() → AI akışı YEKDEM'i (eski davranış: kayıt yoksa 0.0)
@@ -269,6 +324,11 @@ def resolve_period_yekdem(db: Optional[Session], period: Any) -> YekdemResolutio
     record_status = str(record.status) if record.status else None
     final = reference_is_final(record)
     if value == 0.0:
+        denetim = _acik_sifir_kaydi(db, record)
+        if denetim is not None:
+            trusted, epias = reference_trust(record)
+            return YekdemResolution(0.0, "known", source, trusted, epias, final, record_status,
+                                    zero_audit_id=denetim.id)
         return YekdemResolution(0.0, "zero_unverified", source, False, False, final, record_status)
     if value < 0:
         return YekdemResolution(value, "invalid", source, False, False, final, record_status)
@@ -362,12 +422,12 @@ def build_price_provenance(
     sınıflandırılır.
 
     Args:
-        yekdem_mode: 'included' | 'excluded' | 'exempt'. None = seçim yapılmadı
-            (AI akışında faturada YEKDEM kalemi yoksa) → yekdem_mode_required.
+        yekdem_mode: 'included' | 'excluded'. None = seçim yapılmadı (AI akışında
+            faturada YEKDEM kalemi yoksa) → yekdem_mode_required.
         mode_basis: seçimin dayanağı: 'user' (açık seçim), 'invoice' (faturada
             YEKDEM kalemi var) ya da 'default' (uç varsayılanı: included).
-        offer_yekdem_tl: teklif hesabındaki YEKDEM tutarı. Hariç/muaf seçiminde
-            0 değilse seçim ile hesap çelişir (yekdem_mode_conflict).
+        offer_yekdem_tl: teklif hesabındaki YEKDEM tutarı. Hariç seçiminde 0
+            değilse seçim ile hesap çelişir (yekdem_mode_conflict).
 
     Çağrıldığı yerler: modül başlığındaki liste. GET fiyat durumu ve AI hesabı
     doğrudan çağırır; POST /offers ve doğrudan belge (PDF/HTML) uçları
@@ -434,6 +494,7 @@ def build_price_provenance(
         "period_record_status": period_yekdem.record_status,
         "period_trusted": period_yekdem.trusted,
         "period_verified": period_verified,
+        "period_zero_audit_id": period_yekdem.zero_audit_id,
     }
     if not mode_valid:
         yekdem_block.update(_dogrulanmamis(value=None, status="mode_invalid"))
@@ -442,7 +503,7 @@ def build_price_provenance(
         yekdem_block.update(_dogrulanmamis(value=None, status="mode_required"))
         reasons.append(REASON_YEKDEM_MODE_REQUIRED)
     elif not included:
-        # Hariç / muaf: açık seçimdir, değer gerekmez ve teklif fiyatına YEKDEM girmez.
+        # Hariç: açık seçimdir, değer gerekmez ve teklif fiyatına YEKDEM girmez.
         yekdem_block.update(_dogrulanmamis(value=None, status=mode))
         teklif_yekdem = _finite(offer_yekdem_tl)
         if teklif_yekdem is not None and abs(teklif_yekdem) > AMOUNT_TOLERANCE_TL:
@@ -453,13 +514,9 @@ def build_price_provenance(
     elif yekdem_value < 0:
         yekdem_block.update(_dogrulanmamis(value=yekdem_value, status="invalid"))
         reasons.append(REASON_YEKDEM_UNVERIFIED)
-    elif yekdem_value == 0.0:
-        # Gerçek 0 değer olarak taşınır; eksik veriden ayırt edilemediği için
-        # doğrulanmaz (modül başlığı). Hariç/muaf'a çevrilmez.
-        yekdem_block.update(_dogrulanmamis(value=0.0, status="zero_unverified"))
-        reasons.append(REASON_YEKDEM_ZERO_UNVERIFIED)
     elif (period_yekdem.status == "known" and period_yekdem.value is not None
             and abs(period_yekdem.value - yekdem_value) <= PRICE_TOLERANCE_TL_PER_MWH):
+        # Gerçek 0 da buradan geçer: dönem 'known' 0 yalnız açık giriş kaydıyla oluşur.
         yekdem_block.update(value=yekdem_value, status="matched", source=period_yekdem.source,
                             trusted=period_yekdem.trusted, final=period_yekdem.final,
                             system_verified=period_verified, epias=period_yekdem.epias)
@@ -467,6 +524,11 @@ def build_price_provenance(
             reasons.append(REASON_YEKDEM_UNVERIFIED)
         elif not period_yekdem.final:
             reasons.append(REASON_YEKDEM_PROVISIONAL)
+    elif yekdem_value == 0.0 and period_yekdem.status == "zero_unverified":
+        # Kayıtlı 0'ın açık ve kesin giriş kaydı yok: değer 0 olarak taşınır, otomatik
+        # gerçek ya da eksik sayılmaz, kesinleşmez. Hariç'e çevrilmez.
+        yekdem_block.update(_dogrulanmamis(value=0.0, status="zero_unverified"))
+        reasons.append(REASON_YEKDEM_ZERO_UNVERIFIED)
     else:
         yekdem_block.update(_dogrulanmamis(value=yekdem_value, status="user_entered"))
         yekdem_block["source"] = "user_entered"
@@ -527,8 +589,9 @@ def offer_price_gate(
 
 
 def yekdem_applied(provenance: dict[str, Any]) -> bool:
-    """Teklif fiyatına YEKDEM uygulanıyor mu (seçim 'included')? Hariç ve muaf'ta
-    uygulanan YEKDEM 0'dır; ayrım provenance['yekdem']['mode'] alanındadır.
+    """Teklif fiyatına YEKDEM uygulanıyor mu (seçim 'included')? Hariç seçiminde
+    uygulanan YEKDEM 0'dır; hariç ile gerçek 0 ayrımı provenance['yekdem']['mode']
+    alanındadır.
 
     Çağrıldığı yerler: offer_price_gate() ile aynı uçlar (uygulanan YEKDEM değeri).
     """

@@ -258,7 +258,7 @@ export async function createOffer(
   // `computed_total` / `current_total` / teklif toplamı buraya ASLA
   // konulmaz — guard'ı anlamsız kılar.
   guard: { invoice_total_raw: number; operator_confirmed_warnings?: boolean;
-    // Fiyat Doğruluğu Faz 1: YEKDEM uygulamasının AÇIK seçimi (dahil / hariç / muaf).
+    // Fiyat Doğruluğu Faz 1: YEKDEM uygulamasının AÇIK seçimi (dahil / hariç).
     // Fiyat doğrulaması YALNIZ sunucudadır (kullanıcı onayı bayrağı YOK). Eksik,
     // doğrulanmamış ya da kesinleşmemiş (provisional) fiyatta 422 price_unverified.
     yekdem_mode?: YekdemMode | null }

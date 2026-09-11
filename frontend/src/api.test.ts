@@ -93,16 +93,13 @@ describe('createOffer — Fiyat Doğruluğu Faz 1 YEKDEM seçimi', () => {
   afterEach(() => { vi.restoreAllMocks(); });
   const params = { weighted_ptf_tl_per_mwh: 2500, yekdem_tl_per_mwh: null, agreement_multiplier: 1.01 };
 
-  it('hariç ve muaf seçimleri ayrı query param değeri olarak gider; YEKDEM gövdede null kalır', async () => {
+  it('hariç seçimi query param değeri olarak gider; YEKDEM gövdede null kalır', async () => {
     const spy = vi.spyOn(api, 'post').mockResolvedValue({ data: { id: 1 } } as any);
-    for (const mod of ['excluded', 'exempt'] as const) {
-      await createOffer({} as any, {} as any, params, undefined, { invoice_total_raw: 2880, yekdem_mode: mod });
-    }
+    await createOffer({} as any, {} as any, params, undefined, { invoice_total_raw: 2880, yekdem_mode: 'excluded' });
     const [url, govde, ayar] = spy.mock.calls[0] as any[];
     expect(url).toBe('/offers');
     expect(govde.params.yekdem_tl_per_mwh).toBeNull();
     expect(ayar.params).toMatchObject({ invoice_total_raw: 2880, yekdem_mode: 'excluded' });
-    expect((spy.mock.calls[1] as any[])[2].params.yekdem_mode).toBe('exempt');
   });
 
   it('kullanıcı onayı bayrağı hiç gönderilmez; seçim yoksa yekdem_mode da gitmez (sunucu: dahil)', async () => {

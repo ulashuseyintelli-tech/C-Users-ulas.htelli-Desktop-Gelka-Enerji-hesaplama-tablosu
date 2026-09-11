@@ -378,7 +378,7 @@ def calculate_offer(
         )
     # Faturada YEKDEM kalemi yoksa değer teklife girmez. Bilinmiyorsa hesap alanında
     # 0 görünür; provenance'ta ise seçim boş kalır (yekdem_mode_required). Böylece
-    # eksik veri, gerçek 0, hariç ve muaf birbirine karışmaz.
+    # eksik veri, gerçek 0 ve hariç birbirine karışmaz.
     yekdem_for_calc = yekdem_tl_per_mwh if yekdem_tl_per_mwh is not None else 0.0
 
     # Teklif parametreleri
@@ -622,7 +622,7 @@ def calculate_offer(
     # uçlarındadır. db yoksa sistem doğrulaması yapılamaz. Faturada YEKDEM kalemi
     # varsa seçim 'included' olur (en katı yol: doğrulanmış değer ister). Kalem
     # YOKSA "hariç" TAHMİN EDİLMEZ: seçim boş kalır (yekdem_mode_required) ve
-    # kullanıcı dahil / hariç / muaf'ı açıkça seçer. Hesap o durumda YEKDEM'siz
+    # kullanıcı dahil / hariç seçimini açıkça yapar. Hesap o durumda YEKDEM'siz
     # taslak olarak gösterilir.
     meta_price_provenance = None
     if db is not None:

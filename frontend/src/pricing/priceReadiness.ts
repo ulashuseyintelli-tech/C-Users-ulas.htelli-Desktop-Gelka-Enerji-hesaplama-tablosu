@@ -8,15 +8,18 @@
 //
 // Kesin teklif için:
 // - PTF, sunucunun doğruladığı (güvenilir + KESİN/final) dönem değeriyle aynı olmalı;
-// - YEKDEM uygulaması AÇIKÇA seçilmeli: dahil / hariç / muaf;
+// - YEKDEM uygulaması AÇIKÇA seçilmeli: dahil / hariç (doğrulanmış bir muafiyet
+//   kuralı olmadığı için "muaf" seçeneği yok);
 // - dahilse YEKDEM, dönemin güvenilir + kesin kaydıyla aynı olmalı.
 // provisional (kesinleşmemiş) kayıttan gelen fiyat yalnız TASLAK hesapta kullanılır.
 //
 // YEKDEM durumları birbirine EŞİTLENMEZ:
-// - bilinmiyor (null) → engel
-// - gerçek 0          → değer olarak gösterilir; kayıtlı 0 eksik veriden ayırt
-//                       edilemediği için Faz 1'de kesin teklifte kullanılamaz
-// - hariç / muaf      → açık seçimler; değer gerekmez, PDF metinleri farklıdır
+// - bilinmiyor (null)        → engel
+// - gerçek 0                 → yetkili ekrandan açıkça ve kesin girilmişse sunucu
+//                              doğrular (denetim kaydı); değer 0 olarak gösterilir
+// - anlamı bilinmeyen 0      → açık giriş kaydı olmayan eski sıfır; kesin teklifte
+//                              kullanılamaz, otomatik gerçek ya da eksik sayılmaz
+// - hariç                    → açık seçim; değer gerekmez
 //
 // Çağrıldığı yerler:
 // - App.tsx → PDF İndir / teklif kaydı düğmeleri, handleDownloadPdf kapısı, fiyat paneli
@@ -24,12 +27,11 @@
 // - pricing/YekdemModeSelector.tsx → seçenek etiketleri
 // =============================================================================
 
-export type YekdemMode = 'included' | 'excluded' | 'exempt';
+export type YekdemMode = 'included' | 'excluded';
 
 export const YEKDEM_MODE_LABELS: Record<YekdemMode, string> = {
   included: 'Dahil',
   excluded: 'Hariç',
-  exempt: 'Muaf',
 };
 
 export interface PriceProvenanceComponent {
@@ -50,6 +52,8 @@ export interface PriceProvenanceComponent {
   period_record_status?: string | null;
   period_trusted?: boolean;
   period_verified?: boolean;
+  /** Kayıtlı 0'ın açık giriş kanıtı (denetim satırı); yoksa null */
+  period_zero_audit_id?: number | null;
 }
 
 export interface PriceProvenance {
@@ -123,19 +127,19 @@ export function evaluatePriceReadiness(input: PriceReadinessInput): PriceReadine
   }
 
   if (modeRequired) {
-    reasons.push("YEKDEM uygulaması seçilmedi: 'Dahil', 'Hariç' ya da 'Muaf' seçin.");
+    reasons.push("YEKDEM uygulaması seçilmedi: 'Dahil' ya da 'Hariç' seçin.");
   } else if (included) {
     const y = prov?.yekdem;
     if (yekdemMissing) {
-      reasons.push("YEKDEM birim bedeli bilinmiyor. Piyasa Fiyatları'ndan girin ya da 'Hariç'/'Muaf' seçin.");
-    } else if (input.yekdem === 0) {
-      reasons.push('YEKDEM 0: kayıtlı 0 eksik veriden ayırt edilemediği için kesin teklifte kullanılamaz.');
+      reasons.push("YEKDEM birim bedeli bilinmiyor. Piyasa Fiyatları'ndan girin ya da 'Hariç' seçin.");
     } else if (input.valuesEditedByUser || !prov) {
       // Gerekçe PTF satırında zaten bildirildi (elle değişiklik / kaynak yok).
     } else if (!y) {
       reasons.push('YEKDEM kaynağı bilinmiyor.');
     } else if (!(y.period_verified === true && ayni(input.yekdem, y.period_value))) {
-      if (y.period_status === 'known' && y.period_trusted === true
+      if (input.yekdem === 0 && y.period_status === 'zero_unverified') {
+        reasons.push("Kayıtlı YEKDEM 0'ın açık ve kesin giriş kaydı yok (anlamı bilinmeyen sıfır); kesin teklifte kullanılamaz.");
+      } else if (y.period_status === 'known' && y.period_trusted === true
           && y.period_record_status !== 'final' && ayni(input.yekdem, y.period_value)) {
         provisional = true;
         reasons.push('YEKDEM dönem kaydı kesinleşmemiş (provisional). Yalnız taslak hesapta kullanılabilir.');

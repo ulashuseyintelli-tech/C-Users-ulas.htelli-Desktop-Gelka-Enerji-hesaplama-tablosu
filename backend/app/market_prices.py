@@ -187,10 +187,10 @@ EPIAS_SYNC_ENABLED = False
 # Guardrail eşikleri
 MIN_PTF_TL_PER_MWH = 500.0  # Çok düşük = muhtemelen hata
 MAX_PTF_TL_PER_MWH = 10000.0  # Çok yüksek = muhtemelen hata
-# Alt sınır yalnız negatifliği reddeder. Fiyat Doğruluğu Faz 1: 0 "muaf" DEMEK
-# DEĞİLDİR. Muafiyet teklifte ayrı ve açık bir seçimdir (price_provenance
-# YEKDEM_MODE_EXEMPT); kayıtlı 0 eksik veriden ayırt edilemediği için teklif
-# kapısında doğrulanmış sayılmaz.
+# Alt sınır yalnız negatifliği reddeder (0 geçerli bir değerdir). Fiyat Doğruluğu
+# Faz 1: kayıtlı 0 teklif kapısında YALNIZ yetkili yönetim ekranından açıkça girilip
+# kesinleşmişse (price_change_history açık sıfır satırı, price_provenance) doğrulanır;
+# açık giriş kaydı olmayan eski 0 otomatik gerçek ya da eksik sayılmaz.
 MIN_YEKDEM_TL_PER_MWH = 0.0
 # Owner kararı: 2026 kesinleşen YEKDEM verisi 1000'i asiyor (ör. Mayis 2026 =
 # 1306,10 TL/MWh) - eski 1000 tavani gercek 2026 piyasasini yansitmiyordu,

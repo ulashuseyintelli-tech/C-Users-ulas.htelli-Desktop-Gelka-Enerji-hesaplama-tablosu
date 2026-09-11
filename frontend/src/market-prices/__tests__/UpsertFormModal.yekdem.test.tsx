@@ -54,19 +54,32 @@ describe('UpsertFormModal — YEKDEM alanı', () => {
     expect(screen.getByTestId('error-yekdem_value')).toHaveTextContent('YEKDEM zorunlu');
   });
 
-  it('0 YEKDEM kabul edilmez (DB\'de "girilmedi" ile karışır)', () => {
+  it('gerçek 0 YEKDEM açık değer olarak gönderilir (boş alan 0 sayılmaz)', async () => {
     ac();
     doldur('upsert-period', '2026-07');
     doldur('upsert-value', '2699.61');
     doldur('upsert-yekdem', '0');
     fireEvent.click(screen.getByRole('button', { name: 'Kaydet' }));
+    await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+    expect(submit.mock.calls[0][0]).toMatchObject({ period: '2026-07', yekdem_value: 0 });
+    expect(screen.queryByTestId('yekdem-zero-hint')).toBeNull(); // yeni kayıtta ipucu yok
+  });
+
+  it('negatif YEKDEM kabul edilmez', () => {
+    ac();
+    doldur('upsert-period', '2026-07');
+    doldur('upsert-value', '2699.61');
+    doldur('upsert-yekdem', '-5');
+    fireEvent.click(screen.getByRole('button', { name: 'Kaydet' }));
     expect(submit).not.toHaveBeenCalled();
-    expect(screen.getByTestId('error-yekdem_value')).toBeInTheDocument();
+    expect(screen.getByTestId('error-yekdem_value')).toHaveTextContent('0 ya da pozitif');
   });
 
   it('güncellemede YEKDEM boş bırakılırsa istek yekdem_value içermez (mevcut korunur)', async () => {
     ac(kayit);
-    expect((document.getElementById('upsert-yekdem') as HTMLInputElement).value).toBe(''); // kayıtlı 0 gösterilmez
+    // Kayıtlı 0 önceden doldurulmaz: eski sıfır farkında olmadan "açık sıfır" teyidine dönmez.
+    expect((document.getElementById('upsert-yekdem') as HTMLInputElement).value).toBe('');
+    expect(screen.getByTestId('yekdem-zero-hint')).toHaveTextContent('açıkça 0 yazın');
     doldur('upsert-change-reason', 'PTF düzeltme');
     fireEvent.click(screen.getByRole('button', { name: 'Güncelle' }));
     await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));

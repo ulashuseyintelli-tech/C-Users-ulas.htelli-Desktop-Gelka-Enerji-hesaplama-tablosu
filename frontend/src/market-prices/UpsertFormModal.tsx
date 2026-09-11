@@ -30,7 +30,8 @@ function getInitialFormState(record?: MarketPriceRecord): UpsertFormState {
     return {
       period: record.period,
       value: String(record.ptf_tl_per_mwh),
-      // Faz 1: kayıtlı 0 "girilmedi" ile karışabildiği için boş gösterilir (boş = mevcut korunur).
+      // Faz 1: kayıtlı 0 önceden DOLDURULMAZ (boş = mevcut korunur): eski/anlamı bilinmeyen
+      // sıfır farkında olmadan "açık sıfır" olarak teyit edilmesin; gerçek 0 açıkça yazılır.
       yekdemValue: record.yekdem_tl_per_mwh > 0 ? String(record.yekdem_tl_per_mwh) : '',
       status: record.status,
       changeReason: '',
@@ -153,7 +154,8 @@ export const UpsertFormModal: React.FC<UpsertFormModalProps> = ({
 
       // Fiyat Doğruluğu Faz 1 (K3): YEKDEM bu yetkili ekrandan girilir. Yeni dönemde
       // ZORUNLU (girilmeyen YEKDEM tekliflerde "bilinmiyor" kalır); güncellemede boş =
-      // mevcut YEKDEM korunur. 0 kabul edilmez (DB'de "girilmedi" ile karışır).
+      // mevcut YEKDEM korunur. Gerçek 0 kabul edilir: sunucu açıkça girilen 0'ı ayrı bir
+      // geçmiş satırıyla kaydeder (eski/anlamı bilinmeyen sıfırdan ayrılır). Negatif olmaz.
       const yekdemMetin = form.yekdemValue.trim();
       const yekdemSayi = yekdemMetin === '' ? undefined : parseValueForApi(yekdemMetin);
       if (!editingRecord && yekdemSayi === undefined) {
@@ -161,9 +163,9 @@ export const UpsertFormModal: React.FC<UpsertFormModalProps> = ({
         setClientErrors({ yekdem_value: 'YEKDEM zorunlu (TL/MWh)' });
         return;
       }
-      if (yekdemSayi !== undefined && !(Number.isFinite(yekdemSayi) && yekdemSayi > 0)) {
+      if (yekdemSayi !== undefined && !(Number.isFinite(yekdemSayi) && yekdemSayi >= 0)) {
         setShowConfirmation(false);
-        setClientErrors({ yekdem_value: "YEKDEM 0'dan büyük bir sayı olmalı" });
+        setClientErrors({ yekdem_value: 'YEKDEM 0 ya da pozitif bir sayı olmalı' });
         return;
       }
 
@@ -387,6 +389,12 @@ export const UpsertFormModal: React.FC<UpsertFormModalProps> = ({
             {allFieldErrors.yekdem_value && (
               <p className="mt-1 text-xs text-red-600" data-testid="error-yekdem_value">
                 {allFieldErrors.yekdem_value}
+              </p>
+            )}
+            {isEditing && editingRecord?.yekdem_tl_per_mwh === 0 && (
+              <p className="mt-1 text-xs text-amber-700" data-testid="yekdem-zero-hint">
+                Kayıtlı YEKDEM 0. Gerçek sıfırsa alana açıkça 0 yazın (açık sıfır kaydı); boş
+                bırakılırsa değer korunur ama kesin teklif için teyitli sayılmaz.
               </p>
             )}
           </div>

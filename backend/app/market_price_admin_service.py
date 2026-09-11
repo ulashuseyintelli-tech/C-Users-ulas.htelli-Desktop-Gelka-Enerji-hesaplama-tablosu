@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
 from .database import MarketReferencePrice, PriceChangeHistory
+from .price_provenance import YEKDEM_AUDIT_PRICE_TYPE
 from .market_price_validator import (
     NormalizedMarketPriceInput,
     ErrorCode as ValidatorErrorCode,
@@ -201,6 +202,17 @@ class MarketPriceAdminService:
                 warnings=warnings,
             )
     
+    @staticmethod
+    def _yekdem_acik_sifir(normalized: NormalizedMarketPriceInput) -> bool:
+        """İstek YEKDEM'i AÇIKÇA 0 olarak mı veriyor? (None = girilmedi; 0 DEĞİL)
+
+        Çağrıldığı yerler:
+        - MarketPriceAdminService._handle_insert() → açık sıfır satırı yazımı
+        - MarketPriceAdminService._handle_update() → açık sıfır teyidi (no-op değil) + satır
+        """
+        return (normalized.price_type == "PTF" and normalized.yekdem_value is not None
+                and normalized.yekdem_value == 0)
+
     def _write_history(
         self,
         db: Session,
@@ -213,19 +225,29 @@ class MarketPriceAdminService:
         change_reason: Optional[str],
         updated_by: Optional[str],
         source: Optional[str],
+        price_type: Optional[str] = None,
     ) -> None:
         """
         Append-only history write. Best-effort: errors are logged, never raised.
-        
+
         Called after successful commit in _handle_insert() and _handle_update().
         No-op updates never reach this method (early return in _handle_update).
-        
+
+        Fiyat Doğruluğu Faz 1 (owner teyidi): price_type=YEKDEM_AUDIT_PRICE_TYPE ile
+        açıkça girilen YEKDEM=0'ın ayrı satırı yazılır (old/new_value = YEKDEM;
+        price_record_id = YEKDEM'i taşıyan PTF kaydı). Varsayılan: kaydın price_type'ı.
+        Yazım hatasında satır oluşmaz → sıfır teyitsiz kalır (fail-closed).
+
+        Çağrıldığı yerler:
+        - MarketPriceAdminService._handle_insert() → INSERT (+ açık sıfırda YEKDEM satırı)
+        - MarketPriceAdminService._handle_update() → UPDATE (+ açık sıfırda YEKDEM satırı)
+
         Feature: audit-history, Requirement 1.1, 1.2, 1.5
         """
         try:
             history = PriceChangeHistory(
                 price_record_id=record.id,
-                price_type=record.price_type,
+                price_type=price_type or record.price_type,
                 period=record.period,
                 action=action,
                 old_value=old_value,
@@ -264,10 +286,14 @@ class MarketPriceAdminService:
         yekdem_tl_per_mwh kolonu NOT NULL olduğu için (migration yok) YEKDEM'siz
         yeni PTF dönem kaydı REDDEDİLİR (YEKDEM_REQUIRED, alan yekdem_value).
         Eskiden 0 yazılıyordu ve tekliflerde "gerçek 0"dan ayırt edilemiyordu.
+        Owner teyidi: açıkça girilen YEKDEM=0 kabul edilir ve PTF satırından sonra ayrı
+        bir geçmiş satırıyla (price_type='YEKDEM') kaydedilir; teklif kapısı gerçek
+        sıfırı eski/anlamı bilinmeyen sıfırdan bu satırla ayırır (price_provenance).
         Mevcut kaydın PTF-only güncellemesi etkilenmez; YEKDEM'e dokunulmaz.
 
         Çağrıldığı yerler:
         - MarketPriceAdminService.upsert_price() ← main.upsert_market_price() → POST /admin/market-prices
+        - MarketPriceAdminService.upsert_price() ← main.deprecated_upsert_market_price_form() → POST /admin/market-prices/form (YEKDEM alanı yok)
         - MarketPriceAdminService.upsert_price() ← bulk_importer.BulkImporter.apply() → POST /admin/market-prices/import/apply
         - MarketPriceAdminService.bulk_upsert() → upsert_price() üzerinden
         """
@@ -329,6 +355,22 @@ class MarketPriceAdminService:
                 updated_by=updated_by,
                 source=source,
             )
+            # Faz 1: açıkça girilen YEKDEM=0'ın ayrı satırı — PTF satırından SONRA yazılır;
+            # teklif kapısı kaydın en son geçmiş satırına bakar (price_provenance._acik_sifir_kaydi).
+            if self._yekdem_acik_sifir(normalized):
+                self._write_history(
+                    db=db,
+                    record=record,
+                    action="INSERT",
+                    old_value=None,
+                    new_value=0.0,
+                    old_status=None,
+                    new_status=normalized.status,
+                    change_reason=change_reason,
+                    updated_by=updated_by,
+                    source=source,
+                    price_type=YEKDEM_AUDIT_PRICE_TYPE,
+                )
             
             return UpsertResult(
                 success=True,
@@ -377,7 +419,21 @@ class MarketPriceAdminService:
         force_update: bool,
         warnings: List[str],
     ) -> UpsertResult:
-        """Handle UPDATE path with status transition rules."""
+        """Handle UPDATE path with status transition rules.
+
+        Fiyat Doğruluğu Faz 1 (owner teyidi): YEKDEM açıkça 0 verilirse (değer
+        değişmese bile — kayıtlı 0'ın teyidi) işlem no-op SAYILMAZ: değişiklik nedeni
+        ister, kaydı günceller ve PTF satırından sonra ayrı bir YEKDEM satırı yazar.
+        Değer değişmediği için kesin kayıtta force_update gerekmez. YEKDEM yeniden
+        girilmeden yapılan güncelleme önceki açık sıfır teyidini düşürür
+        (price_provenance._acik_sifir_kaydi).
+
+        Çağrıldığı yerler:
+        - MarketPriceAdminService.upsert_price() ← main.upsert_market_price() → POST /admin/market-prices
+        - MarketPriceAdminService.upsert_price() ← main.deprecated_upsert_market_price_form() → POST /admin/market-prices/form (YEKDEM alanı yok)
+        - MarketPriceAdminService.upsert_price() ← bulk_importer.BulkImporter.apply() → POST /admin/market-prices/import/apply
+        - MarketPriceAdminService.bulk_upsert() → upsert_price() üzerinden
+        """
         
         # Check if locked
         if existing.is_locked:
@@ -435,8 +491,12 @@ class MarketPriceAdminService:
                     ),
                 )
 
+        # Faz 1: YEKDEM'in açıkça 0 verilmesi (kayıtlı 0'ın teyidi dahil) no-op DEĞİLDİR.
+        yekdem_acik_sifir = self._yekdem_acik_sifir(normalized)
+
         # No-op detection (same PTF value, same YEKDEM value (or not provided), same status)
-        if not ptf_changed and not yekdem_changed and old_status == new_status:
+        if (not ptf_changed and not yekdem_changed and old_status == new_status
+                and not yekdem_acik_sifir):
             logger.debug(
                 f"No-op update for {normalized.price_type}/{normalized.period}: "
                 f"same value ({new_value}) and status ({new_status})"
@@ -476,6 +536,8 @@ class MarketPriceAdminService:
                 effective_change_reason = (
                     f"{change_reason} [YEKDEM: {old_yekdem} → {normalized.yekdem_value} TL/MWh]"
                 )
+            elif yekdem_acik_sifir:
+                effective_change_reason = f"{change_reason} [YEKDEM 0 açıkça teyit edildi]"
             existing.change_reason = effective_change_reason
             existing.updated_by = updated_by
             existing.updated_at = datetime.utcnow()
@@ -505,6 +567,21 @@ class MarketPriceAdminService:
                 updated_by=updated_by,
                 source=source,
             )
+            # Faz 1: açık YEKDEM=0 (teyit dahil) — PTF satırından SONRA ayrı satır.
+            if yekdem_acik_sifir:
+                self._write_history(
+                    db=db,
+                    record=existing,
+                    action="UPDATE",
+                    old_value=float(old_yekdem),
+                    new_value=0.0,
+                    old_status=old_status,
+                    new_status=new_status,
+                    change_reason=effective_change_reason,
+                    updated_by=updated_by,
+                    source=source,
+                    price_type=YEKDEM_AUDIT_PRICE_TYPE,
+                )
             
             return UpsertResult(
                 success=True,
@@ -732,12 +809,20 @@ class MarketPriceAdminService:
         
         Returns None if the price record doesn't exist (→ 404 at API layer).
         Returns [] if record exists but no history yet (→ 200 with empty list).
-        
+
+        Fiyat Doğruluğu Faz 1: price_type='YEKDEM' açıkça girilen YEKDEM=0 satırlarını
+        döndürür. Ayrı bir YEKDEM fiyat kaydı yoktur (VALID_PRICE_TYPES = PTF); satırlar
+        YEKDEM'i taşıyan PTF kaydına bağlıdır, varlık kontrolü o kayıtla yapılır.
+
+        Çağrıldığı yerler:
+        - main.get_price_history() → GET /admin/market-prices/history
+
         Feature: audit-history, Requirement 3.1, 3.3, 3.4
         """
         # Check if the price record exists
+        kayit_tipi = "PTF" if price_type == YEKDEM_AUDIT_PRICE_TYPE else price_type
         record = db.query(MarketReferencePrice).filter(
-            MarketReferencePrice.price_type == price_type,
+            MarketReferencePrice.price_type == kayit_tipi,
             MarketReferencePrice.period == period,
         ).first()
         
