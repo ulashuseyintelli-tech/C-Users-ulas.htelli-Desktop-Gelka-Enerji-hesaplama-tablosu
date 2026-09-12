@@ -4592,6 +4592,64 @@ async def get_deprecation_stats(
     }
 
 
+@app.get("/admin/market-prices/epias-compare")
+def epias_compare_endpoint(
+    db: Session = Depends(get_db),
+    _: str = Depends(require_admin_key),
+    from_period: str = Query(..., description="Baslangic donemi (YYYY-MM)"),
+    to_period: str = Query(..., description="Bitis donemi (YYYY-MM)"),
+    evaluated_at: Optional[str] = Query(default=None, description="Degerlendirme tarihi (YYYY-MM-DD); bos = bugun"),
+):
+    """EPİAŞ ile mevcut kayıtları SALT OKUNUR karşılaştırır (rapor üretir).
+
+    Bu uç: fiyat YAZMAZ, onay/kesinleştirme YAPMAZ, hesaplama önceliklerini
+    DEĞİŞTİRMEZ, otomatik senkron KURMAZ. Yalnız okuma ve rapor.
+    Özellik varsayılan KAPALI: EPIAS_COMPARE_ENABLED=true gerekir.
+    Yetki: mevcut X-Admin-Key (require_admin_key).
+
+    NOT: Rota, /admin/market-prices/{period} KAYDINDAN ÖNCE tanımlanmalıdır;
+    aksi hâlde "epias-compare" bir dönem sanılır.
+
+    NOT: Uç SENKRON (def) tanımlıdır. Gövdede senkron ağ (httpx) ve senkron DB
+    (Session) çağrıları var; FastAPI senkron uçları iş parçacığı havuzunda
+    çalıştırır, böylece olay döngüsü BLOKLANMAZ. Mevcut get_db yaşam döngüsü
+    (senkron generator) değişmez.
+
+    Çağrıldığı yerler:
+    - Yetkili yönetim aracı / operatör → GET /admin/market-prices/epias-compare
+    """
+    from datetime import datetime as _dt
+    from .epias_compare import build_comparison
+    from . import epias_public_client as _epias_istemci
+
+    if not _epias_istemci.ozellik_acik():
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "feature_disabled",
+                "message": "EPİAŞ karşılaştırması kapalı (EPIAS_COMPARE_ENABLED).",
+            },
+        )
+
+    degerlendirme = None
+    if evaluated_at:
+        try:
+            degerlendirme = _dt.strptime(evaluated_at, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail={"error": "invalid_evaluated_at", "message": "evaluated_at YYYY-MM-DD olmalı."},
+            )
+
+    istemci = _epias_istemci.EpiasReadOnlyClient()
+    try:
+        return build_comparison(db, from_period, to_period, istemci, evaluated_at=degerlendirme)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"error": "invalid_range", "message": str(exc)})
+    finally:
+        istemci.kapat()
+
+
 @app.get("/admin/market-prices/{period}")
 async def get_market_price(
     period: str,
