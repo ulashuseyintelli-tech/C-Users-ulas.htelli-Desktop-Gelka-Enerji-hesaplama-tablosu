@@ -29,10 +29,15 @@ function getInitialFormState(record?: MarketPriceRecord): UpsertFormState {
   if (record) {
     return {
       period: record.period,
-      value: String(record.ptf_tl_per_mwh),
+      // Fiyat alanları null olabilir (kayıtta değer yok). Null, "0" olarak
+      // DOLDURULMAZ; alan boş bırakılır — eksik değer sıfıra çevrilmez.
+      value: record.ptf_tl_per_mwh === null ? '' : String(record.ptf_tl_per_mwh),
       // Faz 1: kayıtlı 0 önceden DOLDURULMAZ (boş = mevcut korunur): eski/anlamı bilinmeyen
       // sıfır farkında olmadan "açık sıfır" olarak teyit edilmesin; gerçek 0 açıkça yazılır.
-      yekdemValue: record.yekdem_tl_per_mwh > 0 ? String(record.yekdem_tl_per_mwh) : '',
+      yekdemValue:
+        record.yekdem_tl_per_mwh !== null && record.yekdem_tl_per_mwh > 0
+          ? String(record.yekdem_tl_per_mwh)
+          : '',
       status: record.status,
       changeReason: '',
       sourceNote: record.source_note ?? '',

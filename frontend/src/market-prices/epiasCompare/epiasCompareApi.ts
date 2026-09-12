@@ -35,6 +35,23 @@ export async function fetchEpiasComparison(
 interface HataBenzeri {
   response?: { status?: number; data?: { detail?: { error?: string; message?: string } | string } };
   message?: string;
+  code?: string;
+  name?: string;
+}
+
+/**
+ * Hata bir İPTAL mi? (AbortController.abort → axios CanceledError / DOMException)
+ *
+ * Zaman aşımı da teknik olarak iptalle sonuçlanır; bu yüzden çağıran taraf
+ * "zaman aşımı mı, kullanıcı iptali mi" ayrımını KENDİ bayrağıyla yapar.
+ *
+ * Çağrıldığı yerler:
+ * - EpiasCompareSection.karsilastir() → catch
+ */
+export function iptalHatasiMi(hata: unknown): boolean {
+  const h = hata as HataBenzeri;
+  if (hata instanceof DOMException && hata.name === 'AbortError') return true;
+  return h?.code === 'ERR_CANCELED' || h?.name === 'CanceledError' || h?.name === 'AbortError';
 }
 
 /**

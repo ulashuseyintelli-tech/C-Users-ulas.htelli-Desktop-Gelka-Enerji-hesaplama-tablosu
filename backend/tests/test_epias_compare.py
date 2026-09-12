@@ -322,3 +322,32 @@ def test_uc_gecersiz_aralik_ve_tarih(uc_istemcisi):
         genis = uc_istemcisi.get("/admin/market-prices/epias-compare",
                                  params={"from_period": "2024-01", "to_period": "2026-06"})
         assert genis.status_code == 422
+
+
+# ── ŞEMA VARSAYILANI 0: doğrulanmış fiyat iddiası ÜRETİLMEZ ──────────────────
+
+def test_yekdem_sifir_icin_fark_ve_dogrulanmis_iddia_URETILMEZ(db_ortami):
+    """yekdem_tl_per_mwh kolonu nullable=False, default=0: 0 girilmemiş olabilir."""
+    from app.database import MarketReferencePrice, PriceChangeHistory
+    from app.epias_compare import build_comparison
+
+    db = db_ortami["db"]
+    kayit = MarketReferencePrice(price_type="PTF", period="2026-03", ptf_tl_per_mwh=1620.32,
+                                 yekdem_tl_per_mwh=0.0, status="provisional",
+                                 source="epias_api.mcp_avg")
+    db.add(kayit)
+    db.commit()
+    db.add(PriceChangeHistory(price_record_id=kayit.id, price_type="YEKDEM", period="2026-03",
+                              action="INSERT", new_value=0.0, new_status="provisional",
+                              source="epias_api.uc.st.2026-03"))
+    db.commit()
+
+    istemci = SahteIstemci(yekdem=[YekdemSatiri(donem="2026-03", versiyon="2026-03",
+                                                 serbest_tuketici=747.797, gts_k1=747.797)])
+    rapor = build_comparison(db, "2026-03", "2026-03", istemci, evaluated_at=date(2026, 9, 12),
+                             bugun=date(2026, 9, 12))
+    satir = next(s for s in rapor["satirlar"] if s["kalem"] == "YEKDEM")
+    assert satir["tip"] == TIP_YOK
+    assert "gelka_yekdem_sifir_belirsiz" in satir["nedenler"]
+    assert satir["fark"] is None, "0 için fark hesaplanmamalı"
+    assert satir["epias"]["deger"] == pytest.approx(747.797), "EPİAŞ adayı yine gösterilmeli"

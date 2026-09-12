@@ -86,7 +86,9 @@ export type HataTuru =
   | 'yasak'
   | 'gecersiz_istek'
   | 'sunucu'
-  | 'ag';
+  | 'ag'
+  /** Sonlu süre sınırı doldu; kullanıcı iptalinden AYRI bir durumdur. */
+  | 'zaman_asimi';
 
 export interface KarsilastirmaHatasi {
   tur: HataTuru;

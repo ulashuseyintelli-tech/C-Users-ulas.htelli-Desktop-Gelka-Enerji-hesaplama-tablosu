@@ -34,6 +34,8 @@ export const NEDEN_ETIKETLERI: Record<string, string> = {
   segment_bilinmiyor: 'Kayıt segment (Serbest Tüketici / GTŞ-K1) bilgisini taşımıyor.',
   segment_uyusmuyor: 'Kayıttaki segment EPİAŞ karşılığından farklı.',
   epias_versiyon_yok: 'EPİAŞ bu dönem için uygun versiyon döndürmedi.',
+  gelka_yekdem_sifir_belirsiz:
+    'Kayıttaki YEKDEM 0: şema varsayılanı (girilmemiş) de olabilir, gerçek 0 da. Doğrulanmış fiyat sayılmaz.',
   epias_karsiligi_yok: 'Kayıttaki yöntemin (abone ağırlıklı) EPİAŞ karşılığı yok.',
   gecmis_tarih_kaniti_yok: 'Geçmiş değerlendirme tarihi: o tarihte hangi versiyonun bilindiği kanıtlanamaz.',
 };

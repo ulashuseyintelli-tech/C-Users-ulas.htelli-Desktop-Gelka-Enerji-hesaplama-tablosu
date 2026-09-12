@@ -9,7 +9,9 @@
 /** Backend list item representing a single market price record */
 export interface MarketPriceRecord {
   period: string;                          // "2025-01"
-  ptf_tl_per_mwh: number;                 // 2508.80
+  // Fiyat alanları kayıtta BOŞ olabilir (nullable kolonlar) ve API bunları
+  // null olarak döndürür. Eksik fiyat SIFIRA ÇEVRİLMEZ; ekranda "—" gösterilir.
+  ptf_tl_per_mwh: number | null;          // 2508.80
   status: 'provisional' | 'final';
   price_type: string;                      // "PTF"
   captured_at: string;                     // ISO 8601 UTC
@@ -19,7 +21,7 @@ export interface MarketPriceRecord {
   source_note: string;
   change_reason: string;
   is_locked: boolean;
-  yekdem_tl_per_mwh: number;
+  yekdem_tl_per_mwh: number | null;
 }
 
 /** Paginated list response from GET /admin/market-prices */

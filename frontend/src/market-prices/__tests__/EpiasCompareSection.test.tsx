@@ -6,7 +6,7 @@
 // =============================================================================
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 // vi.mock dosya başına hoist edilir; değişken vi.hoisted ile tanımlanmalı.
@@ -308,5 +308,94 @@ describe('EpiasCompareSection — aday koşulu ve dönem tutarlılığı', () =>
     await screen.findByTestId('kars-hata');
     rerender(<EpiasCompareSection fromPeriod="2026-06" toPeriod="2026-06" />);
     expect(screen.queryByTestId('kars-hata')).not.toBeInTheDocument();
+  });
+});
+
+// ── Zaman aşımı / iptal / eski yanıt koruması ───────────────────────────────
+
+/** axios'a SADIK sahte: signal abort edilince CanceledError ile reddeder. */
+function asiliIstek() {
+  return (_yol: string, yapilandirma: { signal?: AbortSignal }) =>
+    new Promise((_coz, reddet) => {
+      yapilandirma.signal?.addEventListener('abort', () => {
+        reddet(Object.assign(new Error('canceled'), { code: 'ERR_CANCELED', name: 'CanceledError' }));
+      });
+    });
+}
+
+describe('EpiasCompareSection — zaman aşımı ve iptal', () => {
+  it('yanıtsız istek süre sonunda ANLAŞILIR hata verir ve yükleniyor biter', async () => {
+    vi.useFakeTimers();
+    try {
+      getMock.mockImplementation(asiliIstek());
+      render(<EpiasCompareSection fromPeriod="2026-05" toPeriod="2026-05" />);
+      fireEvent.click(screen.getByRole('button', { name: 'Karşılaştır' }));
+      expect(screen.getByTestId('kars-yukleniyor')).toBeInTheDocument();
+
+      await act(async () => { vi.advanceTimersByTime(60_000); });
+
+      const kutu = screen.getByTestId('kars-hata');
+      expect(kutu).toHaveTextContent('zaman aşımına uğradı');
+      expect(kutu).toHaveTextContent('Mevcut fiyat kayıtları değişmedi');
+      expect(screen.queryByTestId('kars-yukleniyor')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('süre dolmadan zaman aşımı hatası ÇIKMAZ', async () => {
+    vi.useFakeTimers();
+    try {
+      getMock.mockImplementation(asiliIstek());
+      render(<EpiasCompareSection fromPeriod="2026-05" toPeriod="2026-05" />);
+      fireEvent.click(screen.getByRole('button', { name: 'Karşılaştır' }));
+      await act(async () => { vi.advanceTimersByTime(59_000); });
+      expect(screen.queryByTestId('kars-hata')).not.toBeInTheDocument();
+      expect(screen.getByTestId('kars-yukleniyor')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('KULLANICI İPTALİ hata göstermez ama yükleniyor durumunu bitirir', async () => {
+    getMock.mockImplementation(asiliIstek());
+    render(<EpiasCompareSection fromPeriod="2026-05" toPeriod="2026-05" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Karşılaştır' }));
+    expect(screen.getByTestId('kars-yukleniyor')).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Temizle' }));
+    });
+
+    expect(screen.queryByTestId('kars-hata')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('kars-yukleniyor')).not.toBeInTheDocument();
+    expect(screen.getByTestId('kars-bosta')).toBeInTheDocument();
+  });
+
+  it('geç dönen ESKİ yanıt yeni sorgunun sonucunu EZMEZ', async () => {
+    // Not: yükleme sırasında "Karşılaştır" düğmesi DEVRE DIŞIdır; bu yüzden
+    // gerçekten erişilebilir yol şudur: sorgu başlat → Temizle → yeni sorgu.
+    let ilkiCoz: ((v: unknown) => void) | null = null;
+    // 1. çağrı: iptali UMURSAMAYAN asılı istek (geç dönen eski yanıtı temsil eder)
+    getMock.mockImplementationOnce(() => new Promise((coz) => { ilkiCoz = coz; }));
+    getMock.mockImplementationOnce(() => Promise.resolve({ data: yanit([SATIR_KIMLIK_YOK]) }));
+
+    render(<EpiasCompareSection fromPeriod="2026-07" toPeriod="2026-07" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Karşılaştır' }));   // 1. istek (asılı)
+    expect(screen.getByTestId('kars-yukleniyor')).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Temizle' }));     // sıra no artar
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Karşılaştır' })); // 2. istek
+    });
+    expect(await screen.findByTestId('kars-satir-2026-07-PTF')).toBeInTheDocument();
+
+    // 1. istek ŞİMDİ geç dönerse ekranı EZMEMELİ
+    await act(async () => { ilkiCoz?.({ data: yanit([SATIR_DEGER_FARKI]) }); });
+
+    expect(screen.getByTestId('kars-satir-2026-07-PTF')).toBeInTheDocument();
+    expect(screen.queryByTestId('kars-satir-2026-05-PTF')).not.toBeInTheDocument();
   });
 });

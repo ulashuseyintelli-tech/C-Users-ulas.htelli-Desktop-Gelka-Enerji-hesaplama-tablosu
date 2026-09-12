@@ -34,9 +34,41 @@ interface ColumnDef {
   sortable: boolean;
 }
 
+/**
+ * Fiyat hücresi. Değer YOKSA (null/undefined) "—" gösterir.
+ *
+ * NEDEN: `formatPrice(null)` → Intl.NumberFormat.format(null) → "0,00"; yani
+ * "fiyat yok" ile "fiyat sıfır" karışırdı. Eksik fiyat SIFIRA ÇEVRİLMEZ.
+ * `formatPrice(undefined)` ise "NaN" üretiyordu (alan adı uyuşmazlığı
+ * döneminde ekranda görülen buydu).
+ */
+function fiyatHucresi(
+  deger: number | null | undefined,
+  sifirBelirsiz = false,
+): React.ReactNode {
+  if (deger === null || deger === undefined || Number.isNaN(deger)) {
+    return <span className="text-gray-400" title="Kayıtta değer yok">—</span>;
+  }
+  // YEKDEM kolonu şemada `nullable=False, default=0`: 0 "girilmemiş" de
+  // olabilir. Değer olduğu gibi gösterilir ama DOĞRULANMIŞ fiyat gibi sunulmaz.
+  if (sifirBelirsiz && deger === 0) {
+    return (
+      <span title="0: şema varsayılanı (girilmemiş) de olabilir; doğrulanmış değer değildir">
+        <span>{formatPrice(deger)}</span>
+        <span className="ml-1 text-xs text-amber-600" data-testid="sifir-belirsiz">?</span>
+      </span>
+    );
+  }
+  return formatPrice(deger);
+}
+
 const COLUMNS: ColumnDef[] = [
   { key: 'period', label: 'Dönem', sortable: true },
   { key: 'ptf_tl_per_mwh', label: 'PTF (TL/MWh)', sortable: true },
+  // YEKDEM sütunu: API artık `yekdem_tl_per_mwh` döndürüyor. Sıralama KAPALI —
+  // backend'in izinli sıralama alanları {period, ptf_tl_per_mwh, status,
+  // updated_at} ile sınırlı.
+  { key: 'yekdem_tl_per_mwh', label: 'YEKDEM (TL/MWh)', sortable: false },
   { key: 'status', label: 'Durum', sortable: true },
   { key: 'updated_at', label: 'Güncelleme', sortable: true },
   { key: 'source', label: 'Kaynak', sortable: false },
@@ -207,7 +239,9 @@ function renderCell(
     case 'period':
       return record.period;
     case 'ptf_tl_per_mwh':
-      return formatPrice(record.ptf_tl_per_mwh);
+      return fiyatHucresi(record.ptf_tl_per_mwh);
+    case 'yekdem_tl_per_mwh':
+      return fiyatHucresi(record.yekdem_tl_per_mwh, true);
     case 'status':
       return <StatusBadge status={record.status} />;
     case 'updated_at':
