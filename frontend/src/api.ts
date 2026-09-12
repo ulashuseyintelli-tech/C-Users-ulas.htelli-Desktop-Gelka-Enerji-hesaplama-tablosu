@@ -1,5 +1,22 @@
 import axios from 'axios';
 import type { PriceProvenance, YekdemMode } from './pricing/priceReadiness';
+import { OKUMA_ZAMAN_ASIMI_MS } from './market-prices/constants';
+
+/**
+ * Admin OKUMA istekleri için sonlu süre sınırı (istek başına).
+ *
+ * NEDEN: `adminApi` örneğinde global `timeout` yoktur (varsayılan 0 = sınırsız);
+ * sunucu yanıt vermezse EPDK tarifeleri / Incidents ekranları sonsuza kadar
+ * yükleniyor kalıyordu. Axios süre dolunca isteği REDDEDER; mevcut catch/finally
+ * blokları hatayı gösterir ve yükleniyor durumunu kapatır.
+ *
+ * KAPSAM: yalnız OKUMA (GET). Yazma istekleri (ör. updateIncidentStatus) bu
+ * yapılandırmayı KULLANMAZ ve otomatik yeniden deneme EKLENMEZ.
+ */
+export const OKUMA_ISTEK_AYARI = {
+  timeout: OKUMA_ZAMAN_ASIMI_MS,
+  timeoutErrorMessage: 'İstek zaman aşımına uğradı (60 sn). Sunucu yanıt vermedi.',
+} as const;
 
 export const API_BASE = 'http://127.0.0.1:8000';
 
@@ -925,7 +942,7 @@ export interface DistributionTariffsResponse {
 }
 
 export async function getDistributionTariffs(): Promise<DistributionTariffsResponse> {
-  const response = await adminApi.get('/admin/distribution-tariffs');
+  const response = await adminApi.get('/admin/distribution-tariffs', OKUMA_ISTEK_AYARI);
   return response.data;
 }
 
@@ -952,7 +969,7 @@ export async function lookupDistributionTariff(
     voltage_level,
     term_type,
   });
-  const response = await adminApi.get(`/admin/distribution-tariffs/lookup?${params}`);
+  const response = await adminApi.get(`/admin/distribution-tariffs/lookup?${params}`, OKUMA_ISTEK_AYARI);
   return response.data;
 }
 
@@ -1026,12 +1043,12 @@ export async function getIncidents(params?: {
   if (params?.category) queryParams.append('category', params.category);
   if (params?.limit) queryParams.append('limit', params.limit.toString());
   
-  const response = await adminApi.get(`/admin/incidents?${queryParams}`);
+  const response = await adminApi.get(`/admin/incidents?${queryParams}`, OKUMA_ISTEK_AYARI);
   return response.data;
 }
 
 export async function getIncident(id: number): Promise<Incident> {
-  const response = await adminApi.get(`/admin/incidents/${id}`);
+  const response = await adminApi.get(`/admin/incidents/${id}`, OKUMA_ISTEK_AYARI);
   return response.data;
 }
 
@@ -1053,7 +1070,7 @@ export async function updateIncidentStatus(
 }
 
 export async function getIncidentStats(): Promise<IncidentStatsResponse> {
-  const response = await adminApi.get('/admin/incidents/stats');
+  const response = await adminApi.get('/admin/incidents/stats', OKUMA_ISTEK_AYARI);
   return response.data;
 }
 

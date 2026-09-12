@@ -343,6 +343,14 @@ def _yekdem_satiri(donem: str, kayit: Any, gecmis_satiri: Any, aday: Optional[Ye
     epias_kimlik = {"donem": aday.donem, "birim": aday.birim, "yontem": UYGULANAMAZ,
                     "versiyon": aday.versiyon, "segment": epias_segment, "kesinlik": "BELIRSIZ",
                     "aday_secimi": "degerlendirme_ayina_kadar_son_yayimlanan"}
+    # ŞEMA SINIRI: `MarketReferencePrice.yekdem_tl_per_mwh` kolonu
+    # `nullable=False, default=0`. Kayıttaki 0, "girilmemiş" (varsayılan) ya da
+    # gerçek bir 0 olabilir — veri modeli bunu AYIRT EDEMEZ. Bu yüzden 0 için
+    # doğrulanmış fiyat/fark iddiası ÜRETİLMEZ: satır karşılaştırılamaz sayılır,
+    # EPİAŞ adayı yine gösterilir. 0'ın gerçek mi varsayılan mı olduğu TAHMİN EDİLMEZ.
+    if gelka_deger == 0:
+        return _satir("YEKDEM", donem, kayit, gelka_kimlik, gelka_deger, epias_kimlik, epias_deger,
+                      _yok_sonucu(["gelka_yekdem_sifir_belirsiz"]), notlar)
     sonuc = classify_row("YEKDEM", gelka_kimlik, epias_kimlik, gelka_deger, epias_deger)
     return _satir("YEKDEM", donem, kayit, gelka_kimlik, gelka_deger, epias_kimlik, epias_deger, sonuc, notlar)
 

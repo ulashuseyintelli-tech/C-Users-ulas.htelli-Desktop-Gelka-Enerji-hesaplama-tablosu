@@ -34,9 +34,61 @@ function getBackendLogPath() {
 
 let backendLogStream = null;
 
+// ── stdout/stderr KIRILMA KORUMASI (DAR KAPSAM) ──────────────────────────────
+// Uygulama, stdout'u PIPE olan bir ebeveynden başlatılırsa (ör. bir betikten
+// `Start-Process`, görev zamanlayıcı, CI) ve o ebeveyn çıkarsa, pipe'ın okuma
+// ucu kapanır. Bundan sonraki HER `console.log` "write EPIPE" ile main
+// process'i düşürür (gerçek Sandbox provasında gözlendi: logBackend → main.js).
+//
+// Kapsam KASITLI OLARAK DARDIR:
+//   - YALNIZ akış-kapanması kodları (EPIPE/EBADF/ERR_STREAM_DESTROYED) yutulur
+//     ve ilgili akış "kırık" işaretlenir;
+//   - BAŞKA hata türleri YUTULMAZ: dosya loguna yazılır ve yeniden fırlatılır;
+//   - genel bir `uncaughtException` susturucusu EKLENMEZ;
+//   - hata notu ASLA konsola yazılmaz (aynı kırık akışa tekrar yazıp döngü
+//     üretmemek için) — yalnızca dosya loguna gider.
+const AKIS_KAPANMA_KODLARI = new Set(['EPIPE', 'EBADF', 'ERR_STREAM_DESTROYED']);
+const akisKirik = { stdout: false, stderr: false };
+
+/** Yalnız dosya loguna yazar; konsola ASLA yazmaz (döngü koruması). */
+function dosyayaNot(metin) {
+  try {
+    if (backendLogStream) {
+      backendLogStream.write(`[${new Date().toISOString()}] ${metin}\n`);
+    }
+  } catch (_) {
+    // Dosya logu da yazılamıyorsa sessiz kal: burada yapılabilecek başka bir
+    // güvenli işlem yok (konsol zaten kırık olabilir).
+  }
+}
+
+function akisHatasiniIsle(ad, hata) {
+  const kod = hata && hata.code;
+  if (AKIS_KAPANMA_KODLARI.has(kod)) {
+    if (!akisKirik[ad]) {
+      akisKirik[ad] = true;
+      dosyayaNot(`[akis] ${ad} kapandı (${kod}); konsol çıkışı durduruldu, dosya logu sürüyor.`);
+    }
+    return;
+  }
+  // Kapanma DIŞINDAKİ hatalar sessizce yutulmaz.
+  dosyayaNot(`[akis] ${ad} beklenmeyen hata: ${kod || (hata && hata.message) || hata}`);
+  throw hata;
+}
+
+process.stdout.on('error', (hata) => akisHatasiniIsle('stdout', hata));
+process.stderr.on('error', (hata) => akisHatasiniIsle('stderr', hata));
+
 function logBackend(msg) {
   const line = `[${new Date().toISOString()}] ${msg}\n`;
-  console.log(`[backend] ${msg}`);
+  if (!akisKirik.stdout) {
+    try {
+      console.log(`[backend] ${msg}`);
+    } catch (hata) {
+      // Senkron fırlayan yazma hatası: aynı dar kural uygulanır.
+      akisHatasiniIsle('stdout', hata);
+    }
+  }
   if (backendLogStream) {
     backendLogStream.write(line);
   }
@@ -805,5 +857,10 @@ if (typeof module !== 'undefined' && module.exports) {
     ALLOWED_PATH_PREFIXES,
     ALLOWED_DOWNLOAD_ORIGINS,
     OFFER_DOWNLOAD_PATH_MATCHER,
+    // stdout/stderr kırılma koruması testleri için (davranış değişikliği YOK)
+    akisHatasiniIsle,
+    akisKirik,
+    AKIS_KAPANMA_KODLARI,
+    logBackend,
   };
 }

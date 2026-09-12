@@ -17,6 +17,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { listMarketPrices } from '../marketPricesApi';
+import { OKUMA_ZAMAN_ASIMI_MS } from '../constants';
 import type {
   ListParams,
   MarketPriceRecord,
@@ -50,6 +51,15 @@ export function useMarketPricesList(params: ListParams) {
     abortControllerRef.current = controller;
 
     let cancelled = false;
+    // Sonlu süre sınırı: sunucu yanıt vermezse istek süresiz beklemesin.
+    // `zamanAsimi`, iptal nedenini AYIRT ETMEK için gerekir: kullanıcı/efekt
+    // iptali sessizce yok sayılır, zaman aşımı ise kullanıcıya HATA olarak
+    // gösterilir.
+    let zamanAsimi = false;
+    const zamanlayici = setTimeout(() => {
+      zamanAsimi = true;
+      controller.abort();
+    }, OKUMA_ZAMAN_ASIMI_MS);
 
     const fetchData = async () => {
       setLoading(true);
@@ -67,11 +77,19 @@ export function useMarketPricesList(params: ListParams) {
           setError(null);
         }
       } catch (err: unknown) {
-        // Silently ignore abort / cancel — Design Decision #3
-        if (err instanceof DOMException && err.name === 'AbortError') {
-          return;
-        }
-        if (axios.isCancel(err)) {
+        const iptalMi =
+          (err instanceof DOMException && err.name === 'AbortError') || axios.isCancel(err);
+        if (iptalMi) {
+          // ZAMAN AŞIMI ile KULLANICI/EFEKT İPTALİ ayrılır:
+          // - zaman aşımı → kullanıcıya anlaşılır hata
+          // - iptal → sessizce yok sayılır (Design Decision #3)
+          if (zamanAsimi && !cancelled) {
+            setError({
+              status: 'error',
+              error_code: 'TIMEOUT',
+              message: 'İstek zaman aşımına uğradı (60 sn). Sunucu yanıt vermedi.',
+            });
+          }
           return;
         }
 
@@ -88,7 +106,9 @@ export function useMarketPricesList(params: ListParams) {
           }
         }
       } finally {
+        clearTimeout(zamanlayici);
         if (!cancelled) {
+          // Zaman aşımında da yükleniyor durumu SONLANIR.
           setLoading(false);
         }
       }
@@ -99,6 +119,7 @@ export function useMarketPricesList(params: ListParams) {
     // Cleanup: abort on unmount or before next effect run
     return () => {
       cancelled = true;
+      clearTimeout(zamanlayici);
       controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

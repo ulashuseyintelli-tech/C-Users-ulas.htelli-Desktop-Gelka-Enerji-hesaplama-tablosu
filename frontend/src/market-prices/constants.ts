@@ -60,3 +60,20 @@ export const STATUS_LABELS: Record<'provisional' | 'final', string> = {
 
 /** Available page size options for the price list table pagination. */
 export const PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
+
+// ---------------------------------------------------------------------------
+// İstek Süre Sınırı (yalnız OKUMA istekleri)
+// ---------------------------------------------------------------------------
+
+/**
+ * Admin OKUMA istekleri için sonlu süre sınırı (ms).
+ *
+ * NEDEN: `adminApi` axios örneğinde `timeout` tanımlı değildir (varsayılan 0 =
+ * sınırsız). Sunucu yanıt vermezse istek süresiz bekler, yükleniyor durumu
+ * sonlanmaz ve kullanıcı ne hata ne zaman aşımı görür.
+ *
+ * KAPSAM: yalnız liste ve EPİAŞ karşılaştırma OKUMALARI. Yazma istekleri
+ * (upsert / toplu import) BİLEREK kapsam dışıdır — büyük dosyalar uzun sürebilir
+ * ve yazma isteklerine otomatik yeniden deneme/iptal EKLENMEZ.
+ */
+export const OKUMA_ZAMAN_ASIMI_MS = 60_000;

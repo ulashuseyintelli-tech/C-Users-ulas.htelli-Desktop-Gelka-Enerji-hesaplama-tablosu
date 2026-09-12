@@ -4404,6 +4404,22 @@ async def list_market_prices(
             {
                 "period": p.period,
                 "ptf_value": p.ptf_tl_per_mwh,
+                # YANIT SÖZLEŞMESİ DÜZELTMESİ: frontend (PriceListTable) bu iki
+                # alanı okur; yanıtta OLMADIKLARI için tabloda "NaN" görünüyordu.
+                # `ptf_value` ve diğer alanlar GERİYE DÖNÜK uyumluluk için AYNEN
+                # korunur — bu ekleme KATKISALDIR.
+                # Eksik fiyat SIFIRA ÇEVRİLMEZ: kayıtta None ise JSON'da null
+                # kalır (0, "fiyat yok" ile "fiyat sıfır"ı karıştırırdı).
+                "ptf_tl_per_mwh": p.ptf_tl_per_mwh,
+                "yekdem_tl_per_mwh": p.yekdem_tl_per_mwh,
+                # Tablonun okuduğu diğer gerçek kayıt alanları (KATKISAL).
+                # Değer uydurulmaz: kayıtta boşsa null döner. `price_type`
+                # tablo satır anahtarında kullanılır; eksikken aynı dönemdeki
+                # farklı fiyat tiplerinin anahtarı çakışabiliyordu.
+                "price_type": p.price_type,
+                "source": p.source,
+                "source_note": p.source_note,
+                "change_reason": p.change_reason,
                 "status": p.status,
                 "captured_at": p.captured_at.isoformat() if p.captured_at else None,
                 "is_locked": bool(p.is_locked),

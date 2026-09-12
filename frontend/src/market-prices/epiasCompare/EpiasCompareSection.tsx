@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { formatPrice } from '../utils';
-import { fetchEpiasComparison, hatayiSiniflandir } from './epiasCompareApi';
+import { OKUMA_ZAMAN_ASIMI_MS } from '../constants';
+import { fetchEpiasComparison, hatayiSiniflandir, iptalHatasiMi } from './epiasCompareApi';
 import { adayBul, YAPISAL_KIMLIK } from './identityCandidates';
 import {
   ALAN_DURUM_ETIKETLERI, SEGMENT_ETIKETLERI, TIP_ETIKETLERI, YONTEM_ETIKETLERI, nedenMetni,
@@ -215,6 +216,8 @@ export const EpiasCompareSection: React.FC<EpiasCompareSectionProps> = ({ fromPe
   const [hamDurum, setDurum] = useState<Durum>({ ad: 'bosta' });
   const durum = gorunenDurum(hamDurum, fromPeriod, toPeriod);
   const iptalRef = useRef<AbortController | null>(null);
+  // Her isteğe artan sıra numarası; yalnız en son istek durumu yazabilir.
+  const istekNoRef = useRef(0);
 
   const aralikVar = Boolean(fromPeriod && toPeriod);
 
@@ -223,17 +226,47 @@ export const EpiasCompareSection: React.FC<EpiasCompareSectionProps> = ({ fromPe
     iptalRef.current?.abort();
     const kontrol = new AbortController();
     iptalRef.current = kontrol;
+    // ESKİ YANIT KORUMASI: her isteğe sıra numarası verilir; yalnız EN SON
+    // istek durumu yazabilir. Geç dönen eski bir yanıt yeninin sonucunu EZEMEZ.
+    const benimNo = ++istekNoRef.current;
     const aralik: Aralik = { from: fromPeriod, to: toPeriod };
+    // Sonlu süre sınırı. `zamanAsimi` bayrağı, iptal nedenini ayırt etmek için
+    // gerekir: aynı `abort()` hem kullanıcı iptalinde hem zaman aşımında olur.
+    let zamanAsimi = false;
+    const zamanlayici = setTimeout(() => {
+      zamanAsimi = true;
+      kontrol.abort();
+    }, OKUMA_ZAMAN_ASIMI_MS);
     setDurum({ ad: 'yukleniyor', aralik });
     try {
       const yanit = await fetchEpiasComparison(fromPeriod, toPeriod, kontrol.signal);
+      if (benimNo !== istekNoRef.current) return;
       setDurum({ ad: 'hazir', yanit, aralik });
     } catch (e) {
-      setDurum({ ad: 'hata', hata: hatayiSiniflandir(e), aralik });
+      if (benimNo !== istekNoRef.current) return;
+      if (zamanAsimi) {
+        setDurum({
+          ad: 'hata',
+          hata: {
+            tur: 'zaman_asimi',
+            mesaj: 'İstek zaman aşımına uğradı (60 sn). Sunucu yanıt vermedi; karşılaştırma yapılmadı.',
+          },
+          aralik,
+        });
+      } else if (iptalHatasiMi(e)) {
+        // Kullanıcı iptali: hata gösterilmez, ama yükleniyor durumu SONLANIR.
+        setDurum({ ad: 'bosta' });
+      } else {
+        setDurum({ ad: 'hata', hata: hatayiSiniflandir(e), aralik });
+      }
+    } finally {
+      clearTimeout(zamanlayici);
     }
   }, [fromPeriod, toPeriod]);
 
   const temizle = useCallback(() => {
+    // Sıra numarası artırılır: uçuştaki isteğin geç dönen sonucu artık yazamaz.
+    istekNoRef.current += 1;
     iptalRef.current?.abort();
     setDurum({ ad: 'bosta' });
   }, []);
