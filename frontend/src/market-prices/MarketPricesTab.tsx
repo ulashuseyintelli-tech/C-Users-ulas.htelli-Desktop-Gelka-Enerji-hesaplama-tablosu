@@ -7,6 +7,7 @@ import { UpsertFormModal } from './UpsertFormModal';
 import { BulkImportWizard } from './BulkImportWizard';
 import { ToastNotification } from './ToastNotification';
 import { HistoryPanel } from './HistoryPanel';
+import { EpiasCompareSection } from './epiasCompare/EpiasCompareSection';
 import type { MarketPriceRecord, ToastMessage, ListParams, FilterState } from './types';
 
 // =============================================================================
@@ -92,6 +93,17 @@ export const MarketPricesTab: React.FC = () => {
 
   const isEmpty = !loading && data.length === 0;
 
+  // EPİAŞ karşılaştırma bölümünün dönem aralığı: önce filtre, yoksa listedeki
+  // en küçük/büyük dönem. Sorgu OTOMATİK başlamaz; kullanıcı düğmeye basar.
+  const [comparePeriodFrom, comparePeriodTo] = useMemo<[string | null, string | null]>(() => {
+    if (filters.fromPeriod && filters.toPeriod) {
+      return [filters.fromPeriod, filters.toPeriod];
+    }
+    const periods = data.map((r) => r.period).filter(Boolean).sort();
+    if (periods.length === 0) return [null, null];
+    return [filters.fromPeriod || periods[0], filters.toPeriod || periods[periods.length - 1]];
+  }, [filters.fromPeriod, filters.toPeriod, data]);
+
   return (
     <div className="space-y-4">
       {/* Header with action buttons */}
@@ -133,6 +145,9 @@ export const MarketPricesTab: React.FC = () => {
         onClearFilters={clearFilters}
         isEmpty={isEmpty}
       />
+
+      {/* EPİAŞ karşılaştırması — SALT OKUNUR, varsayılan kapalı özellik */}
+      <EpiasCompareSection fromPeriod={comparePeriodFrom} toPeriod={comparePeriodTo} />
 
       {/* Upsert Modal */}
       <UpsertFormModal
