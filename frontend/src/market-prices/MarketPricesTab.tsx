@@ -8,6 +8,7 @@ import { BulkImportWizard } from './BulkImportWizard';
 import { ToastNotification } from './ToastNotification';
 import { HistoryPanel } from './HistoryPanel';
 import { EpiasCompareSection } from './epiasCompare/EpiasCompareSection';
+import { FiyatOnayPaneli } from './fiyatOnay/FiyatOnayPaneli';
 import type { MarketPriceRecord, ToastMessage, ListParams, FilterState } from './types';
 
 // =============================================================================
@@ -148,6 +149,9 @@ export const MarketPricesTab: React.FC = () => {
 
       {/* EPİAŞ karşılaştırması — SALT OKUNUR, varsayılan kapalı özellik */}
       <EpiasCompareSection fromPeriod={comparePeriodFrom} toPeriod={comparePeriodTo} />
+
+      {/* Yetkili fiyat onayı — açılışta istek yok; yazma yalnız açık "onaya gönder" ile */}
+      <FiyatOnayPaneli varsayilanDonem={comparePeriodTo} />
 
       {/* Upsert Modal */}
       <UpsertFormModal

@@ -287,6 +287,8 @@ class CanliSunucu:
 
     def post_offer(self, sorgu: str = "", govde: dict | None = None):
         veri = json.dumps(govde or GOVDE_TEMEL).encode("utf-8")
+        # SEG-2: YEKDEM dahil teklifte segment açıkça seçilir (R2 kapısı testlerinin konusu değil).
+        sorgu = sorgu + ("&" if "?" in sorgu else "?") + "yekdem_segment=st"
         istek = urllib.request.Request(
             self._url("/offers" + sorgu), data=veri, method="POST",
             headers={"Content-Type": "application/json"},
@@ -357,20 +359,12 @@ def _kesin_fiyat_yaz(db_yolu: Path) -> None:
     """Fiyat Doğruluğu Faz 1: teklif fiyatı sunucuda dönemin güvenilir + KESİN (final)
     kaydıyla doğrulanır (kullanıcı onayı yolu yok). Bu testler R2 ham-toplam kapısını
     ölçer; sentetik gövdenin (GOVDE_TEMEL) dönem fiyatı disposable DB'ye yazılır."""
-    con = sqlite3.connect(str(db_yolu))
-    try:
-        con.execute(
-            "INSERT INTO market_reference_prices (price_type, period, ptf_tl_per_mwh, "
-            "yekdem_tl_per_mwh, status, source, is_locked, updated_by, change_reason, "
-            "created_at, updated_at) VALUES ('PTF', ?, ?, ?, 'final', 'epias_manual', 0, "
-            "'test', 'R01A sentetik kesin fiyat', datetime('now'), datetime('now'))",
-            (GOVDE_TEMEL["extraction"]["invoice_period"],
-             GOVDE_TEMEL["params"]["weighted_ptf_tl_per_mwh"],
-             GOVDE_TEMEL["params"]["yekdem_tl_per_mwh"]),
-        )
-        con.commit()
-    finally:
-        con.close()
+    # Fiyat kimliği (sürüm 3): yetkili onaylı aritmetik PTF + 'st' segment YEKDEM onayı
+    # (alembic head onay tablolarını kurar).
+    from tests.fiyat_onay_yardimci import onayli_fiyat_sqlite
+    onayli_fiyat_sqlite(db_yolu, GOVDE_TEMEL["extraction"]["invoice_period"],
+                        GOVDE_TEMEL["params"]["weighted_ptf_tl_per_mwh"],
+                        GOVDE_TEMEL["params"]["yekdem_tl_per_mwh"], segment="st")
 
 
 @pytest.fixture(scope="module")

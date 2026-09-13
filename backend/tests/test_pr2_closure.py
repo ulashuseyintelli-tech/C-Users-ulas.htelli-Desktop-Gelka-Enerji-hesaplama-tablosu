@@ -45,10 +45,9 @@ def _kesin_fiyat_oturumu():
     )
     Base.metadata.create_all(engine)
     s = sessionmaker(bind=engine)()
-    s.add(MarketReferencePrice(period="2099-01", price_type="PTF", ptf_tl_per_mwh=2500.0,
-                               yekdem_tl_per_mwh=300.0, source="epias_manual",
-                               status="final", is_locked=0))
-    s.commit()
+    # Fiyat kimliği (sürüm 3): yetkili onaylı aritmetik PTF + 'st' segment YEKDEM onayı.
+    from tests.fiyat_onay_yardimci import onayli_fiyat
+    onayli_fiyat(s, "2099-01", 2500.0, 300.0, segment="st")
     return s
 
 
@@ -93,6 +92,7 @@ def _pdf_form_data() -> dict:
         "weighted_ptf_tl_per_mwh": "2500",
         "yekdem_tl_per_mwh": "300",
         "invoice_period": "2099-01",
+        "yekdem_segment": "st",  # SEG-2: açık segment seçimi
     }
 
 

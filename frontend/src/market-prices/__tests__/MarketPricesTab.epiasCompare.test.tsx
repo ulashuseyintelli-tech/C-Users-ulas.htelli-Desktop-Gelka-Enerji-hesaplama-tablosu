@@ -75,4 +75,14 @@ describe('MarketPricesTab — EPİAŞ bölümü eklendikten sonra', () => {
     await screen.findByTestId('epias-compare');
     expect(postMock).not.toHaveBeenCalled();
   });
+
+  it('fiyat onay paneli görünür; açılışta aday/geçmiş/onay isteği yok, dönem listeden önerilir', async () => {
+    render(<MarketPricesTab />);
+    await screen.findByTestId('fiyat-onay-paneli');
+    await waitFor(() => expect(screen.getByLabelText('Onay dönemi')).toHaveValue('2026-07'));
+    const yollar = getMock.mock.calls.map((c) => c[0]);
+    expect(yollar).not.toContain('/admin/market-prices/approval-candidate');
+    expect(yollar).not.toContain('/admin/market-prices/approvals');
+    expect(postMock).not.toHaveBeenCalled();
+  });
 });

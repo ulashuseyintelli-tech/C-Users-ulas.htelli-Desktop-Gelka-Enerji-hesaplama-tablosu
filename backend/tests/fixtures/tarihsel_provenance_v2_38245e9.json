@@ -1,0 +1,118 @@
+{
+ "faz1_2099_01": {
+  "provenance": {
+   "blocking_reasons": [],
+   "draft_only": false,
+   "epias_basis": true,
+   "messages": [],
+   "period": "2099-01",
+   "provisional": false,
+   "ptf": {
+    "db_values": [
+     2500.0
+    ],
+    "epias": true,
+    "final": true,
+    "source": "reference_scalar",
+    "source_detail": "epias_manual",
+    "status": "matched",
+    "system_verified": true,
+    "trusted": true,
+    "value": 2500.0
+   },
+   "system_lookup": "ok",
+   "verified": true,
+   "verified_by": "system",
+   "version": 2,
+   "yekdem": {
+    "epias": true,
+    "final": true,
+    "mode": "included",
+    "mode_basis": "user",
+    "period_record_status": "final",
+    "period_status": "known",
+    "period_trusted": true,
+    "period_value": 50.0,
+    "period_verified": true,
+    "period_zero_audit_id": null,
+    "source": "reference:epias_manual",
+    "status": "matched",
+    "system_verified": true,
+    "trusted": true,
+    "value": 50.0
+   }
+  },
+  "yakalama": {
+   "cagri": {
+    "yekdem_mode": "included"
+   },
+   "commit": "38245e9727851fc633aee3338c3bfffe2f5c38bf",
+   "fonksiyon": "app.price_provenance.build_price_provenance",
+   "kayit": {
+    "period": "2099-01",
+    "ptf": 2500.0,
+    "source": "epias_manual",
+    "status": "final",
+    "yekdem": 50.0
+   }
+  }
+ },
+ "s5_2026_01": {
+  "provenance": {
+   "blocking_reasons": [],
+   "draft_only": false,
+   "epias_basis": true,
+   "messages": [],
+   "period": "2026-01",
+   "provisional": false,
+   "ptf": {
+    "db_values": [
+     2500.0
+    ],
+    "epias": true,
+    "final": true,
+    "source": "reference_scalar",
+    "source_detail": "epias_manual",
+    "status": "matched",
+    "system_verified": true,
+    "trusted": true,
+    "value": 2500.0
+   },
+   "system_lookup": "ok",
+   "verified": true,
+   "verified_by": "system",
+   "version": 2,
+   "yekdem": {
+    "epias": true,
+    "final": true,
+    "mode": "included",
+    "mode_basis": "user",
+    "period_record_status": "final",
+    "period_status": "known",
+    "period_trusted": true,
+    "period_value": 50.0,
+    "period_verified": true,
+    "period_zero_audit_id": null,
+    "source": "reference:epias_manual",
+    "status": "matched",
+    "system_verified": true,
+    "trusted": true,
+    "value": 50.0
+   }
+  },
+  "yakalama": {
+   "cagri": {
+    "yekdem_mode": "included"
+   },
+   "commit": "38245e9727851fc633aee3338c3bfffe2f5c38bf",
+   "fonksiyon": "app.price_provenance.build_price_provenance",
+   "kayit": {
+    "period": "2026-01",
+    "ptf": 2500.0,
+    "source": "epias_manual",
+    "status": "final",
+    "yekdem": 50.0
+   }
+  }
+ }
+}

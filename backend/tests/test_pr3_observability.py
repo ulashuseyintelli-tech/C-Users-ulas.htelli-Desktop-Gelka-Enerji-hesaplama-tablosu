@@ -39,6 +39,7 @@ FORM_DATA = {
     "weighted_ptf_tl_per_mwh": "2500",
     "yekdem_tl_per_mwh": "300",
     "invoice_period": "2099-01",
+    "yekdem_segment": "st",  # SEG-2: açık segment seçimi
 }
 
 @pytest.fixture(autouse=True)
@@ -57,10 +58,30 @@ def _kesin_fiyat_db():
     )
     Base.metadata.create_all(engine)
     Oturum = sessionmaker(bind=engine)
+    # Fiyat kimliği (sürüm 3): bu dosya uygulamayı `backend.app` paket yolundan yükler; onaylı
+    # kayıt da AYNI modül örneğiyle yazılır (yardımcı `app.` yolunu kullandığı için satır içi).
+    import sqlalchemy as _sa
+    from backend.app import price_approval as _pa
+    from datetime import datetime as _dt
+    _pa.onay_metadata.create_all(engine)
     with Oturum() as s:
-        s.add(MarketReferencePrice(period="2099-01", price_type="PTF", ptf_tl_per_mwh=2500.0,
-                                   yekdem_tl_per_mwh=300.0, source="epias_manual",
-                                   status="final", is_locked=0))
+        _k = MarketReferencePrice(period="2099-01", price_type="PTF", ptf_tl_per_mwh=2500.0,
+                                  yekdem_tl_per_mwh=300.0, source="epias_api",
+                                  status="final", is_locked=0)
+        s.add(_k)
+        s.commit()
+        _simdi = _dt.utcnow()
+        _kanit_json, _kanit_sha = _pa._kanit_yaz({"kaynak": "sentetik_test_fiksturu", "resmi": False})
+        s.execute(_sa.insert(_pa.ptf_onay_revizyonlari).values(
+            period="2099-01", revision=1, price_record_id=_k.id, value=2500.0, basis="mcp_avg",
+            kaynak_kanit_sha256=_kanit_sha, kaynak_kanit_json=_kanit_json,
+            kayit_parmak_izi=_pa.kayit_parmak_izi(_k), captured_at=_simdi,
+            onaylayan_beyan="test", dogrulanan_yetki="paylasilan_yonetici_anahtari", approved_at=_simdi, change_reason="sentetik"))
+        s.execute(_sa.insert(_pa.yekdem_onay_revizyonlari).values(
+            period="2099-01", segment="st", revision=1, value=300.0, version="2099-01",
+            kaynak_kanit_sha256=_kanit_sha, kaynak_kanit_json=_kanit_json, captured_at=_simdi,
+            onaylayan_beyan="test", dogrulanan_yetki="paylasilan_yonetici_anahtari", approved_at=_simdi,
+            change_reason="sentetik"))
         s.commit()
 
     def _oturum():

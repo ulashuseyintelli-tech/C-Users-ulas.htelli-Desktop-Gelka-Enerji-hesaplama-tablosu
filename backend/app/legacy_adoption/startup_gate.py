@@ -20,6 +20,18 @@ Tipik, DETERMINISTIK durum makinesi (owner STEP 1):
                                            zaman yerinde MUTASYONA UGRAMAZ)
   G) CANONICAL_ABSENT_LEGACY_EXISTS    -> HARD_STOP (rescue atlanmis/basarisiz)
 
+  H) VERIFIED_APPLICATION_HEAD         -> certify_application_head() (hafif no-op)
+
+ILERI MIGRATION (fiyat onay revizyonlari, b7e4c2d91a60):
+  run_startup_gate_ileri(): run_startup_gate() canonical basa (351d314819d5) ulasirsa
+  ileri_migration_uygula() canonical'i CALISMA KOPYASINDA uygulama basina tasir, eski
+  tablolarin icerik ozetlerini once/sonra karsilastirir, sertifikalar ve ATOMIK yayimlar.
+  Hata/kesintide canonical DEGISMEZ (GateRefused 54); yarim kalan yayim bir sonraki
+  acilista DB kimligine bagli, icerik ozeti denetimli (imza DEGIL) gunlukle toparlanir
+  (belirsizse 56, dosyaya dokunulmaz). Kopyadan degistirmeye kadar canonical Windows'ta
+  YAZMAYI REDDEDEN tutamak altindadir; degistirme POSIX anlamli atomiktir. Surecler arasi
+  acilis kilidi, SQLite yan dosyasi ve acik yazici denetimleri: 55.
+
 Hicbir dal varsayilan/bilinmeyen olarak app baslangicina GECEMEZ.
 
 YASAKLAR (kod duzeyinde zorlanir):
@@ -35,6 +47,7 @@ Cagrildigi yerler:
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -48,6 +61,7 @@ from . import policy
 from .adoption import (
     AdoptionRefused,
     adopt_legacy_copy,
+    canonical_yapisi_saglam,
     is_certifiably_canonical,
 )
 from .adoption import InjectedFault as _AdoptionInjectedFault
@@ -77,6 +91,43 @@ EXIT_FRESH_INIT_FAILED = 50                  # A basarisiz (alembic dahil)
 EXIT_ADOPTION_FAILED = 51                    # B basarisiz (adopt_legacy_copy reddetti)
 EXIT_ALEMBIC_UNAVAILABLE = 52                # A/B: frozen'da alembic yok — create_all'a DUSULMEZ
 EXIT_CERTIFICATION_FAILED = 53               # C: canonical revizyonu doğru ama sema tutmuyor
+EXIT_FORWARD_MIGRATION_FAILED = 54           # ileri migration basarisiz (canonical DEGISMEDI)
+EXIT_CONCURRENT_OR_BUSY = 55                 # ikinci acilis / DB baska baglantida / SQLite yan dosyasi
+EXIT_RECOVERY_AMBIGUOUS = 56                 # yarim yayim kimlige baglanamadi — dosyalara dokunulmadi
+
+# ── Uygulama basi: canonical + katkisal ileri migration(lar) ─────────────
+# Canonical (PDSMR) bas 351d314819d5 DEGISMEDI; uygulama basi onun uzerine YALNIZ yeni
+# tablo ekleyen revizyondur. Beklenen kolon kumeleri app/price_approval.onay_metadata ile
+# AYNIDIR (tests/test_startup_gate_ileri_migration.py dogrular); bu modul app.database'i
+# import ETMEZ, bu yuzden kume burada sabittir.
+APPLICATION_HEAD = "b7e4c2d91a60"
+APPLICATION_HEAD_TABLE_COLUMNS = {
+    "ptf_onay_revizyonlari": frozenset({
+        "id", "period", "revision", "price_record_id", "value", "basis", "kaynak_kanit_sha256",
+        "kaynak_kanit_json", "kayit_parmak_izi", "captured_at", "onaylayan_beyan", "dogrulanan_yetki",
+        "approved_at", "change_reason"}),
+    "yekdem_onay_revizyonlari": frozenset({
+        "id", "period", "segment", "revision", "value", "version", "kaynak_kanit_sha256",
+        "kaynak_kanit_json", "captured_at", "onaylayan_beyan", "dogrulanan_yetki", "approved_at",
+        "change_reason"}),
+}
+ILERI_WORKING_SUFFIX = ".pdsmr-ileri-working"
+ILERI_PREPUBLISH_SUFFIX = ".pdsmr-ileri-prepublish"
+ILERI_JOURNAL_SUFFIX = ".pdsmr-ileri-yayim-gunlugu.json"
+ILERI_LOCK_SUFFIX = ".pdsmr-acilis-kilidi"
+ILERI_FAULT_POINTS = (
+    "ileri_calisma_kopyasi_oncesi",
+    "ileri_migration_sonrasi",
+    "ileri_yayim_oncesi",
+    "ileri_son_sha_sonrasi",
+    "ileri_gunluk_yazildi",
+    "ileri_yedek_kopyalandi",
+    "ileri_yayim_gunluk_oncesi",
+    "ileri_yedek_silme_oncesi",
+    "ileri_yayim_sonrasi",
+)
+# Bu noktalardan sonra yeni dosya YAYIMLANMISTIR (canonical = uygulama basi).
+ILERI_YAYIM_SONRASI_NOKTALAR = ("ileri_yayim_gunluk_oncesi", "ileri_yedek_silme_oncesi", "ileri_yayim_sonrasi")
 EXIT_PRECONDITION = 20
 EXIT_FILESYSTEM = 30
 EXIT_UNEXPECTED = 99
@@ -89,6 +140,7 @@ class BootstrapState(str, Enum):
     PARTIAL_S5_SCHEMA = "PARTIAL_S5_SCHEMA"
     UNKNOWN_SCHEMA = "UNKNOWN_SCHEMA"
     CANONICAL_ABSENT_LEGACY_EXISTS = "CANONICAL_ABSENT_LEGACY_EXISTS"
+    VERIFIED_APPLICATION_HEAD = "VERIFIED_APPLICATION_HEAD"
 
 
 class GateRefused(Exception):
@@ -314,6 +366,11 @@ def classify_startup_state(
     if rev == CANONICAL_HEAD:
         if is_certifiably_canonical(canonical_path):
             return BootstrapState.VERIFIED_CANONICAL_HEAD
+        return BootstrapState.UNKNOWN_SCHEMA
+
+    if rev == APPLICATION_HEAD:
+        if is_certifiably_application_head(canonical_path):
+            return BootstrapState.VERIFIED_APPLICATION_HEAD
         return BootstrapState.UNKNOWN_SCHEMA
 
     if rev == PRODUCTION_BRANCH_TIP:
@@ -628,6 +685,512 @@ def certify_canonical(canonical_path: str) -> GateResult:
     )
 
 
+# ── STEP H: uygulama basi — sertifikasyon + kontrollu ileri migration ────
+def is_certifiably_application_head(path: str) -> bool:
+    """Uygulama basi (APPLICATION_HEAD) kaniti: tek revizyon + canonical yapisi + onay tablolari.
+
+    Cagrildigi yerler:
+    - classify_startup_state() [H durumu]
+    - certify_application_head(), ileri_migration_uygula() (yayim oncesi dogrulama)
+    """
+    if _revisions(path) != (APPLICATION_HEAD,):
+        return False
+    if not canonical_yapisi_saglam(path):
+        return False
+    con = sqlite3.connect(_ro(path), uri=True)
+    try:
+        for tablo, kolonlar in APPLICATION_HEAD_TABLE_COLUMNS.items():
+            gercek = {r[1] for r in con.execute(f"PRAGMA table_info({tablo})").fetchall()}
+            if gercek != set(kolonlar):
+                return False
+    finally:
+        con.close()
+    return True
+
+
+def certify_application_head(canonical_path: str) -> GateResult:
+    """VERIFIED_APPLICATION_HEAD icin: DDL mutasyonu YOK, yalniz yeniden dogrulama."""
+    if not is_certifiably_application_head(canonical_path):
+        raise GateRefused("uygulama basi DB artik sertifikalanamiyor (harici mutasyon?)",
+                          EXIT_CERTIFICATION_FAILED)
+    butunluk, fk = _health(canonical_path)
+    if butunluk != "ok" or fk:
+        raise GateRefused(f"uygulama basi dogrulamasi basarisiz: integrity={butunluk} fk={fk}",
+                          EXIT_CERTIFICATION_FAILED)
+    return GateResult(
+        state=BootstrapState.VERIFIED_APPLICATION_HEAD,
+        action="CERTIFIED_NOOP",
+        terminal_revision=APPLICATION_HEAD,
+        heads=ar.alembic_heads_count(canonical_path) if ar.is_alembic_available() else 1,
+        integrity_check=butunluk,
+        foreign_key_violations=fk,
+        row_counts=_row_counts(canonical_path),
+    )
+
+
+def _tablo_icerik_ozetleri(path: str, tablolar: set[str]) -> dict[str, str]:
+    """Verilen tablolarin TAM icerik ozeti (rowid sirali; salt-okunur). Satir sayisi yetmez."""
+    con = sqlite3.connect(_ro(path), uri=True)
+    try:
+        ozet = {}
+        for t in sorted(tablolar):
+            h = hashlib.sha256()
+            for satir in con.execute(f'SELECT * FROM "{t}" ORDER BY rowid'):
+                h.update(repr(tuple(satir)).encode("utf-8"))
+                h.update(b"\n")
+            ozet[t] = h.hexdigest()
+        return ozet
+    finally:
+        con.close()
+
+
+def _ileri_yollar(canonical_path: str) -> tuple[str, str]:
+    return canonical_path + ILERI_WORKING_SUFFIX, canonical_path + ILERI_PREPUBLISH_SUFFIX
+
+
+# ── Ileri migration guvenlik yardimcilari ────────────────────────────────
+# Surecler arasi acilis kilidi: isletim sistemi kilidi (msvcrt/fcntl). Surec olunce kilit
+# kendiliginden birakilir → bayat kilit dosyasi acilisi ENGELLEMEZ. Kilit dosyasi yerinde
+# kalir (silmek POSIX'te karsilikli dislamayi bozar). Ayni surecte ic ice cagri serbesttir.
+_TUTULAN_KILITLER: set[str] = set()
+
+
+def _kimlik_yolu(path: str) -> str:
+    return os.path.normcase(os.path.realpath(os.path.abspath(path)))
+
+
+@contextlib.contextmanager
+def acilis_kilidi(canonical_path: str):
+    """Ayni canonical icin ayni anda TEK kapi calismasi (ikinci acilis 55 ile durur).
+
+    Cagrildigi yerler:
+    - run_startup_gate_ileri(), ileri_migration_uygula() [dogrudan cagrilirsa]
+    """
+    anahtar = _kimlik_yolu(canonical_path)
+    if anahtar in _TUTULAN_KILITLER:
+        yield
+        return
+    os.makedirs(os.path.dirname(os.path.abspath(canonical_path)), exist_ok=True)
+    fd = os.open(canonical_path + ILERI_LOCK_SUFFIX, os.O_RDWR | os.O_CREAT, 0o600)
+    kilitli = False
+    try:
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            kilitli = True
+        except OSError as exc:
+            raise GateRefused("ayni veritabani icin baska bir acilis/kapi calismasi suruyor — "
+                              "ikinci acilis durduruldu", EXIT_CONCURRENT_OR_BUSY) from exc
+        _TUTULAN_KILITLER.add(anahtar)
+        try:
+            yield
+        finally:
+            _TUTULAN_KILITLER.discard(anahtar)
+    finally:
+        if kilitli:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+        os.close(fd)
+
+
+def _sqlite_yan_dosya_yok(path: str) -> None:
+    """-wal/-shm/-journal varsa DUZ BYTE kopyasi tutarsiz olabilir → dokunmadan dur.
+
+    rescue.py ve production_adoption_controller.py ile AYNI ilke. Kontrol, dosyaya herhangi
+    bir SQLite baglantisi acilmadan ONCE yapilir (sicak gunluk geri alinmasin, bayt degismesin).
+    """
+    for ek in ("-wal", "-shm", "-journal"):
+        if os.path.exists(path + ek):
+            raise GateRefused(f"SQLite yan dosyasi mevcut ({os.path.basename(path)}{ek}) — acik baglanti ya da "
+                              "yarim islem olabilir; ileri migration yapilmadi", EXIT_CONCURRENT_OR_BUSY)
+
+
+# ── Yayim yazma kilidi (Windows) ─────────────────────────────────────────
+# SHA karsilastirmasi kilit DEGILDIR: son kontrol ile dosya degistirme arasinda baska bir yazici
+# commit edebilir ve verisi eski dosyayla birlikte kaybolur (olculdu). Bu yuzden canonical,
+# kopyadan degistirmeye kadar YAZMAYI REDDEDEN bir isletim sistemi tutamagi altindadir:
+#   CreateFileW(GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE)
+# - Yazma erisimli acik baska bir tutamak varsa tutamak ALINAMAZ (ERROR_SHARING_VIOLATION) → 55.
+# - Tutamak acikken baska surecler dosyayi yazma erisimiyle ACAMAZ (SQLite salt-okunura duser,
+#   "attempt to write a readonly database"); okuma serbesttir.
+# - Degistirme, POSIX anlamli atomik yeniden adlandirmadir (SetFileInformationByHandle /
+#   FileRenameInfoEx, REPLACE_IF_EXISTS | POSIX_SEMANTICS): hedef yol hicbir an bos kalmaz.
+#   Yeni dosyaya da yeniden adlandirmadan HEMEN once/sonra yazmayi reddeden tutamak alinir.
+# Gereksinim: Windows 10 1709+ / NTFS. Desteklenmiyorsa degistirme yapilmaz (fail-closed).
+_GENERIC_READ = 0x80000000
+_DELETE = 0x00010000
+_FILE_SHARE_READ = 0x1
+_FILE_SHARE_DELETE = 0x4
+_OPEN_EXISTING = 3
+_FILE_ATTRIBUTE_NORMAL = 0x80
+_ERROR_SHARING_VIOLATION = 32
+_FILE_RENAME_INFO_EX = 22
+_FILE_RENAME_FLAG_REPLACE_IF_EXISTS = 0x1
+_FILE_RENAME_FLAG_POSIX_SEMANTICS = 0x2
+
+
+def _k32():
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateFileW.restype = wintypes.HANDLE
+    k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    k32.CloseHandle.restype = wintypes.BOOL
+    k32.SetFileInformationByHandle.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+    k32.SetFileInformationByHandle.restype = wintypes.BOOL
+    return k32
+
+
+def _yazmayi_reddeden_tutamak(path: str, *, silme_erisimi: bool = False) -> int:
+    """Dosyaya yazmayi reddeden (okumaya ve atomik yeniden adlandirmaya izin veren) tutamak.
+
+    Cagrildigi yerler:
+    - _ileri_migration_uygula_kilitli() [canonical: kopya→degistirme; calisma kopyasi: degistirme]
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    erisim = _GENERIC_READ | (_DELETE if silme_erisimi else 0)
+    h = _k32().CreateFileW(os.path.abspath(path), erisim, _FILE_SHARE_READ | _FILE_SHARE_DELETE, None,
+                           _OPEN_EXISTING, _FILE_ATTRIBUTE_NORMAL, None)
+    if h is None or h == wintypes.HANDLE(-1).value:
+        hata = ctypes.get_last_error()
+        if hata == _ERROR_SHARING_VIOLATION:
+            raise GateRefused(f"{os.path.basename(path)} baska bir surecte YAZMA erisimiyle acik — ileri "
+                              "migration yapilmadi (uygulama/arac kapatilmali)", EXIT_CONCURRENT_OR_BUSY)
+        raise GateRefused(f"yayim yazma kilidi alinamadi ({os.path.basename(path)}, winerror={hata})",
+                          EXIT_FILESYSTEM)
+    return h
+
+
+def _tutamak_kapat(h: Optional[int]) -> None:
+    if h is not None:
+        _k32().CloseHandle(h)
+
+
+def _posix_atomik_degistir(kaynak_tutamak: int, hedef: str) -> None:
+    """Acik (DELETE erisimli) kaynak tutamagini hedef yolun uzerine atomik olarak adlandirir."""
+    import ctypes
+    import struct
+
+    ad = os.path.abspath(hedef).encode("utf-16-le")
+    tampon = ctypes.create_string_buffer(20 + len(ad) + 2)
+    struct.pack_into("<I4xQI", tampon, 0,
+                     _FILE_RENAME_FLAG_REPLACE_IF_EXISTS | _FILE_RENAME_FLAG_POSIX_SEMANTICS, 0, len(ad))
+    ctypes.memmove(ctypes.addressof(tampon) + 20, ad, len(ad))
+    if not _k32().SetFileInformationByHandle(kaynak_tutamak, _FILE_RENAME_INFO_EX, tampon, len(tampon)):
+        hata = ctypes.get_last_error()
+        raise GateRefused(f"atomik degistirme basarisiz (winerror={hata}) — canonical DEGISMEDI; "
+                          "hedefte acik baska bir tutamak olabilir", EXIT_CONCURRENT_OR_BUSY
+                          if hata == _ERROR_SHARING_VIOLATION else EXIT_FILESYSTEM)
+
+
+def _ayni_birimde(a: str, b: str) -> bool:
+    """Atomik rename icin iki yol AYNI klasor ve AYNI birim (st_dev) uzerinde mi?"""
+    if os.path.dirname(os.path.abspath(a)) != os.path.dirname(os.path.abspath(b)):
+        return False
+    return os.stat(a).st_dev == os.stat(os.path.dirname(os.path.abspath(b)) or ".").st_dev
+
+
+def _gunluk_yolu(canonical_path: str) -> str:
+    return canonical_path + ILERI_JOURNAL_SUFFIX
+
+
+def _gunluk_yaz(canonical_path: str, veri: dict) -> None:
+    """Yayim gunlugu: DB kimligi (gercek yol + kaynak/yeni SHA) + asama; dayanikli ve atomik.
+
+    `icerik_sha256` yalniz BUTUNLUK OZETIDIR (bozulma/yarim yazim tespiti); anahtarsizdir,
+    kimlik dogrulayan bir imza DEGILDIR.
+    """
+    govde = dict(veri, surum=1, canonical=_kimlik_yolu(canonical_path))
+    metin = json.dumps(govde, sort_keys=True, ensure_ascii=False)
+    paket = {"gunluk": govde, "icerik_sha256": hashlib.sha256(metin.encode("utf-8")).hexdigest()}
+    gecici = _gunluk_yolu(canonical_path) + ".tmp"
+    with open(gecici, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(json.dumps(paket, sort_keys=True, ensure_ascii=False))
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(gecici, _gunluk_yolu(canonical_path))
+
+
+def _gunluk_oku(canonical_path: str) -> Optional[dict]:
+    yol = _gunluk_yolu(canonical_path)
+    if not os.path.isfile(yol):
+        return None
+    try:
+        with open(yol, encoding="utf-8") as fh:
+            paket = json.load(fh)
+        govde = paket["gunluk"]
+        metin = json.dumps(govde, sort_keys=True, ensure_ascii=False)
+        if hashlib.sha256(metin.encode("utf-8")).hexdigest() != paket.get("icerik_sha256"):
+            raise ValueError("icerik_ozeti")
+        return govde
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise GateRefused(f"ileri migration yayim gunlugu okunamadi/ozeti tutmuyor ({type(exc).__name__}) — "
+                          "otomatik kurtarma yapilmadi", EXIT_RECOVERY_AMBIGUOUS) from exc
+
+
+def _gunluk_sil(canonical_path: str) -> None:
+    for yol in (_gunluk_yolu(canonical_path), _gunluk_yolu(canonical_path) + ".tmp"):
+        if os.path.exists(yol):
+            os.remove(yol)
+
+
+def ileri_yarim_kalani_kurtar(canonical_path: str) -> Optional[str]:
+    """Onceki ileri migration yayiminin yarida kalma izini DB KIMLIGINE bagli olarak toparlar.
+
+    Yayim yontemi canonical'i ASLA tasimaz/silmez (yedek KOPYA ile alinir, degistirme atomiktir);
+    bu yuzden kurtarma hicbir kosulda canonical'a yazmaz, yalniz yedek/gunluk/calisma kopyasini siler.
+    Karar yayim gunluguyle verilir (gercek yol + kaynak/yeni SHA + asama; ozet denetimli):
+    - Gunluk yok + prepublish yok → kalinti calisma kopyasi silinir (None).
+    - Gunluk yok + prepublish VAR → kimliksiz yedek: DOKUNULMAZ, 56.
+    - Gunluk baska bir DB yoluna ait / icerik ozeti tutmuyor / canonical YOK → 56.
+    - YEDEKLENIYOR:
+        canonical=kaynak → degistirme olmamis: (yarim olabilir) yedek silinir ("YAYIM_BASLAMADI").
+        canonical=yeni, prepublish=kaynak → degistirme olmus: yedek silinir ("YAYIM_TAMAMLANDI").
+    - YAYIMLANDI: canonical'a dokunulmaz; yedek (=kaynak) silinir ("YAYIM_TAMAMLANDI").
+    - Diger her birlesim (SHA uyusmazligi dahil) → 56, hicbir dosyaya dokunulmaz.
+
+    Cagrildigi yerler:
+    - run_startup_gate_ileri() [acilis kilidi altinda, siniflandirmadan ONCE]
+    """
+    working, prepublish = _ileri_yollar(canonical_path)
+    gunluk = _gunluk_oku(canonical_path)
+
+    def belirsiz(neden: str) -> GateRefused:
+        return GateRefused(f"ileri migration kurtarmasi belirsiz: {neden} — dosyalara dokunulmadi, "
+                           "elle inceleme gerekir", EXIT_RECOVERY_AMBIGUOUS)
+
+    if gunluk is None:
+        if os.path.exists(prepublish):
+            raise belirsiz("yayim gunlugu olmayan prepublish yedegi")
+        if os.path.isfile(working):
+            os.remove(working)
+        return None
+    if gunluk.get("canonical") != _kimlik_yolu(canonical_path):
+        raise belirsiz("yayim gunlugu baska bir veritabani yoluna ait")
+    if not os.path.isfile(canonical_path):
+        raise belirsiz("yayim gunlugu var ama canonical yok (yontem canonical'i silmez); eski kopya geri konmaz")
+    kaynak, yeni, asama = gunluk.get("kaynak_sha256"), gunluk.get("yeni_sha256"), gunluk.get("asama")
+    pre_var = os.path.isfile(prepublish)
+    can_sha = _sha256(canonical_path)
+    pre_sha = _sha256(prepublish) if pre_var else None
+
+    if asama == "YAYIMLANDI":
+        if pre_var and pre_sha != kaynak:
+            raise belirsiz("prepublish yedegi gunlukteki kaynakla eslesmiyor")
+        sonuc = "YAYIM_TAMAMLANDI"
+    elif asama == "YEDEKLENIYOR":
+        if can_sha == kaynak:
+            sonuc = "YAYIM_BASLAMADI"
+        elif can_sha == yeni and pre_var and pre_sha == kaynak:
+            sonuc = "YAYIM_TAMAMLANDI"
+        else:
+            raise belirsiz(f"asama YEDEKLENIYOR ile dosya durumu uyusmuyor (prepublish={pre_var})")
+    else:
+        raise belirsiz(f"bilinmeyen asama {asama!r}")
+    if pre_var:
+        os.remove(prepublish)
+    if os.path.isfile(working):
+        os.remove(working)
+    _gunluk_sil(canonical_path)
+    return sonuc
+
+
+def ileri_migration_uygula(canonical_path: str, *, fault_at: Optional[str] = None) -> GateResult:
+    """Canonical bastaki DB'yi CALISMA KOPYASINDA uygulama basina tasir ve atomik yayimlar.
+
+    Adimlar: acilis kilidi → SQLite yan dosyasi yok → canonical sertifikasi → canonical'a YAZMAYI
+    REDDEDEN tutamak (kopyadan degistirmeye kadar) → kaynak ozeti → dayanikli kopya → alembic
+    upgrade → revizyon + yapi + saglik → eski tablolarin icerik ozetleri AYNI → canonical=kaynak
+    (ek denetim; kilit tutamaktir) → yayim gunlugu (YEDEKLENIYOR) → yedek KOPYASI (=kaynak) →
+    calisma kopyasina DELETE+yazma-reddeden tutamak → POSIX atomik degistirme → yeni canonical'a
+    yazma-reddeden tutamak → gunluk YAYIMLANDI → yedek ve gunluk silinir → audit → tutamaklar birakilir.
+    Canonical hicbir an yolsuz kalmaz ve kilit boyunca baska surec yazamaz.
+
+    Cagrildigi yerler:
+    - run_startup_gate_ileri()
+    """
+    if os.name != "nt":
+        raise GateRefused("ileri migration yayim yazma kilidi yalniz Windows/NTFS'te uygulanir — "
+                          "bu platformda yapilmadi", EXIT_PRECONDITION)
+    with acilis_kilidi(canonical_path):
+        return _ileri_migration_uygula_kilitli(canonical_path, fault_at=fault_at)
+
+
+def _ileri_migration_uygula_kilitli(canonical_path: str, *, fault_at: Optional[str]) -> GateResult:
+    _sqlite_yan_dosya_yok(canonical_path)
+    if not is_certifiably_canonical(canonical_path):
+        raise GateRefused("ileri migration yalniz sertifikali canonical bastan baslar",
+                          EXIT_PRECONDITION)
+    if not ar.is_alembic_available():
+        raise GateRefused("alembic calistirilabiliri yok — ileri migration yapilmadi, HARD_STOP",
+                          EXIT_ALEMBIC_UNAVAILABLE)
+    working, prepublish = _ileri_yollar(canonical_path)
+    for yol in (working, prepublish, _gunluk_yolu(canonical_path)):
+        if os.path.exists(yol):
+            raise GateRefused(f"ileri migration kalinti dosyasi mevcut: {os.path.basename(yol)}",
+                              EXIT_FILESYSTEM)
+    eski_kilit = _yazmayi_reddeden_tutamak(canonical_path)
+    calisma_tutamagi = None
+    yeni_kilit = None
+    gunluk_yazildi = False
+    degistirildi = False
+    kaynak_sha = None
+    try:
+        kaynak_sha = _sha256(canonical_path)
+        eski_tablolar = _tables(canonical_path) - {"alembic_version"}
+        once = _tablo_icerik_ozetleri(canonical_path, eski_tablolar)
+        _fault("ileri_calisma_kopyasi_oncesi", fault_at)
+        _copy_bytes_durable(canonical_path, working)
+        if _sha256(working) != kaynak_sha:
+            raise GateRefused("ileri migration calisma kopyasi ozeti eslesmiyor", EXIT_FILESYSTEM)
+        try:
+            ar.alembic_upgrade(working, APPLICATION_HEAD)
+        except ar.AlembicUnavailable as exc:
+            raise GateRefused(f"alembic kullanilamiyor: {exc}", EXIT_ALEMBIC_UNAVAILABLE) from exc
+        except RuntimeError as exc:
+            raise GateRefused(f"ileri migration basarisiz: {exc}", EXIT_FORWARD_MIGRATION_FAILED) from exc
+        _fault("ileri_migration_sonrasi", fault_at)
+        if not is_certifiably_application_head(working):
+            raise GateRefused("ileri migration sonrasi uygulama basi sertifikalanamadi",
+                              EXIT_FORWARD_MIGRATION_FAILED)
+        butunluk, fk = _health(working)
+        if butunluk != "ok" or fk:
+            raise GateRefused(f"ileri migration sonrasi saglik: integrity={butunluk} fk={fk}",
+                              EXIT_FORWARD_MIGRATION_FAILED)
+        sonra = _tablo_icerik_ozetleri(working, eski_tablolar)
+        if sonra != once:
+            degisen = sorted(t for t in once if once[t] != sonra.get(t))
+            raise GateRefused(f"ileri migration eski tablo verisini degistirdi: {degisen}",
+                              EXIT_FORWARD_MIGRATION_FAILED)
+        _fsync_close(working)
+        yeni_sha = _sha256(working)
+        _fault("ileri_yayim_oncesi", fault_at)
+        _sqlite_yan_dosya_yok(canonical_path)
+        if _sha256(canonical_path) != kaynak_sha:  # ek denetim; koruma yazmayi reddeden tutamaktir
+            raise GateRefused("canonical ileri migration SIRASINDA degisti — yayim yapilmadi", EXIT_FILESYSTEM)
+        if not _ayni_birimde(working, canonical_path):
+            raise GateRefused("calisma kopyasi canonical ile ayni klasor/birimde degil — atomik yayim yok",
+                              EXIT_FILESYSTEM)
+        _fault("ileri_son_sha_sonrasi", fault_at)
+        _gunluk_yaz(canonical_path, {"asama": "YEDEKLENIYOR", "kaynak_sha256": kaynak_sha,
+                                     "yeni_sha256": yeni_sha})
+        gunluk_yazildi = True
+        _fault("ileri_gunluk_yazildi", fault_at)
+        _copy_bytes_durable(canonical_path, prepublish)
+        if _sha256(prepublish) != kaynak_sha:
+            raise GateRefused("prepublish yedek kopyasi ozeti eslesmiyor", EXIT_FILESYSTEM)
+        _fault("ileri_yedek_kopyalandi", fault_at)
+        calisma_tutamagi = _yazmayi_reddeden_tutamak(working, silme_erisimi=True)
+        _posix_atomik_degistir(calisma_tutamagi, canonical_path)
+        degistirildi = True
+        # Yeni canonical: DELETE erisimli tutamak (okuyuculari da engeller) kapanmadan once
+        # salt-okunur yazma-reddeden tutamak alinir → yazma penceresi olusmaz.
+        yeni_kilit = _yazmayi_reddeden_tutamak(canonical_path)
+        _tutamak_kapat(calisma_tutamagi)
+        calisma_tutamagi = None
+        _fault("ileri_yayim_gunluk_oncesi", fault_at)
+        _gunluk_yaz(canonical_path, {"asama": "YAYIMLANDI", "kaynak_sha256": kaynak_sha,
+                                     "yeni_sha256": yeni_sha})
+        _fault("ileri_yedek_silme_oncesi", fault_at)
+        _tutamak_kapat(eski_kilit)  # yerine gecilmis eski dosya (bu tutamakla birlikte) kaybolur
+        eski_kilit = None
+        os.remove(prepublish)
+        _gunluk_sil(canonical_path)
+        gunluk_yazildi = False
+        _fault("ileri_yayim_sonrasi", fault_at)
+        rapor = GateResult(
+            state=BootstrapState.VERIFIED_APPLICATION_HEAD,
+            action="FORWARD_MIGRATED",
+            terminal_revision=APPLICATION_HEAD,
+            heads=ar.alembic_heads_count(canonical_path),
+            integrity_check=butunluk,
+            foreign_key_violations=fk,
+            row_counts=_row_counts(canonical_path),
+            details={"kaynak_revizyon": CANONICAL_HEAD, "eski_tablo_sayisi": len(eski_tablolar),
+                     "eski_tablo_icerikleri_ayni": True, "yayim_kilidi": "windows_yazmayi_reddeden_tutamak"},
+        )
+        _write_bootstrap_audit(canonical_path, {
+            "action": rapor.action,
+            "terminal_revision": rapor.terminal_revision,
+            "source_revision": CANONICAL_HEAD,
+            "source_sha256": kaynak_sha,
+            "heads": rapor.heads,
+        })
+        return rapor
+    except (InjectedFault, GateRefused):
+        raise
+    except OSError as exc:
+        raise GateRefused(f"dosya sistemi hatasi: {type(exc).__name__}: {exc}", EXIT_FILESYSTEM) from exc
+    finally:
+        _tutamak_kapat(calisma_tutamagi)
+        # Degistirme olmadiysa yarim yayim izleri canonical KILITLIYKEN temizlenir.
+        try:
+            if gunluk_yazildi and not degistirildi and kaynak_sha is not None \
+                    and _sha256(canonical_path) == kaynak_sha:
+                if os.path.exists(prepublish):
+                    os.remove(prepublish)
+                _gunluk_sil(canonical_path)
+        except OSError:
+            pass
+        _tutamak_kapat(yeni_kilit)
+        _tutamak_kapat(eski_kilit)
+        if os.path.exists(working):
+            try:
+                os.remove(working)
+            except OSError:
+                pass
+
+
+def run_startup_gate_ileri(
+    canonical_path: str, *, legacy_hint_path: Optional[str] = None,
+    fault_at: Optional[str] = None,
+) -> GateResult:
+    """Baslangic kapisi + kontrollu ileri migration (paketli runtime giris noktasi).
+
+    Tum calisma surecler arasi acilis kilidi altindadir (ikinci acilis 55). run_startup_gate()
+    davranisi DEGISMEZ; o canonical basa (CANONICAL_HEAD) ulastiginda (taze kurulum, legacy
+    adoption ya da mevcut canonical) ileri migration uygulanir. Zaten uygulama basindaki DB
+    yalniz sertifikalanir (tekrar acilis). Yarim kalan yayim once kimlige bagli toparlanir.
+
+    Cagrildigi yerler:
+    - backend/run_server.py::_run_startup_schema_gate()
+    - tests/test_startup_gate_ileri_migration.py
+    """
+    with acilis_kilidi(canonical_path):
+        kurtarma = ileri_yarim_kalani_kurtar(canonical_path)
+        rapor = run_startup_gate(canonical_path, legacy_hint_path=legacy_hint_path,
+                                 fault_at=None if fault_at in ILERI_FAULT_POINTS else fault_at)
+        if rapor.terminal_revision == CANONICAL_HEAD:
+            onceki = rapor.action
+            rapor = ileri_migration_uygula(canonical_path, fault_at=fault_at)
+            rapor.details["onceki_eylem"] = onceki
+        if kurtarma:
+            rapor.details["yarim_kalan_yayim"] = kurtarma
+        return rapor
+
+
 # ── Audit (DB'nin DISINDA, sanitize) ─────────────────────────────────────
 def _audit_path(canonical_path: str) -> str:
     return canonical_path + AUDIT_SUFFIX
@@ -684,6 +1247,9 @@ def run_startup_gate(
     if durum is BootstrapState.VERIFIED_CANONICAL_HEAD:
         return certify_canonical(canonical_path)
 
+    if durum is BootstrapState.VERIFIED_APPLICATION_HEAD:
+        return certify_application_head(canonical_path)
+
     if durum is BootstrapState.PARTIAL_S5_SCHEMA:
         raise GateRefused(
             "013 revizyonunda ama S5 tablolari mevcut — create_all fail-open "
@@ -709,7 +1275,15 @@ __all__ = [
     "AUDIT_SUFFIX",
     "EXIT_ADOPTION_FAILED",
     "EXIT_ALEMBIC_UNAVAILABLE",
+    "APPLICATION_HEAD",
     "EXIT_CERTIFICATION_FAILED",
+    "EXIT_FORWARD_MIGRATION_FAILED",
+    "EXIT_CONCURRENT_OR_BUSY",
+    "EXIT_RECOVERY_AMBIGUOUS",
+    "ILERI_JOURNAL_SUFFIX",
+    "ILERI_LOCK_SUFFIX",
+    "acilis_kilidi",
+    "ILERI_FAULT_POINTS",
     "EXIT_FILESYSTEM",
     "EXIT_FRESH_INIT_FAILED",
     "EXIT_HARD_STOP_AUDIT_MISSING_OR_INVALID",
@@ -725,10 +1299,15 @@ __all__ = [
     "GateRefused",
     "GateResult",
     "InjectedFault",
+    "certify_application_head",
     "certify_canonical",
+    "ileri_migration_uygula",
+    "ileri_yarim_kalani_kurtar",
+    "is_certifiably_application_head",
     "classify_startup_state",
     "fresh_initialize",
     "perform_controlled_adoption",
     "read_bootstrap_audit",
     "run_startup_gate",
+    "run_startup_gate_ileri",
 ]

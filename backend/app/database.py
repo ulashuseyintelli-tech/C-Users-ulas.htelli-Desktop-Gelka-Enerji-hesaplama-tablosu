@@ -1390,6 +1390,13 @@ def init_db():
 
     Base.metadata.create_all(bind=engine)
 
+    # Fiyat onay revizyon tabloları ayrı MetaData'dadır (Base.metadata PDSMR canonical
+    # paritesine kilitli; bkz. app/price_approval.py). Yalnız dev/test create_all yolu;
+    # paketli runtime'da yukarıda çıkıldı (tablolar migration b7e4c2d91a60 ile gelir).
+    from .price_approval import onay_metadata
+
+    onay_metadata.create_all(bind=engine)
+
 
 def get_db():
     """Database session dependency for FastAPI"""

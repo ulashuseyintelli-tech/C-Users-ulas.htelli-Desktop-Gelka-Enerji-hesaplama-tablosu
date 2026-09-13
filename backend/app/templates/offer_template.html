@@ -130,6 +130,10 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
+{% if fiyat_taslak %}
+<div style="position:fixed; top:40%; left:0; right:0; text-align:center; font-size:60pt; color:rgba(185,28,28,0.15); transform:rotate(-35deg); z-index:999;">TASLAK</div>
+<p class="explanation" style="color:#B91C1C;"><b>TASLAK — Fiyat doğrulanmadı. Bu belge kesin teklif değildir.</b></p>
+{% endif %}
 
 <!-- LAYER 0: Arka plan -->
 {% if letterhead_base64 %}
@@ -166,7 +170,9 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 <p class="section-label">Enerji Bedelinin Hesaplama Yapısı</p>
 {# Fiyat Doğruluğu Faz 1: EPİAŞ ifadesi YALNIZ sunucuda doğrulanmış EPİAŞ kaynağında (epias_basis) #}
-{% if epias_basis %}
+{% if epias_basis and ptf_aritmetik_onayli %}
+<p class="explanation">Enerji bedeli, EPİAŞ'ın ilgili dönem için yayımladığı aylık aritmetik ortalama PTF esas alınarak oluşturulmaktadır (yetkili onaylı değer).</p>
+{% elif epias_basis %}
 <p class="explanation">Enerji bedeli, piyasa mevzuatına uygun şekilde EPİAŞ verileri esas alınarak oluşturulmaktadır. İlgili fatura dönemi için EPİAŞ saatlik Piyasa Takas Fiyatları (PTF) ile abonenin saatlik veya profillenmiş tüketim değerleri kullanılarak <b>Ağırlıklı PTF</b> hesaplanır.</p>
 {% else %}
 <p class="explanation">Enerji bedeli, bu teklifte belirtilen PTF{% if not yekdem_excluded %} ve YEKDEM{% endif %} birim {% if yekdem_excluded %}bedeli{% else %}bedelleri{% endif %} esas alınarak hesaplanmıştır.</p>
@@ -174,7 +180,7 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 {% if yekdem_excluded %}
 <p class="explanation">Bu bedel, sözleşmede belirlenen anlaşma fiyat katsayısı (<b>{{ agreement_multiplier | number(2) }}</b>) ile çarpılarak nihai enerji bedeline ulaşılır.</p>
 {% else %}
-<p class="explanation">Ağırlıklı PTF üzerine ilgili dönem YEKDEM birim bedeli eklenerek toplam enerji birim maliyeti oluşturulur. Bu maliyet, sözleşmede belirlenen anlaşma fiyat katsayısı (<b>{{ agreement_multiplier | number(2) }}</b>) ile çarpılarak nihai enerji bedeline ulaşılır.</p>
+<p class="explanation">{{ ptf_etiketi }} üzerine ilgili dönem YEKDEM birim bedeli eklenerek toplam enerji birim maliyeti oluşturulur. Bu maliyet, sözleşmede belirlenen anlaşma fiyat katsayısı (<b>{{ agreement_multiplier | number(2) }}</b>) ile çarpılarak nihai enerji bedeline ulaşılır.</p>
 {% endif %}
 
 <p class="section-label">YEKDEM Uygulaması</p>
@@ -208,7 +214,7 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; }
 <colgroup><col style="width:25%"><col style="width:25%"><col style="width:25%"><col style="width:25%"></colgroup>
 <tr><th>Mevcut Birim Fiyat</th><td>{{ current_unit_price | number(4) }} TL/kWh</td><th>Teklif Birim Fiyat</th><td>{{ offer_unit_price | number(4) }} TL/kWh</td></tr>
 <tr><th>Anlaşma Çarpanı</th><td>{{ agreement_multiplier | number(2) }}</td><th>Birim Fiyat Farkı</th><td>{{ (current_unit_price - offer_unit_price) | number(4) }} TL/kWh</td></tr>
-<tr><th>Ağırlıklı PTF</th><td>{{ weighted_ptf | number(2) }} TL/MWh</td><th>YEKDEM</th><td>{% if yekdem_excluded %}Dahil değil{% else %}{{ yekdem | number(2) }} TL/MWh{% endif %}</td></tr>
+<tr><th>{{ ptf_etiketi }}</th><td>{{ weighted_ptf | number(2) }} TL/MWh</td><th>YEKDEM{% if yekdem_segment_etiketi %} ({{ yekdem_segment_etiketi }}){% endif %}</th><td>{% if yekdem_excluded %}Dahil değil{% else %}{{ yekdem | number(2) }} TL/MWh{% endif %}</td></tr>
 </table>
 
 <!-- Fatura Bilgileri -->

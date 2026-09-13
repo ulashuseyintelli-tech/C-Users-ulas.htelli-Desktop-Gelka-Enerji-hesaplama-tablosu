@@ -114,17 +114,21 @@ def client(db, storage_tmp):
 
 def _dogrulanmis_fiyat(db, ptf=2500.0, yekdem=50.0):
     """Fiyat Doğruluğu Faz 1: PDF yalnız sunucuda doğrulanmış (güvenilir + KESİN)
-    fiyat snapshot'ından üretilir. Dönemin kesin kaydı test DB'sine yazılır ve
-    provenance GERÇEK fonksiyonla hesaplanır (elle uydurulmaz; onay yolu yok)."""
+    fiyat snapshot'ından üretilir. Dönemin kesin kaydı test DB'sine yazılır (master ile aynı).
+
+    Kaydedilmiş teklifin snapshot'ı TARİHSELDİR: master 38245e9'un GERÇEK
+    build_price_provenance çıktısından yakalanmış sürüm 2 fikstürü döner (aynı kayıt:
+    2026-01, 2500/50, epias_manual/final). Yeni onaylı kayıtla sürüm 3 üretilmez; bu testler
+    eski tekliflerin belge üretiminin değişmediğini sınar (bkz. tests/fiyat_onay_yardimci.py)."""
     from app.database import MarketReferencePrice
-    from app.price_provenance import build_price_provenance
+    from tests.fiyat_onay_yardimci import tarihsel_v2_provenance
+    assert (ptf, yekdem) == (2500.0, 50.0), "tarihsel fikstür yalnız yakalanan kayıt değerleri için geçerli"
     if db.query(MarketReferencePrice).filter_by(period="2026-01", price_type="PTF").first() is None:
         db.add(MarketReferencePrice(period="2026-01", price_type="PTF", ptf_tl_per_mwh=ptf,
                                     yekdem_tl_per_mwh=yekdem, source="epias_manual",
                                     status="final", is_locked=0))
         db.commit()
-    return build_price_provenance(db, period="2026-01", ptf=ptf, yekdem=yekdem,
-                                  yekdem_mode="included")
+    return tarihsel_v2_provenance("s5_2026_01")
 
 
 def _teklif(db):

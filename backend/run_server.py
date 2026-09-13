@@ -87,7 +87,7 @@ def _run_startup_schema_gate() -> None:
     - main() [PDSMR-R3, app.main import'undan HEMEN ÖNCE]
     """
     from app.legacy_adoption.rescue import sanitize_for_log
-    from app.legacy_adoption.startup_gate import GateRefused, run_startup_gate
+    from app.legacy_adoption.startup_gate import GateRefused, run_startup_gate_ileri
 
     canonical_path = _database_url_to_path(os.environ['DATABASE_URL'])
     # Legacy hint: exe'nin KENDİ dizini (resources/backend/) - normal
@@ -99,7 +99,9 @@ def _run_startup_schema_gate() -> None:
     legacy_hint = os.path.join(os.path.dirname(sys.executable), 'gelka_enerji.db')
 
     try:
-        rapor = run_startup_gate(canonical_path, legacy_hint_path=legacy_hint)
+        # Fiyat onay revizyonlari: canonical basa ulasan DB kontrollu ileri migration ile
+        # uygulama basina (b7e4c2d91a60) tasinir; hata durumunda canonical degismez.
+        rapor = run_startup_gate_ileri(canonical_path, legacy_hint_path=legacy_hint)
     except GateRefused as exc:
         sys.stderr.write(
             f"PDSMR_R3_GATE_REFUSED[{exc.exit_code}]: {sanitize_for_log(str(exc))}\n"

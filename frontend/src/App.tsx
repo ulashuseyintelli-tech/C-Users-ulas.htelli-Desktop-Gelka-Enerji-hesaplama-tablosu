@@ -1,7 +1,9 @@
 ﻿import { useState, useCallback, useMemo, useEffect } from 'react';
 import { Upload, FileText, Zap, TrendingDown, AlertCircle, CheckCircle, Loader2, RefreshCw, Download, Settings, FileSignature, Users, Database } from 'lucide-react';
-import { fullProcess, generateOfferPdf, downloadOfferPdf, FullProcessResponse, pricingAnalyze, pricingGetTemplates, pricingGetPeriods, pricingDownloadPdf, pricingDownloadExcel, PricingAnalyzeResponse, normalizeInvoicePeriod, API_BASE, TemplateItem, getVersion, VersionInfo, PdfMismatchError, PdfMismatchContract, createOffer, createCustomer, OfferCalculationPayload, adminApi } from './api';
-import { evaluatePriceReadiness, priceSourceLabel, type PriceProvenance, type YekdemMode } from './pricing/priceReadiness';
+import { fullProcess, generateOfferPdf, downloadOfferPdf, downloadDraftOfferPdf, FullProcessResponse, pricingAnalyze, pricingGetTemplates, pricingGetPeriods, pricingDownloadPdf, pricingDownloadExcel, PricingAnalyzeResponse, normalizeInvoicePeriod, API_BASE, TemplateItem, getVersion, VersionInfo, PdfMismatchError, PdfMismatchContract, createOffer, createCustomer, OfferCalculationPayload, adminApi } from './api';
+import { evaluatePriceReadiness, priceSourceLabel, type PriceProvenance, type YekdemMode, type YekdemSegment } from './pricing/priceReadiness';
+import { YekdemSegmentSelector } from './pricing/YekdemSegmentSelector';
+import { TaslakTeklifPaneli } from './pricing/TaslakTeklifPaneli';
 import { PriceDraftBanner } from './pricing/PriceDraftBanner';
 import { YekdemModeSelector } from './pricing/YekdemModeSelector';
 import { usePeriodPriceFetch } from './pricing/usePeriodPriceFetch';
@@ -224,6 +226,10 @@ function App() {
   // Sözleşme Hazırla bu id'yi kullanır (kendisi offer OLUŞTURMAZ).
   const [persistedOfferId, setPersistedOfferId] = useState<number | null>(null);
   const [persistedCustomerId, setPersistedCustomerId] = useState<number | undefined>(undefined);
+  // OWNER-KARARI-03: açıkça TASLAK kaydedilmiş teklif (kesin teklif/sözleşme akışına girmez).
+  const [taslakTeklif, setTaslakTeklif] = useState<{ id: number; blockingReasons: string[]; customerId?: number } | null>(null);
+  // Taslaktan açık işlemle kesinleşen teklif: kesin PDF ayrı, açık düğmeyle indirilir.
+  const [kesinlesenTeklifId, setKesinlesenTeklifId] = useState<number | null>(null);
   const [offerPersisting, setOfferPersisting] = useState(false);
   const [contractWizardOpen, setContractWizardOpen] = useState(false);
   
@@ -238,6 +244,8 @@ function App() {
   const [priceProvenance, setPriceProvenance] = useState<PriceProvenance | null>(null);
   // dahil / hariç; null = seçilmedi (AI: faturada YEKDEM kalemi yoksa kullanıcı seçer)
   const [yekdemMode, setYekdemMode] = useState<YekdemMode | null>('included');
+  // Sürüm 3 (SEG-2): segment her teklifte açıkça seçilir; varsayılan YOK.
+  const [yekdemSegment, setYekdemSegment] = useState<YekdemSegment | null>(null);
   const [priceRefreshKey, setPriceRefreshKey] = useState(0);   // kayıt sonrası kaynağı yeniden oku
   const [multiplier, setMultiplier] = useState(1.01);
   // SoT-X Seviye 1: profil-ağırlıklı PTF (manuel akış)
@@ -601,6 +609,7 @@ function App() {
     yekdemMode,
     provenance: priceProvenance,
     valuesEditedByUser: priceModified,
+    yekdemSegment,
   });
 
   // Faz 1: elle değiştirilen fiyatı kayıtlı dönem fiyatına döndürür (sunucu doğrulaması
@@ -756,6 +765,7 @@ function App() {
     profile: ptfProfile,
     tariffGroup: manualValues.tariff_group || undefined,
     customerId: selectedCustomerId || undefined,
+    yekdemSegment: yekdemMode === 'included' ? (yekdemSegment ?? undefined) : undefined,
     refreshKey: priceRefreshKey,
     onStart: () => {
       setPriceLoading(true);
@@ -824,6 +834,8 @@ function App() {
     setPersistedOfferId(null);  // yeni analiz → önceki offer artık bu ekranla ilgisiz
     setPriceProvenance(null);   // Faz 1: önceki analizin fiyat kaynağı yeni teklife taşınmaz
     setPersistedCustomerId(undefined);
+    setTaslakTeklif(null);
+    setKesinlesenTeklifId(null);
     setContractWizardOpen(false);
 
     try {
@@ -896,6 +908,8 @@ function App() {
     setYekdemMode('included');
     setPersistedOfferId(null);
     setPersistedCustomerId(undefined);
+    setTaslakTeklif(null);
+    setKesinlesenTeklifId(null);
     setContractWizardOpen(false);
     setManualMode(false);
     setConsumptionInput('');
@@ -916,7 +930,9 @@ function App() {
     });
   };
 
-  const handleDownloadPdf = async () => {
+  // mod 'kesin' (varsayılan): doğrulanmış fiyatla kesin teklif + kesin PDF (değişmedi).
+  // mod 'taslak' (OWNER-KARARI-03): AÇIK kullanıcı işlemiyle TASLAK işaretli kayıt + TASLAK PDF.
+  const handleDownloadPdf = async (mod: 'kesin' | 'taslak' = 'kesin') => {
     if (!liveCalculation) return;
     // S5-R01: yeniden giris korumasi — ayni kullanici aksiyonu IKINCI bir
     // teklif kaydi olusturmamali (butonlar zaten disabled, bu ikinci kat).
@@ -925,8 +941,13 @@ function App() {
     // kayıtla doğrulanmış olmalı; YEKDEM uygulaması açıkça seçilmiş olmalı. TASLAK
     // (provisional/doğrulanmamış) hesapla kayıt ve PDF yapılmaz. Esas kapı sunucudadır
     // (POST /offers → 422 price_unverified); bu erken geri bildirimdir.
-    if (!priceReadiness.ready || ptfPrice === null) {
+    if (ptfPrice === null || (mod === 'kesin' && !priceReadiness.ready)) {
       setError(priceReadiness.reasons.join(' ') || "Teklif PTF değeri zorunludur ve 0'dan büyük olmalıdır.");
+      return;
+    }
+    if (mod === 'taslak' && priceReadiness.modeRequired) {
+      // Taslakta da sessiz varsayılan yok: YEKDEM dahil/hariç açıkça seçilir.
+      setError("Taslak kayıt için de YEKDEM uygulaması ('Dahil' ya da 'Hariç') açıkça seçilmelidir.");
       return;
     }
     const kesinPtf: number = ptfPrice;
@@ -967,6 +988,7 @@ function App() {
       // Teklif bir kez persist edilir; PDF yalnizca donen gercek offer.id ile
       // uretilir/indirilir.
       let uretilecekOfferId: number | null = null;
+      let taslakOlarakKaydedildi = false;
 
       // ── S5-R01A: GERÇEK ham fatura toplamı (KDV dahil) ────────────────
       // Guard'ın ground-truth'u. Manuel modda operatörün "Faturadaki TOPLAM
@@ -1081,11 +1103,24 @@ function App() {
             // Fiyat Doğruluğu Faz 1: YEKDEM uygulamasının açık seçimi. Fiyatı sunucu
             // KENDİSİ doğrular (kullanıcı onayı yok); taslak fiyatta 422 döner.
             yekdem_mode: yekdemMode,
+            // Sürüm 3 (SEG-2): dahilse segmentin açık seçimi; sunucu onaylı değeri denetler.
+            yekdem_segment: yekdemMode === 'included' ? yekdemSegment : null,
+            // OWNER-KARARI-03: yalnız "Taslak kaydet" işleminde true (sunucu kesin kapıyı yine uygular).
+            fiyat_taslak: mod === 'taslak',
           }
         );
         uretilecekOfferId = persisted.id;
-        setPersistedOfferId(persisted.id);
-        setPersistedCustomerId(customerIdForOffer);
+        setKesinlesenTeklifId(null);
+        if (persisted.fiyat_durumu === 'taslak') {
+          // Taslak kesin teklif gibi davranmaz: sözleşme akışı açılmaz, kesin PDF üretilmez.
+          taslakOlarakKaydedildi = true;
+          setTaslakTeklif({ id: persisted.id, blockingReasons: persisted.blocking_reasons ?? [],
+            customerId: customerIdForOffer });
+        } else {
+          setTaslakTeklif(null);
+          setPersistedOfferId(persisted.id);
+          setPersistedCustomerId(customerIdForOffer);
+        }
       } finally {
         setOfferPersisting(false);
       }
@@ -1099,6 +1134,12 @@ function App() {
       // Hata halinde `/generate-pdf-simple` FALLBACK'i YAPILMAZ.
       if (uretilecekOfferId === null) {
         throw new Error('Teklif kaydedilemedi; PDF uretilmedi.');
+      }
+      if (taslakOlarakKaydedildi) {
+        // Yalnız TASLAK damgalı, saklanmayan PDF (kesin PDF zinciri çağrılmaz).
+        await downloadDraftOfferPdf(uretilecekOfferId);
+        setMismatchInfo(null);
+        return;
       }
       // Backend idempotenttir: gecerli bir PDF zaten varsa yeniden uretmez.
       await generateOfferPdf(uretilecekOfferId);
@@ -1413,6 +1454,9 @@ function App() {
                             disabled={yekdemUygulanmaz}
                           />
                           <YekdemModeSelector value={yekdemMode} onChange={setYekdemMode} />
+                          {yekdemMode === 'included' && (
+                            <YekdemSegmentSelector value={yekdemSegment} onChange={setYekdemSegment} />
+                          )}
                         </>
                       );
                     })()}
@@ -2977,7 +3021,7 @@ function App() {
                       Detaylı Karşılaştırma
                     </h3>
                     <button
-                      onClick={handleDownloadPdf}
+                      onClick={() => handleDownloadPdf()}
                       disabled={pdfLoading || !priceReadiness.ready || (!!mismatchInfo?.requires_operator_confirmation && !operatorConfirmed)}
                       title={priceReadiness.ready ? undefined : `TASLAK — ${priceReadiness.reasons.join(' ')}`}
                       className="btn-primary flex items-center gap-1 px-3 py-1 text-xs"
@@ -3119,10 +3163,46 @@ function App() {
                   </div>
                 )}
 
+                {taslakTeklif && (
+                  <TaslakTeklifPaneli
+                    offerId={taslakTeklif.id}
+                    blockingReasons={taslakTeklif.blockingReasons}
+                    yekdemSegment={yekdemMode === 'included' ? yekdemSegment : null}
+                    onKesinlesti={(id) => {
+                      setPersistedOfferId(id);
+                      setPersistedCustomerId(taslakTeklif.customerId);
+                      setTaslakTeklif(null);
+                      setKesinlesenTeklifId(id);
+                      // Ekrandaki dönem fiyatı onaylı revizyonla yeniden okunur (manuel akış).
+                      if (manualMode) setPriceRefreshKey((k) => k + 1);
+                    }}
+                  />
+                )}
+
+                {kesinlesenTeklifId !== null && (
+                  <div role="status" className="mb-2 flex items-center justify-between gap-2 rounded border border-green-300 bg-green-50 p-2 text-xs text-green-900">
+                    <span>Teklif #{kesinlesenTeklifId} fiyatı yeniden doğrulanarak kesinleşti.</span>
+                    <button
+                      type="button"
+                      className="rounded bg-green-700 px-2 py-1 text-white"
+                      onClick={async () => {
+                        try {
+                          await generateOfferPdf(kesinlesenTeklifId);
+                          await downloadOfferPdf(kesinlesenTeklifId);
+                        } catch (err: any) {
+                          setError(err?.message || 'Kesin PDF üretilemedi.');
+                        }
+                      }}
+                    >
+                      Kesin PDF İndir
+                    </button>
+                  </div>
+                )}
+
                 {/* Aksiyon Butonları */}
                 <div className="flex gap-2">
                   <button
-                    onClick={handleDownloadPdf}
+                    onClick={() => handleDownloadPdf()}
                     disabled={pdfLoading || offerPersisting || !priceReadiness.ready || (!!mismatchInfo?.requires_operator_confirmation && !operatorConfirmed)}
                     title={priceReadiness.ready ? undefined : `TASLAK — ${priceReadiness.reasons.join(' ')}`}
                     className="btn-primary flex-1 flex items-center justify-center gap-2 py-2 text-sm"
@@ -3139,6 +3219,18 @@ function App() {
                       </>
                     )}
                   </button>
+
+                  {!priceReadiness.ready && (
+                    <button
+                      onClick={() => handleDownloadPdf('taslak')}
+                      disabled={pdfLoading || offerPersisting || ptfPrice === null || priceReadiness.modeRequired || (!!mismatchInfo?.requires_operator_confirmation && !operatorConfirmed)}
+                      title="Teklifi açıkça TASLAK olarak kaydeder ve TASLAK damgalı PDF indirir; kesin teklif ya da sözleşme oluşturmaz."
+                      className="btn-secondary flex-1 flex items-center justify-center gap-2 py-2 text-sm border-amber-400 text-amber-900"
+                    >
+                      <FileText className="w-5 h-5" />
+                      Taslak Kaydet + Taslak PDF
+                    </button>
+                  )}
 
                   <button
                     onClick={() => setContractWizardOpen(true)}

@@ -33,6 +33,8 @@ BASE = {
     "savings_ratio": "0.2",
 
     "invoice_period": "2026-05",
+    # SEG-2: YEKDEM dahil teklifte segment açıkça seçilir.
+    "yekdem_segment": "st",
 }
 
 @pytest.fixture(autouse=True)
@@ -51,11 +53,10 @@ def _kesin_fiyat_db():
     )
     Base.metadata.create_all(engine)
     Oturum = sessionmaker(bind=engine)
+    # Fiyat kimliği (sürüm 3): dönemin yetkili onaylı aritmetik PTF'i + 'st' segment YEKDEM onayı.
+    from tests.fiyat_onay_yardimci import onayli_fiyat
     with Oturum() as s:
-        s.add(MarketReferencePrice(period="2026-05", price_type="PTF", ptf_tl_per_mwh=590.9,
-                                   yekdem_tl_per_mwh=563.78, source="epias_manual",
-                                   status="final", is_locked=0))
-        s.commit()
+        onayli_fiyat(s, "2026-05", 590.9, 563.78, segment="st")
 
     def _oturum():
         s = Oturum()

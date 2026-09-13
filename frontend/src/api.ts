@@ -236,6 +236,9 @@ export interface CreateOfferResponse {
   savings_ratio: number;
   status: string;
   created_at: string;
+  // Sürüm 3 (OWNER-KARARI-03): 'taslak' yalnız açık fiyat_taslak isteğiyle kaydedilir.
+  fiyat_durumu?: 'kesin' | 'taslak';
+  blocking_reasons?: string[];
 }
 
 // Offer.customer_id doldurmak için — bkz. contracts modülünün document/conflict
@@ -278,7 +281,12 @@ export async function createOffer(
     // Fiyat Doğruluğu Faz 1: YEKDEM uygulamasının AÇIK seçimi (dahil / hariç).
     // Fiyat doğrulaması YALNIZ sunucudadır (kullanıcı onayı bayrağı YOK). Eksik,
     // doğrulanmamış ya da kesinleşmemiş (provisional) fiyatta 422 price_unverified.
-    yekdem_mode?: YekdemMode | null }
+    yekdem_mode?: YekdemMode | null;
+    // Sürüm 3 (SEG-2): YEKDEM dahil teklifte segmentin AÇIK seçimi (st | gts).
+    yekdem_segment?: 'st' | 'gts' | null;
+    // OWNER-KARARI-03: doğrulanmamış fiyatı AÇIKÇA işaretli TASLAK olarak kaydet.
+    // Yalnız kullanıcının "Taslak kaydet" işlemiyle true gönderilir; varsayılan kesin yol.
+    fiyat_taslak?: boolean }
 ): Promise<CreateOfferResponse> {
   try {
     const response = await api.post(
@@ -294,6 +302,8 @@ export async function createOffer(
             : {}),
           // Gönderilmezse sunucu 'included' kabul eder (en katı yol; sessiz "hariç" YOK).
           ...(guard.yekdem_mode ? { yekdem_mode: guard.yekdem_mode } : {}),
+          ...(guard.yekdem_segment ? { yekdem_segment: guard.yekdem_segment } : {}),
+          ...(guard.fiyat_taslak ? { fiyat_taslak: true } : {}),
         },
       }
     );
@@ -511,6 +521,79 @@ export async function generateOfferPdf(offerId: number): Promise<OfferPdfGenerat
  * Çağrıldığı yerler:
  * - CrmCore/OffersScreen.tsx → Teklif detayı "PDF İndir" aksiyonu [S5-R01]
  */
+/**
+ * Fiyatı TASLAK teklif için "TASLAK" damgalı PDF'i üretir ve indirir (sunucuda saklanmaz).
+ *
+ * Sunucu yalnız sürüm-3 taslak snapshot'ında üretir; yanıtın X-Fiyat-Durumu başlığı
+ * 'taslak' değilse dosya kaydedilmez (kesin belgeyle karışmaz).
+ *
+ * Çağrıldığı yerler:
+ * - App.tsx → handleDownloadPdf('taslak') ve TaslakTeklifPaneli "Taslak PDF'i yeniden indir"
+ */
+export async function downloadDraftOfferPdf(offerId: number): Promise<void> {
+  const response = await api.post(`/offers/${offerId}/generate-draft-pdf`, null, { responseType: 'blob' });
+  const durum = (response.headers as Record<string, string> | undefined)?.['x-fiyat-durumu'];
+  if (durum !== 'taslak') {
+    throw new Error('Sunucu taslak PDF işaretini döndürmedi; dosya kaydedilmedi.');
+  }
+  const blobUrl = URL.createObjectURL(response.data as Blob);
+  try {
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.download = `teklif_${offerId}_TASLAK.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } finally {
+    URL.revokeObjectURL(blobUrl);
+  }
+}
+
+/** Taslak teklifin kesinleştirme reddi (sunucu nedenleriyle). */
+export class FiyatKesinlestirmeHatasi extends Error {
+  constructor(
+    public readonly kod: string,
+    message: string,
+    public readonly blockingReasons: string[] = [],
+  ) {
+    super(message);
+    this.name = 'FiyatKesinlestirmeHatasi';
+  }
+}
+
+/**
+ * Kaydedilmiş TASLAK teklifin fiyatını AÇIK kullanıcı işlemiyle kesinleştirir.
+ * Sunucu bugünkü onaylı revizyonlarla YENİDEN doğrular; geçmezse teklif değişmez.
+ *
+ * Çağrıldığı yerler:
+ * - pricing/TaslakTeklifPaneli.tsx → "Fiyatı yeniden doğrula ve kesinleştir"
+ */
+export async function finalizeOfferPrice(
+  offerId: number,
+  secim: { yekdemSegment?: 'st' | 'gts' | null; kesinlestiren?: string },
+): Promise<{ offer_id: number; fiyat_durumu: 'kesin' }> {
+  try {
+    const response = await api.post(`/offers/${offerId}/finalize-price`, null, {
+      params: {
+        ...(secim.yekdemSegment ? { yekdem_segment: secim.yekdemSegment } : {}),
+        ...(secim.kesinlestiren?.trim() ? { kesinlestiren: secim.kesinlestiren.trim() } : {}),
+      },
+    });
+    return response.data;
+  } catch (err: any) {
+    const govde = err?.response?.data;
+    if (govde?.error?.code) {
+      throw new FiyatKesinlestirmeHatasi(govde.error.code, govde.error.message || 'Fiyat doğrulanmadı.',
+        govde.error.blocking_reasons || []);
+    }
+    const detay = govde?.detail;
+    if (detay && typeof detay === 'object' && detay.error) {
+      throw new FiyatKesinlestirmeHatasi(detay.error, detay.message || 'Teklif kesinleştirilemedi.');
+    }
+    throw err;
+  }
+}
+
 export async function downloadOfferPdf(offerId: number): Promise<void> {
   const fileName = `teklif_${offerId}.pdf`;
 
@@ -1088,7 +1171,10 @@ export interface EpiasPricesResponse {
   is_locked?: boolean;
   // Fiyat Doğruluğu Faz 1: YEKDEM null = bilinmiyor; 0 = kayıtlı sıfır (eksik veriden
   // ayırt edilemediği için kesin teklifte kullanılamaz). record_status: final | provisional.
-  yekdem_status?: 'known' | 'zero_unverified' | 'invalid' | 'missing';
+  yekdem_status?: 'known' | 'zero_unverified' | 'invalid' | 'missing' | 'approved' | 'approval_missing';
+  // Sürüm 3: onaylı aylık aritmetik PTF etiketi ve seçilen segment
+  ptf_yontem_etiketi?: string | null;
+  yekdem_segment?: 'st' | 'gts' | null;
   record_status?: string | null;
   yekdem_source?: string | null;
   // SoT-X Seviye 1: profil-ağırlıklı PTF (additive — eski alanlar korunur)
