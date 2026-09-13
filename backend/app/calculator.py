@@ -178,6 +178,7 @@ def get_ptf_yekdem_for_period(
 
     Öncelik (kilitli):
     1. override (use_reference_prices=False + weighted_ptf>0) → hourly DEVREYE GİRMEZ
+    1b. geçerli yetkili onaylı aylık aritmetik PTF (price_approval) → tek kaynak
     2. hourly_market_prices profil-ağırlıklı PTF (tariff_group → default profil)
     3. market_reference_prices skaler PTF (>0) + UYARI (saatlik yok)
     4. yok / PTF<=0 → fail-closed (not_found). Silent default YOK.
@@ -220,6 +221,14 @@ def get_ptf_yekdem_for_period(
     # YEKDEM (aylık skaler) — her dalda aynı kaynak; kayıt yoksa None (bilinmiyor).
     ref = get_market_prices(db, period)
     monthly_yekdem = resolve_period_yekdem(db, period).value
+
+    # PRIORITY 1b: YETKİLİ ONAYLI aylık aritmetik PTF (OWNER-KARARI-01) — geçerli onay
+    #   varsa hesap YALNIZ onu kullanır; onay yöntem/değeri saatlik/profil dalına
+    #   kaydırmaz. price_provenance.effective_ptf_candidates ve GET /api/epias/prices ile parite.
+    from .price_approval import PTF_ONAYLI_ADAY_KAYNAGI, gecerli_ptf_onayi
+    _onay = gecerli_ptf_onayi(db, period)
+    if _onay is not None:
+        return (_onay.value, monthly_yekdem, PTF_ONAYLI_ADAY_KAYNAGI, None, None)
 
     # PRIORITY 2: MANUEL KAYIT (açık override) — hourly/C2'den ÖNCE.
     #   Kullanıcı PTF'i elle girip kaydettiyse (save_period_prices → source="manual_override")

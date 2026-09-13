@@ -21,6 +21,8 @@ export interface PeriodPriceFetchOptions {
   profile: string;
   tariffGroup?: string;
   customerId?: string;
+  /** Sürüm 3: YEKDEM segmenti (st | gts); verilirse YEKDEM o segmentin onaylı revizyonundan döner */
+  yekdemSegment?: string;
   /** Aynı dönemi yeniden çekmek için (ör. fiyat kaydı sonrası) */
   refreshKey?: number;
   onStart: () => void;
@@ -37,10 +39,12 @@ export function buildPeriodPricesUrl(
   profile: string,
   tariffGroup?: string,
   customerId?: string,
+  yekdemSegment?: string,
 ): string {
   const qs = new URLSearchParams({ profile });
   if (tariffGroup) qs.append('tariff_group', tariffGroup);
   if (customerId) qs.append('customer_id', customerId);
+  if (yekdemSegment) qs.append('yekdem_segment', yekdemSegment);
   return `${API_BASE}/api/epias/prices/${encodeURIComponent(period)}?${qs.toString()}`;
 }
 
@@ -51,7 +55,7 @@ function iptalMi(err: unknown): boolean {
 export function usePeriodPriceFetch(options: PeriodPriceFetchOptions): void {
   const guncel = useRef(options);
   guncel.current = options;
-  const { enabled, period, profile, tariffGroup, customerId, refreshKey } = options;
+  const { enabled, period, profile, tariffGroup, customerId, yekdemSegment, refreshKey } = options;
 
   useEffect(() => {
     if (!enabled || !period) return;
@@ -69,7 +73,7 @@ export function usePeriodPriceFetch(options: PeriodPriceFetchOptions): void {
     const doFetch = guncel.current.fetchImpl ?? fetch;
     (async () => {
       try {
-        const res = await doFetch(buildPeriodPricesUrl(period, profile, tariffGroup, customerId), {
+        const res = await doFetch(buildPeriodPricesUrl(period, profile, tariffGroup, customerId, yekdemSegment), {
           signal: controller.signal,
         });
         if (!res.ok) {
@@ -93,5 +97,5 @@ export function usePeriodPriceFetch(options: PeriodPriceFetchOptions): void {
       controller.abort();
       bitir();
     };
-  }, [enabled, period, profile, tariffGroup, customerId, refreshKey]);
+  }, [enabled, period, profile, tariffGroup, customerId, yekdemSegment, refreshKey]);
 }

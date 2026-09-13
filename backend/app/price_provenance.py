@@ -5,7 +5,22 @@ Eksik ya da doğrulanmamış PTF/YEKDEM ile teklif KESİNLEŞMEZ (kayıt/PDF). E
 fiyat sabit bir değerle ya da 0 ile SESSİZCE doldurulmaz. Fiyatın dönemi,
 kaynağı ve kayıt durumu teklif snapshot'ına yazılır.
 
-Owner teyidi (provenance sürüm 2):
+Fiyat kimliği ve yetkili onay (provenance sürüm 3; OWNER-KARARI-01/02, 2026-09-13):
+- Kesin teklifte PTF, kaynağı resmî veriden doğrulanmış ve yetkili tarafından
+  onaylanmış AYLIK ARİTMETİK PTF'dir (price_approval.gecerli_ptf_onayi). Geçerli onay
+  varsa etkin aday YALNIZ odur (saatlik/profil dalına kaymaz). Onay kimliği olmayan
+  aday (manual_override, saatlik, profil, referans skaler) yalnız TASLAK hesaptır
+  (ptf_identity_missing). Saatlik tüketimin yokluğu tek başına engel değildir.
+- YEKDEM 'dahil' seçildiğinde segment (st | gts) teklif başına AÇIKÇA seçilir ve
+  snapshot'ta saklanır; değer (dönem, segment) için güncel onay revizyonuyla eşleşmelidir.
+  Segment yoksa yekdem_segment_missing, onay yoksa yekdem_approval_missing (taslak).
+  ST ve GTŞ-K1 değerlerinin eşitliği otomatik seçim gerekçesi değildir. Eksik YEKDEM
+  seçimi kendiliğinden 'hariç'e ÇEVİRMEZ.
+- Snapshot kullanılan onay revizyonlarını taşır (ptf.approval, yekdem.approval).
+  Kaydedilmiş sürüm 2 snapshot'ları olduğu gibi okunur (SNAPSHOT_OKUNABILIR_SURUMLER).
+- Sözleşmedeki faturalama kuralı bu modülün kapsamı değildir; değiştirilmedi.
+
+Owner teyidi (provenance sürüm 2, geçmiş):
 - Doğrulama YALNIZ SUNUCUDADIR. İstemcinin "doğrulandı/onaylandı" beyanı kapıyı
   AÇMAZ; sürüm 1'deki kullanıcı onayı yolu kaldırıldı.
 - Kesin teklif için fiyat, dönemin GÜVENİLİR kaynaklı ve KESİNLEŞMİŞ
@@ -71,8 +86,12 @@ from sqlalchemy.orm import Session
 logger = logging.getLogger(__name__)
 
 # Sürüm 2: kullanıcı onayıyla doğrulama kaldırıldı, status='final' şartı eklendi.
+# Sürüm 3: PTF onay kimliği + YEKDEM segment onayı zorunlu; snapshot revizyonları taşır.
 # Sürüm 1 snapshot'ları (kullanıcı onaylı olabilir) PDF kapısında doğrulanmış SAYILMAZ.
-PROVENANCE_VERSION = 2
+PROVENANCE_VERSION = 3
+# Kaydedilmiş snapshot'ların doğrulanmış OKUNABİLDİĞİ sürümler: eski (2) teklifler
+# değişmeden okunur ve yeniden hesaplanmaz; YENİ snapshot her zaman PROVENANCE_VERSION.
+SNAPSHOT_OKUNABILIR_SURUMLER = frozenset({2, 3})
 # Teklif değeri ile DB'den türetilen değerin "aynı" sayılacağı tolerans (TL/MWh).
 PRICE_TOLERANCE_TL_PER_MWH = 0.01
 # Hariç seçiminde teklif hesabındaki YEKDEM tutarının "sıfır" sayılacağı tolerans (TL).
@@ -105,6 +124,10 @@ REASON_YEKDEM_PROVISIONAL = "yekdem_provisional"
 REASON_YEKDEM_MODE_REQUIRED = "yekdem_mode_required"
 REASON_YEKDEM_MODE_INVALID = "yekdem_mode_invalid"
 REASON_YEKDEM_MODE_CONFLICT = "yekdem_mode_conflict"
+REASON_PTF_IDENTITY_MISSING = "ptf_identity_missing"
+REASON_YEKDEM_SEGMENT_MISSING = "yekdem_segment_missing"
+REASON_YEKDEM_SEGMENT_INVALID = "yekdem_segment_invalid"
+REASON_YEKDEM_APPROVAL_MISSING = "yekdem_approval_missing"
 
 PROVISIONAL_REASONS = frozenset({REASON_PTF_PROVISIONAL, REASON_YEKDEM_PROVISIONAL})
 
@@ -149,6 +172,21 @@ REASON_MESSAGES = {
     REASON_YEKDEM_MODE_CONFLICT: (
         "YEKDEM 'hariç' seçildi, ancak teklif hesabında YEKDEM tutarı var. "
         "Seçim ile hesap çelişiyor."
+    ),
+    REASON_PTF_IDENTITY_MISSING: (
+        "PTF için geçerli yetkili onay yok. Kesin teklifte yalnız kaynağı resmî veriden "
+        "doğrulanmış ve yetkili tarafından onaylanmış aylık aritmetik PTF kullanılır; "
+        "onaydan sonra kayıt değiştiyse onay geçersizdir. Bu hesap yalnız TASLAKTIR."
+    ),
+    REASON_YEKDEM_SEGMENT_MISSING: (
+        "YEKDEM dahil teklifte segment (Serbest Tüketici / GTŞ-K1) açıkça seçilmedi. "
+        "İki segmentin değeri eşit olsa bile seçim zorunludur."
+    ),
+    REASON_YEKDEM_SEGMENT_INVALID: "Geçersiz YEKDEM segmenti: 'st' ya da 'gts' olmalı.",
+    REASON_YEKDEM_APPROVAL_MISSING: (
+        "Dönemin seçilen segmentteki YEKDEM değeri henüz yayımlanıp onaylanmadı. "
+        "Teklif TASLAK kalır; YEKDEM onaylandığında açık kesinleştirme işlemiyle "
+        "kesinleştirilebilir."
     ),
 }
 
@@ -199,6 +237,8 @@ class PriceCandidate:
     trusted: bool
     epias: bool
     final: bool  # kayıt kesinleşmiş mi (saatlik EPİAŞ verisi her zaman kesin)
+    # Yetkili onay kimliği (yalnız geçerli PTF onayından gelen adayda dolu).
+    approval: Optional[dict] = None
 
 
 @dataclass(frozen=True)
@@ -357,7 +397,8 @@ def effective_ptf_candidates(
     """Bu dönem için sistemin seçebileceği ETKİN PTF değerleri.
 
     Öncelik zinciri calculator.get_ptf_yekdem_for_period ve GET
-    /api/epias/prices ile birebir aynıdır: manual_override skaler > gerçek
+    /api/epias/prices ile birebir aynıdır: GEÇERLİ YETKİLİ ONAYLI aylık aritmetik
+    PTF (varsa TEK aday; yöntem/değer onayla kaymaz) > manual_override skaler > gerçek
     tüketim ağırlıklı (bayrak + firma) > saatlik profil ağırlıklı (her profil
     bir aday) > aylık referans skaler. Zincir burada yalnız OKUNUR.
 
@@ -365,6 +406,12 @@ def effective_ptf_candidates(
     - price_provenance.build_price_provenance() → teklif kesinleştirme kapısı
     """
     from . import market_prices as mp
+    from .price_approval import PTF_ONAYLI_ADAY_KAYNAGI, gecerli_ptf_onayi, ptf_onay_ozeti
+
+    onay = gecerli_ptf_onayi(db, period)
+    if onay is not None:
+        return [PriceCandidate(onay.value, PTF_ONAYLI_ADAY_KAYNAGI, "epias_api", True, True, True,
+                               approval=ptf_onay_ozeti(onay))]
 
     record = _reference_record(db, period)
     ref_ptf = _finite(record.ptf_tl_per_mwh) if record is not None else None
@@ -412,6 +459,7 @@ def build_price_provenance(
     mode_basis: str = "user",
     customer_id: Optional[str] = None,
     offer_yekdem_tl: Any = None,
+    yekdem_segment: Any = None,
 ) -> dict[str, Any]:
     """Teklif fiyatının kaynağı ve kesinleştirme kararı (JSON'a yazılabilir dict).
 
@@ -428,30 +476,40 @@ def build_price_provenance(
             YEKDEM kalemi var) ya da 'default' (uç varsayılanı: included).
         offer_yekdem_tl: teklif hesabındaki YEKDEM tutarı. Hariç seçiminde 0
             değilse seçim ile hesap çelişir (yekdem_mode_conflict).
+        yekdem_segment: 'st' | 'gts'. Dahil seçiminde zorunlu ve kullanıcının açık
+            seçimidir; varsayılan ya da eşitlikten türetilmiş segment YOKTUR.
 
     Çağrıldığı yerler: modül başlığındaki liste. GET fiyat durumu ve AI hesabı
     doğrudan çağırır; POST /offers ve doğrudan belge (PDF/HTML) uçları
     offer_price_gate() üzerinden çağırır.
     """
+    from .price_approval import (
+        PTF_YONTEM_ETIKETI, gecerli_yekdem_onayi, segment_coz, yekdem_onay_ozeti,
+    )
+
     p = normalize_period(period)
     ptf_value = _finite(ptf)
     mode, mode_valid = parse_yekdem_mode(yekdem_mode)
+    segment, segment_valid = segment_coz(yekdem_segment)
     included = mode == YEKDEM_MODE_INCLUDED
     yekdem_value = _finite(yekdem) if included else None
 
     lookup = "ok"
     candidates: list[PriceCandidate] = []
     period_yekdem = _YEKDEM_MISSING
+    yekdem_onayi = None
     if db is None or p is None:
         lookup = "unavailable"
     else:
         try:
             candidates = effective_ptf_candidates(db, p, customer_id)
             period_yekdem = resolve_period_yekdem(db, p)
+            if segment is not None:
+                yekdem_onayi = gecerli_yekdem_onayi(db, p, segment)
         except SQLAlchemyError as exc:
             logger.warning("Fiyat kaynağı sorgulanamadı (dönem=%s): %s", p, type(exc).__name__)
             lookup = "error"
-            candidates, period_yekdem = [], _YEKDEM_MISSING
+            candidates, period_yekdem, yekdem_onayi = [], _YEKDEM_MISSING, None
 
     reasons: list[str] = []
 
@@ -474,12 +532,16 @@ def build_price_provenance(
         else:
             ptf_block.update(status="matched", source=match.source,
                              source_detail=match.source_detail, trusted=match.trusted,
-                             final=match.final, system_verified=match.trusted and match.final,
-                             epias=match.epias)
+                             final=match.final,
+                             system_verified=bool(match.trusted and match.final and match.approval),
+                             epias=match.epias, approval=match.approval,
+                             yontem_etiketi=(PTF_YONTEM_ETIKETI if match.approval else None))
             if not match.trusted:
                 reasons.append(REASON_PTF_UNVERIFIED)
             elif not match.final:
                 reasons.append(REASON_PTF_PROVISIONAL)
+            elif match.approval is None:
+                reasons.append(REASON_PTF_IDENTITY_MISSING)
 
     # ── YEKDEM ─────────────────────────────────────────────────────────────
     # Dönemin kendi YEKDEM durumu seçimden BAĞIMSIZ döner: istemci "dahil"e
@@ -489,6 +551,9 @@ def build_price_provenance(
     yekdem_block: dict[str, Any] = {
         "mode": mode,
         "mode_basis": mode_basis if mode is not None else None,
+        "segment": segment,
+        "segment_basis": "user" if segment is not None else None,
+        "approval": yekdem_onay_ozeti(yekdem_onayi) if yekdem_onayi is not None else None,
         "period_status": period_yekdem.status,
         "period_value": period_yekdem.value,
         "period_record_status": period_yekdem.record_status,
@@ -508,27 +573,27 @@ def build_price_provenance(
         teklif_yekdem = _finite(offer_yekdem_tl)
         if teklif_yekdem is not None and abs(teklif_yekdem) > AMOUNT_TOLERANCE_TL:
             reasons.append(REASON_YEKDEM_MODE_CONFLICT)
+    elif not segment_valid:
+        yekdem_block.update(_dogrulanmamis(value=yekdem_value, status="segment_invalid"))
+        reasons.append(REASON_YEKDEM_SEGMENT_INVALID)
     elif yekdem_value is None:
         yekdem_block.update(_dogrulanmamis(value=None, status="missing"))
         reasons.append(REASON_YEKDEM_MISSING)
     elif yekdem_value < 0:
         yekdem_block.update(_dogrulanmamis(value=yekdem_value, status="invalid"))
         reasons.append(REASON_YEKDEM_UNVERIFIED)
-    elif (period_yekdem.status == "known" and period_yekdem.value is not None
-            and abs(period_yekdem.value - yekdem_value) <= PRICE_TOLERANCE_TL_PER_MWH):
-        # Gerçek 0 da buradan geçer: dönem 'known' 0 yalnız açık giriş kaydıyla oluşur.
-        yekdem_block.update(value=yekdem_value, status="matched", source=period_yekdem.source,
-                            trusted=period_yekdem.trusted, final=period_yekdem.final,
-                            system_verified=period_verified, epias=period_yekdem.epias)
-        if not period_yekdem.trusted:
-            reasons.append(REASON_YEKDEM_UNVERIFIED)
-        elif not period_yekdem.final:
-            reasons.append(REASON_YEKDEM_PROVISIONAL)
-    elif yekdem_value == 0.0 and period_yekdem.status == "zero_unverified":
-        # Kayıtlı 0'ın açık ve kesin giriş kaydı yok: değer 0 olarak taşınır, otomatik
-        # gerçek ya da eksik sayılmaz, kesinleşmez. Hariç'e çevrilmez.
-        yekdem_block.update(_dogrulanmamis(value=0.0, status="zero_unverified"))
-        reasons.append(REASON_YEKDEM_ZERO_UNVERIFIED)
+    elif segment is None:
+        # Dahil + değer var ama segment seçilmedi: eşitlikten segment TÜRETİLMEZ.
+        yekdem_block.update(_dogrulanmamis(value=yekdem_value, status="segment_missing"))
+        reasons.append(REASON_YEKDEM_SEGMENT_MISSING)
+    elif yekdem_onayi is None:
+        # Seçilen segmentte yayımlanmış + onaylı revizyon yok -> taslak (hariç'e ÇEVRİLMEZ).
+        yekdem_block.update(_dogrulanmamis(value=yekdem_value, status="approval_missing"))
+        reasons.append(REASON_YEKDEM_APPROVAL_MISSING)
+    elif abs(yekdem_onayi.value - yekdem_value) <= PRICE_TOLERANCE_TL_PER_MWH:
+        yekdem_block.update(value=yekdem_value, status="matched",
+                            source=f"approval:{segment}:{yekdem_onayi.version}",
+                            trusted=True, final=True, system_verified=True, epias=True)
     else:
         yekdem_block.update(_dogrulanmamis(value=yekdem_value, status="user_entered"))
         yekdem_block["source"] = "user_entered"
@@ -562,6 +627,7 @@ def offer_price_gate(
     yekdem_mode: Optional[str],
     customer_id: Optional[str] = None,
     offer_yekdem_tl: Any = None,
+    yekdem_segment: Any = None,
 ) -> dict[str, Any]:
     """Teklif kaydı ve doğrudan belge (PDF/HTML) uçlarının ORTAK fiyat kapısı.
 
@@ -572,6 +638,7 @@ def offer_price_gate(
 
     Çağrıldığı yerler:
     - main.create_offer() → POST /offers
+    - main.finalize_offer_price() → POST /offers/{id}/finalize-price (açık kesinleştirme)
     - main.generate_pdf_direct() → POST /generate-pdf-direct
     - main.generate_pdf_simple() → POST /generate-pdf-simple
     - main.generate_html_direct() → POST /generate-html-direct
@@ -585,6 +652,7 @@ def offer_price_gate(
         mode_basis="user" if yekdem_mode is not None else "default",
         customer_id=customer_id,
         offer_yekdem_tl=offer_yekdem_tl,
+        yekdem_segment=yekdem_segment,
     )
 
 
@@ -633,6 +701,25 @@ def snapshot_price_verified(calculation_result: Any) -> bool:
         return False
     prov = calculation_result.get("meta_price_provenance")
     return (isinstance(prov, dict)
-            and prov.get("version") == PROVENANCE_VERSION
+            and prov.get("version") in SNAPSHOT_OKUNABILIR_SURUMLER
             and prov.get("verified") is True
             and prov.get("verified_by") == "system")
+
+
+def snapshot_price_draft(calculation_result: Any) -> bool:
+    """Snapshot sunucuda üretilmiş, doğrulanmamış bir TASLAK fiyat mı (sürüm 3)?
+
+    Yalnız bu durumda açıkça işaretlenmiş taslak PDF üretilebilir; provenance'ı
+    olmayan (Faz 1 öncesi) ya da sürüm 1/2 kayıtlar taslak PDF'e açılmaz.
+
+    Çağrıldığı yerler:
+    - main.generate_draft_pdf_for_offer() → POST /offers/{id}/generate-draft-pdf
+    - main.finalize_offer_price() → POST /offers/{id}/finalize-price
+    """
+    if not isinstance(calculation_result, dict):
+        return False
+    prov = calculation_result.get("meta_price_provenance")
+    return (isinstance(prov, dict)
+            and prov.get("version") == PROVENANCE_VERSION
+            and prov.get("verified") is False
+            and prov.get("draft_only") is True)

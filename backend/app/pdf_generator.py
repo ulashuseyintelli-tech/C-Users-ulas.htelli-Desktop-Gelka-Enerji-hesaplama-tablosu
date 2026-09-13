@@ -133,6 +133,8 @@ def fiyat_kaynagi_bayraklari(calculation: CalculationResult) -> dict:
     prov = getattr(calculation, "meta_price_provenance", None) or {}
     ptf = prov.get("ptf") or {}
     yekdem = prov.get("yekdem") or {}
+    surum3 = prov.get("version") == 3
+    kaynak = str(ptf.get("source") or "")
     return {
         "epias_basis": prov.get("verified") is True and prov.get("epias_basis") is True,
         "yekdem_excluded": yekdem.get("mode") == "excluded",
@@ -141,7 +143,31 @@ def fiyat_kaynagi_bayraklari(calculation: CalculationResult) -> dict:
             or getattr(calculation, "meta_pricing_source", "") == "reference_scalar"
             or bool(getattr(calculation, "meta_ptf_source_warning", None))
         ),
+        # Sürüm 3: etiket GERÇEK hesap yöntemini söyler; eski snapshot'ların metni değişmez.
+        "ptf_etiketi": ptf_yontem_etiketi(kaynak) if surum3 else "Ağırlıklı PTF",
+        "ptf_aritmetik_onayli": bool(surum3 and ptf.get("approval")
+                                     and kaynak == "monthly_arithmetic:mcp_avg"),
+        "fiyat_taslak": bool(surum3 and prov.get("verified") is False and prov.get("draft_only") is True),
+        "yekdem_segment_etiketi": ({"st": "Serbest Tüketici", "gts": "GTŞ-K1"}.get(yekdem.get("segment"))
+                                   if surum3 else None),
     }
+
+
+def ptf_yontem_etiketi(kaynak: str) -> str:
+    """Snapshot'taki PTF kaynağından belgeye yazılan yöntem etiketi (sürüm 3).
+
+    Aritmetik değere "Ağırlıklı PTF" denmez; kaynağı bilinmeyen değer yalnız "PTF"dir.
+
+    Çağrıldığı yerler:
+    - pdf_generator.fiyat_kaynagi_bayraklari()
+    """
+    if kaynak == "monthly_arithmetic:mcp_avg":
+        return "Aylık aritmetik PTF (EPİAŞ)"
+    if kaynak.startswith("hourly_consumption:"):
+        return "Tüketim ağırlıklı PTF"
+    if kaynak.startswith("hourly_weighted:"):
+        return "Profil ağırlıklı PTF"
+    return "PTF"
 
 
 def enerji_bedeli_paragraflari(bayraklar: dict, agreement_multiplier: float) -> list[str]:
@@ -155,7 +181,10 @@ def enerji_bedeli_paragraflari(bayraklar: dict, agreement_multiplier: float) -> 
     """
     haric = bool(bayraklar.get("yekdem_excluded"))
     epias = bool(bayraklar.get("epias_basis"))
-    if epias:
+    if epias and bayraklar.get("ptf_aritmetik_onayli"):
+        giris = ("Enerji bedeli, EPİAŞ'ın ilgili dönem için yayımladığı aylık aritmetik ortalama PTF "
+                 "esas alınarak oluşturulmaktadır (yetkili onaylı değer). ")
+    elif epias:
         giris = ("Enerji bedeli, EPİAŞ verileri esas alınarak oluşturulmaktadır. İlgili fatura dönemi için "
                  "EPİAŞ saatlik PTF ile abonenin tüketim değerleri kullanılarak Ağırlıklı PTF hesaplanır. ")
     elif haric:
@@ -171,7 +200,7 @@ def enerji_bedeli_paragraflari(bayraklar: dict, agreement_multiplier: float) -> 
     son = (f"anlaşma fiyat katsayısı (<b>{agreement_multiplier:.2f}</b>) ile çarpılarak "
            "nihai enerji bedeline ulaşılır.")
     paragraflar = [giris + orta + son]
-    if epias and bayraklar.get("ptf_reference_scalar"):
+    if epias and bayraklar.get("ptf_reference_scalar") and not bayraklar.get("ptf_aritmetik_onayli"):
         paragraflar.append(
             "<i>Not: İlgili dönem için EPİAŞ saatlik PTF verisi bulunmadığından Ağırlıklı PTF, "
             "aylık ortalama PTF üzerinden hesaplanmıştır.</i>"
@@ -834,6 +863,10 @@ def _generate_pdf_reportlab(
     # güvenilir kaynağı doğruladıysa yazılır (bkz. fiyat_kaynagi_bayraklari).
     # SoT-X aylık-ortalama dipnotu yalnız EPİAŞ metninde anlamlıdır.
     _fiyat = fiyat_kaynagi_bayraklari(calculation)
+    if _fiyat["fiyat_taslak"]:
+        elements.insert(0, Paragraph(
+            "<font color='#B91C1C'><b>TASLAK — Fiyat doğrulanmadı. Bu belge kesin teklif değildir.</b></font>",
+            letter_style))
     elements.append(Paragraph("<b>Enerji Bedelinin Hesaplama Yapısı</b>", letter_style))
     for _paragraf in enerji_bedeli_paragraflari(_fiyat, params.agreement_multiplier):
         elements.append(Paragraph(_paragraf, letter_style))
@@ -918,7 +951,8 @@ def _generate_pdf_reportlab(
     param_data = [
         ["Mevcut Birim Fiyat", f"{fmt_num(current_unit_price, 4)} TL/kWh", "Teklif Birim Fiyat", f"{fmt_num(offer_unit_price, 4)} TL/kWh"],
         ["Anlaşma Çarpanı", fmt_num(params.agreement_multiplier), "Birim Fiyat Farkı", f"{fmt_num(current_unit_price - offer_unit_price, 4)} TL/kWh"],
-        ["Ağırlıklı PTF", f"{fmt_num(params.weighted_ptf_tl_per_mwh)} TL/MWh", "YEKDEM",
+        [_fiyat["ptf_etiketi"], f"{fmt_num(params.weighted_ptf_tl_per_mwh)} TL/MWh",
+         "YEKDEM" + (f" ({_fiyat['yekdem_segment_etiketi']})" if _fiyat["yekdem_segment_etiketi"] else ""),
          "Dahil değil" if _fiyat["yekdem_excluded"] else f"{fmt_num(params.yekdem_tl_per_mwh)} TL/MWh"],
     ]
     # 4 eşit sütun
@@ -1004,7 +1038,21 @@ def _generate_pdf_reportlab(
     elements.append(Paragraph(f"<b>Ek Bilgiler:</b> Bu teklif, mevcut fatura verileriniz esas alınarak hazırlanmıştır. Gerçek tasarruf tutarları, tüketim miktarı ve piyasa koşullarına göre değişiklik gösterebilir. Teklif {offer_validity_days} gün süreyle geçerlidir.", ek_bilgi_style))
 
     # Build with header/footer
-    doc.build(elements, onFirstPage=add_header_footer, onLaterPages=add_header_footer)
+    def _sayfa(canvas, doc):
+        add_header_footer(canvas, doc)
+        if _fiyat["fiyat_taslak"]:
+            # Her sayfada çapraz "TASLAK" damgası (kesin teklifle karışmasın).
+            canvas.saveState()
+            canvas.setFont(font_name, 60)
+            canvas.setFillColor(colors.HexColor('#B91C1C'))
+            canvas.setFillAlpha(0.15)
+            genislik, yukseklik = A4
+            canvas.translate(genislik / 2, yukseklik / 2)
+            canvas.rotate(35)
+            canvas.drawCentredString(0, 0, "TASLAK")
+            canvas.restoreState()
+
+    doc.build(elements, onFirstPage=_sayfa, onLaterPages=_sayfa)
     return buffer.getvalue()
 
 

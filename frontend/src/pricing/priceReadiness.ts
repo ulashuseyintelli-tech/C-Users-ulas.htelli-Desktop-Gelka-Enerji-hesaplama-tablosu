@@ -21,6 +21,11 @@
 //                              kullanılamaz, otomatik gerçek ya da eksik sayılmaz
 // - hariç                    → açık seçim; değer gerekmez
 //
+// Sürüm 3 (OWNER-KARARI-01/02): provenance.version >= 3 ise kesin teklif için PTF'in
+// yetkili onaylı aylık aritmetik PTF olması (ptf.approval) ve YEKDEM dahilse segmentin
+// açıkça seçilip o segmentin onaylı değeriyle eşleşmesi gerekir. Sürüm 2 provenance'ı
+// (eski yanıtlar) eski kurallarla değerlendirilir.
+//
 // Çağrıldığı yerler:
 // - App.tsx → PDF İndir / teklif kaydı düğmeleri, handleDownloadPdf kapısı, fiyat paneli
 // - pricing/PriceDraftBanner.tsx → TASLAK işareti ve gerekçe listesi
@@ -28,6 +33,12 @@
 // =============================================================================
 
 export type YekdemMode = 'included' | 'excluded';
+export type YekdemSegment = 'st' | 'gts';
+
+export const YEKDEM_SEGMENT_LABELS: Record<YekdemSegment, string> = {
+  st: 'Serbest Tüketici',
+  gts: 'GTŞ-K1',
+};
 
 export const YEKDEM_MODE_LABELS: Record<YekdemMode, string> = {
   included: 'Dahil',
@@ -54,6 +65,11 @@ export interface PriceProvenanceComponent {
   period_verified?: boolean;
   /** Kayıtlı 0'ın açık giriş kanıtı (denetim satırı); yoksa null */
   period_zero_audit_id?: number | null;
+  // Sürüm 3: yetkili onay kimliği ve YEKDEM segmenti
+  approval?: Record<string, unknown> | null;
+  yontem_etiketi?: string | null;
+  segment?: YekdemSegment | null;
+  segment_basis?: string | null;
 }
 
 export interface PriceProvenance {
@@ -79,6 +95,8 @@ export interface PriceReadinessInput {
   /** Sunucunun EKRANDAKİ değerler için döndürdüğü kaynak (değerler elle değiştiyse geçersiz) */
   provenance: PriceProvenance | null | undefined;
   valuesEditedByUser: boolean;
+  /** Sürüm 3: YEKDEM segmentinin açık seçimi; null/undefined = seçilmedi */
+  yekdemSegment?: YekdemSegment | null;
 }
 
 export interface PriceReadiness {
@@ -121,6 +139,9 @@ export function evaluatePriceReadiness(input: PriceReadinessInput): PriceReadine
     if (prov.ptf.status === 'matched' && prov.ptf.trusted === true && prov.ptf.final === false) {
       provisional = true;
       reasons.push('PTF dönem kaydı kesinleşmemiş (provisional). Yalnız taslak hesapta kullanılabilir.');
+    } else if ((prov.version ?? 0) >= 3 && prov.ptf.status === 'matched' && prov.ptf.trusted === true
+        && prov.ptf.final === true && !prov.ptf.approval) {
+      reasons.push('PTF için yetkili onay yok: kesin teklifte yalnız kaynağı doğrulanmış ve onaylanmış aylık aritmetik PTF kullanılır.');
     } else {
       reasons.push('PTF kaynağı doğrulanmadı: dönemin kesin kaydıyla eşleşmiyor.');
     }
@@ -136,6 +157,17 @@ export function evaluatePriceReadiness(input: PriceReadinessInput): PriceReadine
       // Gerekçe PTF satırında zaten bildirildi (elle değişiklik / kaynak yok).
     } else if (!y) {
       reasons.push('YEKDEM kaynağı bilinmiyor.');
+    } else if ((prov.version ?? 0) >= 3) {
+      if (!input.yekdemSegment) {
+        reasons.push('YEKDEM segmenti seçilmedi: Serbest Tüketici ya da GTŞ-K1\'i açıkça seçin (değerler eşit olsa bile).');
+      } else if (y.status === 'segment_missing') {
+        // Doğrulama segment seçiminden önce üretildi (ör. AI hesabı); kayıt anında sunucu
+        // seçilen segmentin onaylı değerini denetler. Burada ayrıca engel üretilmez.
+      } else if (y.status === 'approval_missing') {
+        reasons.push('Seçilen segmentte onaylı YEKDEM yok (henüz yayımlanıp onaylanmadı). Teklif taslak kalır.');
+      } else if (!(y.system_verified === true && ayni(input.yekdem, y.value))) {
+        reasons.push('YEKDEM, seçilen segmentin onaylı değeriyle eşleşmiyor.');
+      }
     } else if (!(y.period_verified === true && ayni(input.yekdem, y.period_value))) {
       if (input.yekdem === 0 && y.period_status === 'zero_unverified') {
         reasons.push("Kayıtlı YEKDEM 0'ın açık ve kesin giriş kaydı yok (anlamı bilinmeyen sıfır); kesin teklifte kullanılamaz.");
@@ -156,6 +188,7 @@ export function evaluatePriceReadiness(input: PriceReadinessInput): PriceReadine
 /** Fiyat kaynağının kısa Türkçe etiketi (panel ve sonuç rozeti). */
 export function priceSourceLabel(source: string | null | undefined): string {
   if (!source) return 'kaynak yok';
+  if (source === 'monthly_arithmetic:mcp_avg') return 'Aylık aritmetik PTF (EPİAŞ, yetkili onaylı)';
   if (source === 'manual_override') return 'manuel kayıt';
   if (source === 'reference_scalar') return 'aylık referans kaydı';
   if (source.startsWith('hourly_consumption')) return 'gerçek tüketim ağırlıklı';

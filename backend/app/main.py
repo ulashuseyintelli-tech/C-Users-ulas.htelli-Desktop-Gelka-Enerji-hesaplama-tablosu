@@ -255,6 +255,43 @@ def require_admin_key(
     return x_admin_key
 
 
+def require_price_approval_key(
+    x_admin_key: str | None = Header(default=None, alias="X-Admin-Key"),
+    request: Request = None,
+) -> str:
+    """Fiyat onayı (YAZMA) için yetki — ADMIN_API_KEY_ENABLED bayrağından BAĞIMSIZ.
+
+    require_admin_key bayrak kapalıyken (varsayılan) herkese izin verir; fiyat onayı
+    kesin teklifin dayanağı olduğu için bu bypass burada UYGULANMAZ:
+    - ADMIN_API_KEY tanımlı değilse → 403 approval_not_configured (onay yapılamaz).
+    - X-Admin-Key yoksa → 401; eşleşmezse → 403. Karşılaştırma sabit sürelidir.
+
+    Döner: doğrulanan yetki türü (kişi kimliği değil) → onay satırının `dogrulanan_yetki` alanı.
+
+    Çağrıldığı yerler:
+    - main.price_approval_endpoint() → POST /admin/market-prices/approve
+    """
+    import hmac
+
+    client_ip = request.client.host if request and request.client else "unknown"
+    beklenen = ADMIN_API_KEY or ""
+    if not beklenen:
+        logger.warning(f"[FIYAT-ONAY] yetki yapılandırılmamış, ip={client_ip}")
+        raise HTTPException(status_code=403, detail={
+            "error": "approval_not_configured",
+            "message": "Fiyat onayı için ADMIN_API_KEY tanımlı değil; onay yapılamaz."})
+    if not x_admin_key:
+        raise HTTPException(status_code=401, detail={
+            "error": "approval_unauthorized", "message": "Fiyat onayı için X-Admin-Key gerekli."})
+    if not hmac.compare_digest(str(x_admin_key).encode("utf-8"), beklenen.encode("utf-8")):
+        logger.warning(f"[FIYAT-ONAY] geçersiz anahtar, ip={client_ip}")
+        raise HTTPException(status_code=403, detail={
+            "error": "approval_forbidden", "message": "Geçersiz yetki anahtarı."})
+    # Doğrulanan şey KİŞİ değil, paylaşılan anahtarın sunulmasıdır (bkz. price_approval güven sınırı).
+    from .price_approval import YETKI_PAYLASILAN_YONETICI_ANAHTARI
+    return YETKI_PAYLASILAN_YONETICI_ANAHTARI
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Storage Service
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1923,6 +1960,11 @@ async def create_offer(
     # 'included' (en katı yol: doğrulanmış YEKDEM ister; sessiz "hariç" YOK).
     # Fiyat doğrulaması YALNIZ sunucudadır: istemcinin "doğrulandı" beyanı alınmaz.
     yekdem_mode: Optional[str] = None,
+    # OWNER-KARARI-02 (SEG-2): YEKDEM dahil teklifte segment AÇIKÇA seçilir (st | gts).
+    yekdem_segment: Optional[str] = None,
+    # Fiyat doğrulanmamışsa teklif YALNIZ bu açık istekle TASLAK olarak kaydedilir.
+    # Gönderilmezse eski davranış: 422 price_unverified (sessiz taslak YOK).
+    fiyat_taslak: bool = False,
     db: Session = Depends(get_db)
 ):
     """Teklifi kaydet ve arşivle.
@@ -2008,10 +2050,11 @@ async def create_offer(
         ),
     }
 
-    # 6) Fiyat Doğruluğu Faz 1 — sunucu kapısı (yalnız düğmeye bırakılmaz).
+    # 6) Fiyat Doğruluğu Faz 1 + kimlik kapısı (sürüm 3) — sunucu kapısı.
     #    R2 kapısından SONRA, persist'ten ÖNCE çalışır; rette yan etki oluşmaz.
-    #    Karar yalnız DB'ye dayanır: fiyat, dönemin güvenilir ve KESİN (final)
-    #    kaydıyla eşleşmelidir. Provisional, eksik ya da uyuşmayan fiyat 422 alır.
+    #    Kesin teklif: yetkili onaylı aylık aritmetik PTF + (dahilse) seçilen segmentte
+    #    onaylı YEKDEM. Doğrulanmamış fiyat 422 alır; YALNIZ fiyat_taslak=true açık
+    #    isteğiyle TASLAK olarak kaydedilir (snapshot draft_only=True, PDF taslak damgalı).
     from .price_provenance import offer_price_gate, price_block_content, yekdem_applied
     _prov = offer_price_gate(
         db,
@@ -2021,12 +2064,20 @@ async def create_offer(
         yekdem_mode=yekdem_mode,
         customer_id=params.customer_id,
         offer_yekdem_tl=calculation.offer_yekdem_tl,
+        yekdem_segment=yekdem_segment,
     )
-    if not _prov["verified"]:
+    if not _prov["verified"] and not fiyat_taslak:
         return JSONResponse(status_code=422, content=price_block_content(_prov))
     _yekdem_dahil = yekdem_applied(_prov)
     _calc_json = calculation.model_dump()
     _calc_json["meta_price_provenance"] = _prov  # istemcinin gönderdiği değer EZİLİR
+    _calc_json["meta_fiyat_durumu"] = "kesin" if _prov["verified"] else "taslak"
+    # Taslakta istenen YEKDEM değeri ve teklif hesabındaki YEKDEM tutarı açık
+    # kesinleştirmede yeniden doğrulama için saklanır (değerler yeniden hesaplanmaz).
+    _calc_json["meta_teklif_fiyat_girdisi"] = {
+        "yekdem_mode": yekdem_mode, "yekdem_segment": yekdem_segment,
+        "yekdem_tl_per_mwh": params.yekdem_tl_per_mwh, "customer_id": params.customer_id,
+    }
 
     offer = Offer(
         customer_id=customer_id,
@@ -2062,8 +2113,92 @@ async def create_offer(
         "savings_amount": offer.savings_amount,
         "savings_ratio": offer.savings_ratio,
         "status": offer.status,
-        "created_at": offer.created_at.isoformat()
+        "created_at": offer.created_at.isoformat(),
+        "fiyat_durumu": _calc_json["meta_fiyat_durumu"],
+        "blocking_reasons": list(_prov.get("blocking_reasons") or []),
     }
+
+
+@app.post("/offers/{offer_id}/finalize-price")
+def finalize_offer_price(
+    offer_id: int,
+    yekdem_segment: Optional[str] = None,
+    kesinlestiren: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_api_key),
+):
+    """TASLAK teklifin fiyatını AÇIK kullanıcı işlemiyle, YENİDEN DOĞRULAYARAK kesinleştirir.
+
+    - Otomatik değildir: yalnız bu uç çağrılınca çalışır; tarih/onay olayı tetiklemez.
+    - Değerler YENİDEN HESAPLANMAZ: teklifin kayıtlı PTF/YEKDEM/tutarları bugünkü onaylı
+      revizyonlarla aynı kapıdan geçmelidir; geçmezse 422 ve teklif DEĞİŞMEZ.
+    - Segment taslakta seçilmediyse burada açıkça verilebilir; taslaktaki seçimle çelişirse 422.
+    - Önceki taslak snapshot'ı silinmez; meta_price_provenance_gecmisi altında saklanır.
+    - Zaten kesin, provenance'ı olmayan ya da eski sürüm snapshot'lar reddedilir (409).
+    - `kesinlestiren` BEYANDIR (doğrulanmaz); doğrulanan yetki ayrı alanda yazılır
+      (API_KEY_ENABLED açıksa "api_anahtari", kapalıysa "dogrulama_kapali").
+
+    Çağrıldığı yerler:
+    - Yetkili kullanıcı / istemci → POST /offers/{id}/finalize-price
+    """
+    from datetime import datetime as _dt, timezone as _tz
+    from .price_provenance import (
+        offer_price_gate, price_block_content, snapshot_price_draft, snapshot_price_verified,
+    )
+
+    offer = db.query(Offer).filter(Offer.id == offer_id).first()
+    if not offer:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı")
+    kayitli = offer.calculation_result
+    if snapshot_price_verified(kayitli):
+        raise HTTPException(status_code=409, detail={
+            "error": "zaten_kesin", "message": "Teklif fiyatı zaten kesin.", "offer_id": offer.id})
+    if not snapshot_price_draft(kayitli):
+        raise HTTPException(status_code=409, detail={
+            "error": "taslak_degil",
+            "message": ("Bu teklif sunucuda üretilmiş bir fiyat taslağı değil (eski kayıt); "
+                        "kesinleştirilemez, yeni teklif oluşturun."),
+            "offer_id": offer.id})
+    eski_prov = kayitli["meta_price_provenance"]
+    girdi = dict(kayitli.get("meta_teklif_fiyat_girdisi") or {})
+    taslak_segment = girdi.get("yekdem_segment")
+    if yekdem_segment and taslak_segment and str(yekdem_segment).strip().lower() != str(taslak_segment).strip().lower():
+        return JSONResponse(status_code=422, content={"error": {
+            "code": "segment_celiskisi",
+            "message": "Kesinleştirmede verilen segment taslaktaki açık seçimle çelişiyor.",
+            "taslak_segment": taslak_segment}})
+    segment = taslak_segment or yekdem_segment
+    yeni_prov = offer_price_gate(
+        db,
+        period=offer.invoice_period,
+        ptf=offer.weighted_ptf,
+        yekdem=girdi.get("yekdem_tl_per_mwh"),
+        yekdem_mode=girdi.get("yekdem_mode"),
+        customer_id=girdi.get("customer_id"),
+        offer_yekdem_tl=kayitli.get("offer_yekdem_tl"),
+        yekdem_segment=segment,
+    )
+    if not yeni_prov["verified"]:
+        return JSONResponse(status_code=422, content=price_block_content(yeni_prov))
+    yeni = dict(kayitli)
+    gecmis = list(yeni.get("meta_price_provenance_gecmisi") or [])
+    gecmis.append({"provenance": eski_prov, "durum": "taslak"})
+    yeni["meta_price_provenance_gecmisi"] = gecmis
+    yeni["meta_price_provenance"] = yeni_prov
+    yeni["meta_fiyat_durumu"] = "kesin"
+    girdi["yekdem_segment"] = segment
+    yeni["meta_teklif_fiyat_girdisi"] = girdi
+    yeni["meta_fiyat_kesinlesme"] = {
+        "zaman_utc": _dt.now(_tz.utc).isoformat(),
+        "kesinlestiren_beyan": (str(kesinlestiren).strip()[:100] or None) if kesinlestiren else None,
+        "kesinlestiren_dogrulandi": False,
+        "dogrulanan_yetki": "api_anahtari" if API_KEY_ENABLED else "dogrulama_kapali",
+        "yontem": "acik_kullanici_islemi_yeniden_dogrulama",
+    }
+    offer.calculation_result = yeni  # JSON kolonu: yeni nesne atanır (değişiklik izlenir)
+    db.commit()
+    return {"offer_id": offer.id, "fiyat_durumu": "kesin",
+            "price_provenance": yeni_prov}
 
 
 @app.get("/offers", response_model=List[dict])
@@ -2497,7 +2632,8 @@ async def generate_pdf_for_offer(
                 "message": (
                     "Bu teklifin fiyat kaynağı doğrulanmamış (fiyat doğrulaması öncesi "
                     "kaydedilmiş ya da eksik). PDF üretilmez; teklifi doğrulanmış "
-                    "PTF/YEKDEM ile yeniden oluşturun."
+                    "PTF/YEKDEM ile yeniden oluşturun ya da fiyatı taslak teklif için "
+                    "POST /offers/{id}/generate-draft-pdf ile TASLAK damgalı PDF isteyin."
                 ),
                 "offer_id": offer.id,
             },
@@ -2623,6 +2759,73 @@ async def generate_pdf_for_offer(
             status_code=500,
             detail="PDF oluşturma hatası: sunucu tarafında beklenmeyen bir hata oluştu.",
         )
+
+
+@app.post("/offers/{offer_id}/generate-draft-pdf")
+async def generate_draft_pdf_for_offer(
+    offer_id: int,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_api_key),
+):
+    """Fiyatı TASLAK teklif için "TASLAK — fiyat doğrulanmadı" damgalı PDF (saklanmaz).
+
+    - Yalnız sunucuda üretilmiş sürüm-3 fiyat taslağı snapshot'ında çalışır; kesin teklif
+      (409 zaten_kesin) ve provenance'ı olmayan eski kayıtlar (409 taslak_degil) reddedilir.
+    - PDF yanıt olarak döner; storage'a yazılmaz, pdf_ref DEĞİŞMEZ (kesin PDF ile karışamaz).
+    - Kesin PDF ucu (generate-pdf) sözleşmesi ve imzası değişmedi.
+
+    Çağrıldığı yerler:
+    - İstemci → POST /offers/{id}/generate-draft-pdf (taslak teklif önizleme/paylaşım)
+    """
+    from .price_provenance import snapshot_price_draft, snapshot_price_verified
+
+    offer = db.query(Offer).filter(Offer.id == offer_id).first()
+    if not offer:
+        raise HTTPException(status_code=404, detail="Teklif bulunamadı")
+    if snapshot_price_verified(offer.calculation_result):
+        raise HTTPException(status_code=409, detail={
+            "error": "zaten_kesin", "message": "Teklif fiyatı kesin; kesin PDF ucunu kullanın.",
+            "offer_id": offer.id})
+    if not offer.extraction_result or not snapshot_price_draft(offer.calculation_result):
+        raise HTTPException(status_code=409, detail={
+            "error": "taslak_degil",
+            "message": "Bu teklif sunucuda üretilmiş bir fiyat taslağı değil; taslak PDF üretilmez.",
+            "offer_id": offer.id})
+    extraction = InvoiceExtraction(**offer.extraction_result)
+    calculation = CalculationResult(**offer.calculation_result)
+    params = OfferParams(
+        weighted_ptf_tl_per_mwh=offer.weighted_ptf,
+        yekdem_tl_per_mwh=offer.yekdem,
+        agreement_multiplier=offer.agreement_multiplier,
+    )
+    customer_name = offer.customer.name if offer.customer else None
+    customer_company = offer.customer.company if offer.customer else None
+
+    def _uret() -> bytes:
+        return generate_offer_pdf_bytes(extraction, calculation, params,
+                                        customer_name, customer_company, offer.id)
+
+    try:
+        await asyncio.wait_for(_pdf_semaphore.acquire(), timeout=2.0)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=429, detail={
+            "error": "too_many_requests", "message": "Sunucu meşgul. Lütfen birkaç saniye bekleyin.",
+            "offer_id": offer.id}, headers={"Retry-After": "5"})
+    try:
+        pdf_bytes = await asyncio.wait_for(
+            asyncio.get_running_loop().run_in_executor(_pdf_executor, _uret),
+            timeout=_PDF_RENDER_TIMEOUT)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail={
+            "error": "render_timeout", "message": "PDF oluşturma zaman aşımına uğradı.",
+            "offer_id": offer.id})
+    finally:
+        _pdf_semaphore.release()
+    if not pdf_bytes or not pdf_bytes.startswith(b"%PDF"):
+        raise HTTPException(status_code=500, detail="PDF oluşturma hatası.")
+    return Response(content=pdf_bytes, media_type="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="teklif_{offer.id}_TASLAK.pdf"',
+        "X-Fiyat-Durumu": "taslak"})
 
 
 @app.get("/offers/{offer_id}/download")
@@ -2774,6 +2977,7 @@ async def generate_pdf_direct(
     # Fiyat Doğruluğu Faz 1: YEKDEM uygulamasının açık seçimi (included | excluded;
     # gönderilmezse included). Fiyat DB'de doğrulanır; istemci beyanı alınmaz.
     yekdem_mode: Optional[str] = None,
+    yekdem_segment: Optional[str] = None,  # SEG-2: dahilse zorunlu açık seçim
     db: Session = Depends(get_db),
 ):
     """
@@ -2802,6 +3006,7 @@ async def generate_pdf_direct(
         yekdem_mode=yekdem_mode,
         customer_id=params.customer_id,
         offer_yekdem_tl=calculation.offer_yekdem_tl,
+        yekdem_segment=yekdem_segment,
     )
     if not _prov_direct["verified"]:
         return JSONResponse(status_code=422, content=price_block_content(_prov_direct))
@@ -2872,6 +3077,7 @@ async def generate_pdf_simple(
     # Fiyat Doğruluğu Faz 1: YEKDEM uygulamasının açık seçimi (included | excluded;
     # gönderilmezse included). Fiyat DB'de doğrulanır; istemci beyanı alınmaz.
     yekdem_mode: Optional[str] = Form(None),
+    yekdem_segment: Optional[str] = Form(None),  # SEG-2: dahilse zorunlu açık seçim
     db: Session = Depends(get_db),
 ):
     """Basit parametrelerle PDF oluştur.
@@ -2928,6 +3134,7 @@ async def generate_pdf_simple(
         ptf=weighted_ptf_tl_per_mwh,
         yekdem=yekdem_tl_per_mwh,
         yekdem_mode=yekdem_mode,
+        yekdem_segment=yekdem_segment,
     )
     if not _prov_simple["verified"]:
         return JSONResponse(status_code=422, content=price_block_content(_prov_simple))
@@ -3186,6 +3393,7 @@ async def generate_html_direct(
     # Fiyat Doğruluğu Faz 1: YEKDEM uygulamasının açık seçimi (included | excluded;
     # gönderilmezse included). Fiyat DB'de doğrulanır; istemci beyanı alınmaz.
     yekdem_mode: Optional[str] = None,
+    yekdem_segment: Optional[str] = None,  # SEG-2: dahilse zorunlu açık seçim
     db: Session = Depends(get_db),
 ):
     """Kaydetmeden direkt HTML oluştur.
@@ -3206,6 +3414,7 @@ async def generate_html_direct(
         yekdem_mode=yekdem_mode,
         customer_id=params.customer_id,
         offer_yekdem_tl=calculation.offer_yekdem_tl,
+        yekdem_segment=yekdem_segment,
     )
     if not _prov_html["verified"]:
         return JSONResponse(status_code=422, content=price_block_content(_prov_html))
@@ -4666,6 +4875,210 @@ def epias_compare_endpoint(
         istemci.kapat()
 
 
+def _onay_hatasi_yaniti(exc) -> JSONResponse:
+    govde = {"error": exc.kod, "message": exc.mesaj}
+    govde.update(exc.ek)
+    return JSONResponse(status_code=exc.http, content={"detail": govde})
+
+
+def _onay_istemcisi_hazir():
+    """Onay yolları resmî veriyi sunucuda çeker; özellik kapalıysa 503 (EPİAŞ çağrısı YOK).
+
+    Çağrıldığı yerler:
+    - main.price_approval_candidate_endpoint(), main.price_approval_endpoint()
+    """
+    from . import epias_public_client as _epias_istemci
+
+    if not _epias_istemci.ozellik_acik():
+        raise HTTPException(status_code=503, detail={
+            "error": "feature_disabled",
+            "message": "EPİAŞ resmî veri erişimi kapalı (EPIAS_COMPARE_ENABLED); onay adayı üretilemez."})
+    return _epias_istemci.EpiasReadOnlyClient()
+
+
+async def _resmi_aday_cek(kalem: str, period: str, segment: Optional[str]) -> dict:
+    """Resmî adayı external_api sarmalayıcısıyla çeker (DB'ye dokunmaz).
+
+    Çağrıldığı yerler:
+    - main.price_approval_candidate_endpoint(), main.price_approval_endpoint()
+    """
+    import asyncio as _asyncio
+    from .epias_public_client import EpiasIstemciHatasi, EpiasKimlikBilgisiEksik
+    from .guards.dependency_wrapper import CircuitOpenError
+    from .price_approval import KALEM_PTF, ptf_resmi_aday, yekdem_resmi_aday
+
+    istemci = _onay_istemcisi_hazir()
+    try:
+        wrapper = _get_wrapper("external_api")
+        try:
+            if kalem == KALEM_PTF:
+                return await wrapper.call(_asyncio.to_thread, ptf_resmi_aday, istemci, period)
+            return await wrapper.call(_asyncio.to_thread, yekdem_resmi_aday, istemci, period, segment)
+        except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
+            raise _map_wrapper_error_to_http(exc)
+        except EpiasKimlikBilgisiEksik:
+            raise HTTPException(status_code=503, detail={
+                "error": "kimlik_bilgisi_eksik",
+                "message": ("Sunucuda EPİAŞ kimlik bilgisi tanımlı değil (EPIAS_USERNAME/EPIAS_PASSWORD). "
+                            "Bilgiler yalnız sunucu ortamında tutulur; tarayıcıdan girilmez.")})
+        except EpiasIstemciHatasi as exc:
+            raise HTTPException(status_code=502, detail={
+                "error": "resmi_veri_alinamadi", "message": str(exc)})
+    finally:
+        istemci.kapat()
+
+
+@app.get("/admin/market-prices/approval-candidate")
+async def price_approval_candidate_endpoint(
+    period: str = Query(..., description="Dönem (YYYY-MM)"),
+    kalem: str = Query(..., description="PTF | YEKDEM"),
+    segment: Optional[str] = Query(default=None, description="YEKDEM için st | gts (zorunlu)"),
+    db: Session = Depends(get_db),
+    _: str = Depends(require_admin_key),
+):
+    """Onaya sunulacak resmî aday (SALT OKUNUR; fiyat yazmaz, onaylamaz).
+
+    Dönen `aday_parmak_izi`, `beklenen_revision` ve (PTF) `beklenen_kayit_parmak_izi`
+    onay isteğinde aynen geri gönderilir; sunucu onay anında resmî veriyi yeniden çeker
+    ve farklıysa hiçbir şey yazmadan yeniden onay ister.
+
+    NOT: Rota /admin/market-prices/{period} kaydından ÖNCE tanımlıdır.
+
+    Çağrıldığı yerler:
+    - Yetkili yönetim aracı / operatör → GET /admin/market-prices/approval-candidate
+    """
+    import asyncio as _asyncio
+    from .guards.dependency_wrapper import CircuitOpenError
+    from .price_approval import (
+        KALEM_PTF, KALEM_YEKDEM, OnayHatasi, aday_yaniti, ptf_adayi_hazirla, segment_coz, yekdem_adayi_hazirla,
+    )
+    from .price_provenance import normalize_period
+
+    p = normalize_period(period)
+    k = str(kalem or "").strip().upper()
+    if p is None or k not in (KALEM_PTF, KALEM_YEKDEM):
+        raise HTTPException(status_code=422, detail={"error": "gecersiz_istek",
+                                                     "message": "Dönem YYYY-MM, kalem PTF | YEKDEM olmalı."})
+    seg, seg_gecerli = segment_coz(segment)
+    if k == KALEM_YEKDEM and (seg is None or not seg_gecerli):
+        raise HTTPException(status_code=422, detail={"error": "segment_zorunlu",
+                                                     "message": "YEKDEM adayı için segment (st | gts) açıkça seçilmelidir."})
+    try:
+        resmi = await _resmi_aday_cek(k, p, seg)
+    except OnayHatasi as exc:
+        return _onay_hatasi_yaniti(exc)
+    wrapper = _get_wrapper("db_primary")
+    try:
+        if k == KALEM_PTF:
+            aday = await wrapper.call(_asyncio.to_thread, ptf_adayi_hazirla, db, None, p, resmi=resmi)
+        else:
+            aday = await wrapper.call(_asyncio.to_thread, yekdem_adayi_hazirla, db, None, p, seg, resmi=resmi)
+        return aday_yaniti(aday)
+    except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
+        raise _map_wrapper_error_to_http(exc)
+    except OnayHatasi as exc:
+        return _onay_hatasi_yaniti(exc)
+
+
+@app.get("/admin/market-prices/approvals")
+async def price_approval_history_endpoint(
+    period: str = Query(..., description="Dönem (YYYY-MM)"),
+    db: Session = Depends(get_db),
+    _: str = Depends(require_admin_key),
+):
+    """Dönemin onay revizyonları ve incelenebilir kaynak kanıtları (SALT OKUNUR; EPİAŞ'a gitmez).
+
+    NOT: Rota /admin/market-prices/{period} kaydından ÖNCE tanımlıdır.
+
+    Çağrıldığı yerler:
+    - frontend/src/market-prices/fiyatOnay/fiyatOnayApi.ts fetchOnayGecmisi() ← FiyatOnayPaneli
+    """
+    import asyncio as _asyncio
+    from .guards.dependency_wrapper import CircuitOpenError
+    from .price_approval import onay_gecmisi
+    from .price_provenance import normalize_period
+
+    p = normalize_period(period)
+    if p is None:
+        raise HTTPException(status_code=422, detail={"error": "gecersiz_istek", "message": "Dönem YYYY-MM olmalı."})
+    wrapper = _get_wrapper("db_primary")
+    try:
+        return await wrapper.call(_asyncio.to_thread, onay_gecmisi, db, p)
+    except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
+        raise _map_wrapper_error_to_http(exc)
+
+
+class _FiyatOnayIstegi(_PydanticBaseModel):
+    period: str
+    kalem: str
+    segment: Optional[str] = None
+    aday_parmak_izi: str
+    beklenen_revision: int
+    beklenen_kayit_parmak_izi: Optional[str] = None
+    # Formdaki ad: BEYAN (doğrulanmaz). Doğrulanan yetki istemciden alınmaz.
+    onaylayan_beyan: str
+    change_reason: str
+
+
+@app.post("/admin/market-prices/approve")
+async def price_approval_endpoint(
+    istek: _FiyatOnayIstegi,
+    db: Session = Depends(get_db),
+    dogrulanan_yetki: str = Depends(require_price_approval_key),
+):
+    """Yetkili fiyat onayı (YAZMA): resmî aday yeniden çekilir, eşleşirse tek işlemde kaydedilir.
+
+    - Yetki: require_price_approval_key (admin bayrağı kapalı olsa da anahtar zorunlu).
+    - Aday değişmişse / kayıt ya da revizyon değişmişse 409 ve HİÇBİR ŞEY yazılmaz.
+    - PTF: değer + final + epias_api + onaylayan + geçmiş satırı + onay revizyonu tek işlem.
+    - YEKDEM: segment başına ekle-yalnız revizyon.
+    - Otomatik finalleştirme, toplu onay, geçmiş kayıt doldurma YOK.
+
+    Sarmalayıcı: resmî aday external_api (okuma), kayıt db_primary is_write=True (yeniden
+    deneme YOK; zaman aşımında istemcinin tekrarı revizyon/parmak izi denetimiyle 409 alır,
+    çift yazım oluşmaz).
+
+    Çağrıldığı yerler:
+    - Yetkili yönetim aracı / operatör → POST /admin/market-prices/approve
+    """
+    import asyncio as _asyncio
+    from .guards.dependency_wrapper import CircuitOpenError
+    from .price_approval import KALEM_PTF, KALEM_YEKDEM, OnayHatasi, ptf_onayla, segment_coz, yekdem_onayla
+    from .price_provenance import normalize_period
+
+    p = normalize_period(istek.period)
+    k = str(istek.kalem or "").strip().upper()
+    if p is None or k not in (KALEM_PTF, KALEM_YEKDEM):
+        raise HTTPException(status_code=422, detail={"error": "gecersiz_istek",
+                                                     "message": "Dönem YYYY-MM, kalem PTF | YEKDEM olmalı."})
+    seg, seg_gecerli = segment_coz(istek.segment)
+    if k == KALEM_YEKDEM and (seg is None or not seg_gecerli):
+        raise HTTPException(status_code=422, detail={"error": "segment_zorunlu",
+                                                     "message": "YEKDEM onayı için segment (st | gts) açıkça seçilmelidir."})
+    try:
+        resmi = await _resmi_aday_cek(k, p, seg)
+    except OnayHatasi as exc:
+        return _onay_hatasi_yaniti(exc)
+    wrapper = _get_wrapper("db_primary")
+    try:
+        if k == KALEM_PTF:
+            return await wrapper.call(
+                _asyncio.to_thread, ptf_onayla, db, None, period=p, aday_parmak_izi=istek.aday_parmak_izi,
+                beklenen_revision=istek.beklenen_revision,
+                beklenen_kayit_parmak_izi=str(istek.beklenen_kayit_parmak_izi or ""),
+                onaylayan_beyan=istek.onaylayan_beyan, dogrulanan_yetki=dogrulanan_yetki,
+                change_reason=istek.change_reason, resmi=resmi, is_write=True)
+        return await wrapper.call(
+            _asyncio.to_thread, yekdem_onayla, db, None, period=p, segment=seg,
+            aday_parmak_izi=istek.aday_parmak_izi, beklenen_revision=istek.beklenen_revision,
+            onaylayan_beyan=istek.onaylayan_beyan, dogrulanan_yetki=dogrulanan_yetki,
+                change_reason=istek.change_reason, resmi=resmi, is_write=True)
+    except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
+        raise _map_wrapper_error_to_http(exc)
+    except OnayHatasi as exc:
+        return _onay_hatasi_yaniti(exc)
+
+
 @app.get("/admin/market-prices/{period}")
 async def get_market_price(
     period: str,
@@ -5600,10 +6013,17 @@ async def get_prices_with_epias_fallback(
     profile: Optional[str] = None,
     tariff_group: Optional[str] = None,
     customer_id: Optional[str] = None,
+    yekdem_segment: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """
     Dönem için piyasa fiyatlarını al — YALNIZ DB (Fiyat Doğruluğu Faz 1).
+
+    Fiyat kimliği (sürüm 3): geçerli yetkili onaylı aylık aritmetik PTF varsa
+    weighted_ptf YALNIZ odur (weighted_ptf_source='monthly_arithmetic:mcp_avg',
+    ptf_yontem_etiketi='Aylık aritmetik PTF (EPİAŞ)'). yekdem_segment (st | gts)
+    açıkça verilirse YEKDEM, o segmentin güncel onay revizyonundan döner
+    (yekdem_status='approved'); segment verilmezse eski kayıt değeri bilgi amaçlıdır.
 
     - Kayıt yoksa PTF/YEKDEM null döner; sabit/varsayılan fiyat YOK (eski
       2974.1 / 364.0 kaldırıldı). EPİAŞ otomatik çekimi KAPALI: `auto_fetch`
@@ -5671,11 +6091,21 @@ async def get_prices_with_epias_fallback(
     cw = consumption_weighted_ptf(db, period, customer_id) if (OFFER_USE_REAL_CONSUMPTION and customer_id) else None
 
     wr = weighted_ptf_for_profile(db, period, eff_profile)
+    from .price_approval import (
+        PTF_ONAYLI_ADAY_KAYNAGI, PTF_YONTEM_ETIKETI, gecerli_ptf_onayi, gecerli_yekdem_onayi,
+        segment_coz, yekdem_onay_ozeti,
+    )
+    _ptf_onayi = gecerli_ptf_onayi(db, period)
+    # PRIORITY 1b: yetkili onaylı aylık aritmetik PTF — calculator/provenance ile parite.
+    if _ptf_onayi is not None:
+        weighted_ptf = _ptf_onayi.value
+        weighted_source = PTF_ONAYLI_ADAY_KAYNAGI
+        ptf_source_warning = None
     # PRIORITY 2: MANUEL KAYIT (açık override) — hourly/C2'den ÖNCE. Kullanıcı PTF'i
     # elle kaydettiyse (source="manual_override") hourly-weighted bunu ezemez. YALNIZ
     # manual_override; auto/seed skalerler hourly önceliğini bozmaz. GUARD: ptf<=0/None
     # ise override sayılmaz → fallback zinciri devam eder. (calculator ile aynı precedence.)
-    if (prices is not None and prices.source_detail == "manual_override"
+    elif (prices is not None and prices.source_detail == "manual_override"
             and prices.ptf_tl_per_mwh and prices.ptf_tl_per_mwh > 0):
         weighted_ptf = prices.ptf_tl_per_mwh
         weighted_source = "manual_override"
@@ -5705,24 +6135,38 @@ async def get_prices_with_epias_fallback(
 
     # Faz 1: YEKDEM kaydı yoksa null; 0 kaydı değer olarak taşınır (kesinleşemez).
     yekdem = resolve_period_yekdem(db, period)
+    _segment, _segment_gecerli = segment_coz(yekdem_segment)
+    _yekdem_onayi = gecerli_yekdem_onayi(db, period, _segment) if (_segment and _segment_gecerli) else None
+    if _yekdem_onayi is not None:
+        yekdem_degeri, yekdem_durumu = _yekdem_onayi.value, "approved"
+        yekdem_kaynagi = f"approval:{_segment}:{_yekdem_onayi.version}"
+    elif _segment:
+        # Seçilen segmentte onay yok: eski kayıt değeri SESSİZCE kullanılmaz (taslak).
+        yekdem_degeri, yekdem_durumu, yekdem_kaynagi = yekdem.value, "approval_missing", yekdem.source
+    else:
+        yekdem_degeri, yekdem_durumu, yekdem_kaynagi = yekdem.value, yekdem.status, yekdem.source
     provenance = build_price_provenance(
         db,
         period=period,
         ptf=weighted_ptf,
-        yekdem=yekdem.value,
+        yekdem=yekdem_degeri,
         # Ekrandaki değerin durumu 'dahil' varsayımıyla hesaplanır. Hariç seçimi
         # arayüzde yapılır; dönemin YEKDEM durumu seçimden bağımsız döner.
         yekdem_mode=YEKDEM_MODE_INCLUDED,
         mode_basis="default",
         customer_id=customer_id,
+        yekdem_segment=yekdem_segment,
     )
 
     return {
         "period": period,
         "ptf_tl_per_mwh": prices.ptf_tl_per_mwh if prices is not None else None,
-        "yekdem_tl_per_mwh": yekdem.value,
-        "yekdem_status": yekdem.status,
-        "yekdem_source": yekdem.source,
+        "ptf_yontem_etiketi": PTF_YONTEM_ETIKETI if _ptf_onayi is not None else None,
+        "yekdem_segment": _segment,
+        "yekdem_approval": yekdem_onay_ozeti(_yekdem_onayi) if _yekdem_onayi is not None else None,
+        "yekdem_tl_per_mwh": yekdem_degeri,
+        "yekdem_status": yekdem_durumu,
+        "yekdem_source": yekdem_kaynagi,
         "source": "db" if prices is not None else "not_found",
         "source_detail": prices.source_detail if prices is not None else None,
         "source_description": (

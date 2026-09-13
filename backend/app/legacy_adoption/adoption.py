@@ -324,6 +324,20 @@ def is_certifiably_canonical(path: str) -> bool:
     """
     if _revisions(path) != (CANONICAL_HEAD,):
         return False
+    return canonical_yapisi_saglam(path)
+
+
+def canonical_yapisi_saglam(path: str) -> bool:
+    """Canonical şemanın YAPISAL kanıtı (revizyon denetimi HARİÇ).
+
+    is_certifiably_canonical()'in revizyon denetiminden sonraki gövdesidir (davranış
+    birebir aynı). Uygulama başı (canonical + katkısal ileri migration) sertifikasyonu da
+    AYNI yapısal denetimi kullanır (kod tekrarı yok).
+
+    Cagrildigi yerler:
+    - is_certifiably_canonical()
+    - app/legacy_adoption/startup_gate.py::is_certifiably_application_head()
+    """
     con = sqlite3.connect(_ro(path), uri=True)
     try:
         tablolar = {

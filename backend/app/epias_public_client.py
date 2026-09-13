@@ -47,23 +47,45 @@ class EpiasIstemciHatasi(Exception):
     """EPİAŞ okuma hatası. Mesajı maskelenmiş olarak taşır."""
 
 
+class EpiasKimlikBilgisiEksik(EpiasIstemciHatasi):
+    """Sunucuda EPIAS_USERNAME/EPIAS_PASSWORD tanımlı değil (değerler hiçbir yere yazılmaz).
+
+    Çağrıldığı yerler:
+    - EpiasReadOnlyClient.get_tgt() → kimlik yoksa
+    - main._resmi_aday_cek() → 503 kimlik_bilgisi_eksik
+    """
+
+
 @dataclass(frozen=True)
 class PtfOzet:
-    """Bir dönem için PTF istatistikleri (EPİAŞ mcp servisi)."""
+    """Bir dönem için PTF istatistikleri (EPİAŞ mcp servisi).
+
+    `saatlik`: yanıttaki kalemler (date metni, price) — onay adayının dönem kapsamı,
+    tekillik, eksiksizlik ve ortalama/yuvarlama tutarlılığı denetimi için (katkısal alan).
+    `sayfa`: yanıttaki `page` nesnesi (varsa); kırpılma tespiti için.
+    """
     donem: str
     aritmetik: Optional[float]
     agirlikli: Optional[float]
     birim: str = BIRIM
+    saatlik: tuple = ()
+    sayfa: Optional[dict] = None
 
 
 @dataclass(frozen=True)
 class YekdemSatiri:
-    """YEKDEM birim maliyeti: dönem x versiyon x segment."""
+    """YEKDEM birim maliyeti: dönem x versiyon x segment.
+
+    `versiyon` karşılaştırma modülünün ay düzeyindeki anahtarıdır (YYYY-MM).
+    `versiyon_tam` resmî yanıttaki versiyon metninin KISALTILMAMIŞ hâlidir; aynı ay
+    içindeki farklı versiyonlar yalnız bununla ayırt edilir (fiyat onayı bunu kullanır).
+    """
     donem: str
     versiyon: Optional[str]
     serbest_tuketici: Optional[float]
     gts_k1: Optional[float]
     birim: str = BIRIM
+    versiyon_tam: Optional[str] = None
 
 
 def _maskele(metin: Any) -> str:
@@ -134,7 +156,7 @@ class EpiasReadOnlyClient:
         kullanici = os.getenv("EPIAS_USERNAME")
         sifre = os.getenv("EPIAS_PASSWORD")
         if not kullanici or not sifre:
-            raise EpiasIstemciHatasi("EPİAŞ kimlik bilgisi yok (EPIAS_USERNAME/EPIAS_PASSWORD).")
+            raise EpiasKimlikBilgisiEksik("EPİAŞ kimlik bilgisi yok (EPIAS_USERNAME/EPIAS_PASSWORD).")
         try:
             yanit = self._client().post(
                 TGT_URL,
@@ -178,10 +200,17 @@ class EpiasReadOnlyClient:
         ist = (ham or {}).get("statistic")
         if not isinstance(ist, dict):
             raise EpiasIstemciHatasi("EPİAŞ PTF yanıtında 'statistic' alanı yok.")
+        saatlik = tuple(
+            (str(oge.get("date") or ""), _sayi(oge.get("price")))
+            for oge in ((ham or {}).get("items") or []) if isinstance(oge, dict)
+        )
+        sayfa = (ham or {}).get("page")
         return PtfOzet(
             donem=donem,
             aritmetik=_sayi(ist.get("priceAvg")),
             agirlikli=_sayi(ist.get("ptfWeightedAvg")),
+            saatlik=saatlik,
+            sayfa=sayfa if isinstance(sayfa, dict) else None,
         )
 
     def fetch_unit_cost(self, donem_baslangic: str, donem_bitis: str) -> list:
@@ -191,12 +220,14 @@ class EpiasReadOnlyClient:
         satirlar = []
         for oge in (ham or {}).get("items") or []:
             donem = str(oge.get("period") or "")[:7]
-            versiyon = str(oge.get("version") or "")[:7] or None
+            versiyon_ham = str(oge.get("version") or "").strip()
+            versiyon = versiyon_ham[:7] or None
             satirlar.append(YekdemSatiri(
                 donem=donem,
                 versiyon=versiyon,
                 serbest_tuketici=_sayi(oge.get("supplierUnitCost")),
                 gts_k1=_sayi(oge.get("unitCost")),
+                versiyon_tam=versiyon_ham or None,
             ))
         return satirlar
 
