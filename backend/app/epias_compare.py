@@ -209,6 +209,33 @@ def kayitlari_oku(db: Session, donemler: list) -> tuple:
     return kayitlar, yekdem_gecmisi
 
 
+def kayitlari_oku_izole(bind: Any, donemler: list) -> tuple:
+    """kayitlari_oku, AMA request-scoped Session yerine `bind`'e (engine/connection) bağlı
+    KISA ÖMÜRLÜ kendi Session'ını açar ve finally'de kapatır.
+
+    Neden: uç bu okumayı `_get_wrapper("db_primary")` üzerinden çağırır; wrapper
+    `asyncio.wait_for(asyncio.to_thread(...), timeout)` kullanır. Zaman aşımında
+    `to_thread` worker'ı İPTAL EDİLEMEZ; TimeoutError yükselirken thread arka planda
+    (orphan) çalışmaya DEVAM eder (Python 3.13.14 ile ampirik doğrulandı). Eğer bu
+    orphan, get_db'nin finally'de kapattığı REQUEST Session'ını kullanırsa iş parçacıkları
+    arası Session kullanımı + kapalı-Session erişimi yarışı doğar. Bu sarmalayıcı ile
+    orphan YALNIZ kendi Session'ına dokunur ve onu KENDİSİ kapatır; request Session'ı
+    hiç görmez → yarış yapısal olarak ELENİR.
+
+    Dönen ORM nesneleri Session kapandığı için detached olur; build_comparison yalnız
+    okuma anında yüklenmiş sütunları (period/source/status/id/ptf_tl_per_mwh/
+    yekdem_tl_per_mwh) okur — commit/expire ve lazy-load YOK → detached erişim güvenli.
+
+    Çağrıldığı yerler:
+    - main.epias_compare_endpoint() → _get_wrapper("db_primary") + asyncio.to_thread ile
+    """
+    s = Session(bind=bind)
+    try:
+        return kayitlari_oku(s, donemler)
+    finally:
+        s.close()
+
+
 def build_comparison(db: Session, donem_baslangic: str, donem_bitis: str, client: Any,
                      evaluated_at: Optional[date] = None, bugun: Optional[date] = None,
                      *, kayitlar: Optional[dict] = None, yekdem_gecmisi: Optional[dict] = None) -> dict:

@@ -4850,7 +4850,7 @@ async def epias_compare_endpoint(
     """
     import asyncio as _asyncio
     from datetime import datetime as _dt
-    from .epias_compare import MAKS_DONEM, build_comparison, donem_listesi, kayitlari_oku
+    from .epias_compare import MAKS_DONEM, build_comparison, donem_listesi, kayitlari_oku_izole
     from . import epias_public_client as _epias_istemci
     from .guards.dependency_wrapper import CircuitOpenError
 
@@ -4886,8 +4886,12 @@ async def epias_compare_endpoint(
     try:
         db_wrapper = _get_wrapper("db_primary")
         try:
+            # NOT: db_primary wrapper asyncio.wait_for+to_thread kullanır; zaman aşımında
+            # to_thread worker'ı iptal edilemez (orphan). Bu yüzden request Session (`db`)
+            # thread'e VERİLMEZ; okuma kendi kısa-ömürlü Session'ında yapılır (kayitlari_oku_izole)
+            # → orphan request Session'a dokunmaz, get_db close ile yarış oluşmaz.
             kayitlar, yekdem_gecmisi = await db_wrapper.call(
-                _asyncio.to_thread, kayitlari_oku, db, donemler)
+                _asyncio.to_thread, kayitlari_oku_izole, db.get_bind(), donemler)
         except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
             raise _map_wrapper_error_to_http(exc)
         return await _asyncio.to_thread(
