@@ -437,14 +437,16 @@ def test_maskeleme_gomulu_bilet_ve_parolayi_temizler():
     assert BELGE_TGT not in mesaj and "TGT-" not in mesaj
 
 
-# ── ÇALIŞMA MODELİ: senkron uç olay döngüsünde ÇALIŞMAZ ─────────────────────
+# ── ÇALIŞMA MODELİ: bloklayan iş olay döngüsünde ÇALIŞMAZ ───────────────────
 
 def test_uc_govdesi_olay_dongusunde_calismaz(_db):
-    """Senkron (def) uç, FastAPI tarafından iş parçacığı havuzunda çalışmalı.
+    """Async uç (komşu /admin/market-prices uçlarıyla parite), bloklayan işi olay
+    döngüsü DIŞINDA çalıştırmalı.
 
-    Kanıt: gövde içinde çalışan bir olay döngüsü YOKTUR (get_running_loop
-    RuntimeError verir) ve iş parçacığı ana iş parçacığı değildir.
-    Bu iddiayı kod yorumuna değil, gözleme bağlar.
+    Uç `async def`tir (db_primary wrapper'ı `await` edebilmek için); ANCAK bloklayan
+    DB/EPİAŞ işi `asyncio.to_thread` ile iş parçacığı havuzuna verilir. Kanıt: build_comparison
+    içinde çalışan bir olay döngüsü YOKTUR (get_running_loop RuntimeError verir) ve
+    ana iş parçacığında DEĞİLDİR. Bu iddiayı kod yorumuna değil, gözleme bağlar.
     """
     import asyncio
     import inspect
@@ -453,7 +455,8 @@ def test_uc_govdesi_olay_dongusunde_calismaz(_db):
     import app.main as m
 
     gozlem = {}
-    assert not inspect.iscoroutinefunction(m.epias_compare_endpoint), "uç async tanımlanmış"
+    # Uç bilerek async (wrapper.call awaitable); bloklama to_thread ile off-loop kalır.
+    assert inspect.iscoroutinefunction(m.epias_compare_endpoint), "uç async olmalı (komşu uçlarla parite)"
 
     def handler(istek):
         if str(istek.url) == TGT_URL:

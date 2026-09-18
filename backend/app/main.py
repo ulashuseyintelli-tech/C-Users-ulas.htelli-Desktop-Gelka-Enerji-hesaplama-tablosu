@@ -4818,7 +4818,7 @@ async def get_deprecation_stats(
 
 
 @app.get("/admin/market-prices/epias-compare")
-def epias_compare_endpoint(
+async def epias_compare_endpoint(
     db: Session = Depends(get_db),
     _: str = Depends(require_admin_key),
     from_period: str = Query(..., description="Baslangic donemi (YYYY-MM)"),
@@ -4835,17 +4835,24 @@ def epias_compare_endpoint(
     NOT: Rota, /admin/market-prices/{period} KAYDINDAN ÖNCE tanımlanmalıdır;
     aksi hâlde "epias-compare" bir dönem sanılır.
 
-    NOT: Uç SENKRON (def) tanımlıdır. Gövdede senkron ağ (httpx) ve senkron DB
-    (Session) çağrıları var; FastAPI senkron uçları iş parçacığı havuzunda
-    çalıştırır, böylece olay döngüsü BLOKLANMAZ. Mevcut get_db yaşam döngüsü
-    (senkron generator) değişmez.
+    Kritik-yol bypass koruması (diğer /admin/market-prices uçlarıyla parite):
+    - DB okuması `_get_wrapper("db_primary")` üzerinden yapılır → devre kesici
+      açıksa hızlı-başarısızlık ve `_map_wrapper_error_to_http` ile TUTARLI hata
+      (503 CIRCUIT_OPEN / 504 timeout / 502 unavailable), ham 500 değil.
+    - EPİAŞ ağ çağrısı build_comparison içinde `EpiasIstemciHatasi`→uyarı olarak
+      zaten zarif ele alınır (kısmi hatada 200 + uyarı) ve istemcinin kendi zaman
+      aşımı vardır; ayrıca db_primary devre kesicisine dış gecikmeyi karıştırmamak
+      için ayrı tutulur. Senkron DB/ağ işi olay döngüsünü bloklamasın diye
+      `asyncio.to_thread` ile çalıştırılır.
 
     Çağrıldığı yerler:
     - Yetkili yönetim aracı / operatör → GET /admin/market-prices/epias-compare
     """
+    import asyncio as _asyncio
     from datetime import datetime as _dt
-    from .epias_compare import build_comparison
+    from .epias_compare import MAKS_DONEM, build_comparison, donem_listesi, kayitlari_oku
     from . import epias_public_client as _epias_istemci
+    from .guards.dependency_wrapper import CircuitOpenError
 
     if not _epias_istemci.ozellik_acik():
         raise HTTPException(
@@ -4866,11 +4873,26 @@ def epias_compare_endpoint(
                 detail={"error": "invalid_evaluated_at", "message": "evaluated_at YYYY-MM-DD olmalı."},
             )
 
-    istemci = _epias_istemci.EpiasReadOnlyClient()
+    # Aralık/dönem denetimi DB okumasından ÖNCE (geniş aralık boşuna sorgulanmasın).
     try:
-        return build_comparison(db, from_period, to_period, istemci, evaluated_at=degerlendirme)
+        donemler = donem_listesi(from_period, to_period)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail={"error": "invalid_range", "message": str(exc)})
+    if len(donemler) > MAKS_DONEM:
+        raise HTTPException(status_code=422, detail={
+            "error": "invalid_range", "message": "En fazla %d dönem sorgulanabilir." % MAKS_DONEM})
+
+    istemci = _epias_istemci.EpiasReadOnlyClient()
+    try:
+        db_wrapper = _get_wrapper("db_primary")
+        try:
+            kayitlar, yekdem_gecmisi = await db_wrapper.call(
+                _asyncio.to_thread, kayitlari_oku, db, donemler)
+        except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
+            raise _map_wrapper_error_to_http(exc)
+        return await _asyncio.to_thread(
+            build_comparison, db, from_period, to_period, istemci,
+            evaluated_at=degerlendirme, kayitlar=kayitlar, yekdem_gecmisi=yekdem_gecmisi)
     finally:
         istemci.kapat()
 

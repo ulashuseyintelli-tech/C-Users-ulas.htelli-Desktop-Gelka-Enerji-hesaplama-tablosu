@@ -324,6 +324,43 @@ def test_uc_gecersiz_aralik_ve_tarih(uc_istemcisi):
         assert genis.status_code == 422
 
 
+def test_uc_db_devre_kesici_acik_tutarli_hata_doner(uc_istemcisi):
+    """DB okuması db_primary wrapper'ından geçer: CB AÇIK iken ham 500 değil, TUTARLI 503 CIRCUIT_OPEN.
+
+    (Wrapper gerçekten kullanılmasaydı DB okuması başarılı olur, 200 dönerdi — bu test
+    metin araması değil, çalışma-zamanı davranışını doğrular.)
+    """
+    import app.main as m
+    from app.guards.dependency_wrapper import CircuitOpenError
+
+    class _AcikWrapper:
+        async def call(self, *a, **k):
+            raise CircuitOpenError("db_primary")
+
+    with patch.dict(os.environ, {"EPIAS_COMPARE_ENABLED": "true"}), \
+         patch.object(m, "_get_wrapper", lambda dep: _AcikWrapper()):
+        yanit = _sorgu(uc_istemcisi)
+    assert yanit.status_code == 503
+    assert yanit.json()["detail"]["error_code"] == "CIRCUIT_OPEN"
+
+
+def test_uc_db_zaman_asimi_504_doner(uc_istemcisi):
+    """DB okuması zaman aşımına uğrarsa uç TUTARLI 504 DEPENDENCY_TIMEOUT döner."""
+    import asyncio
+
+    import app.main as m
+
+    class _ZamanAsimiWrapper:
+        async def call(self, *a, **k):
+            raise asyncio.TimeoutError()
+
+    with patch.dict(os.environ, {"EPIAS_COMPARE_ENABLED": "true"}), \
+         patch.object(m, "_get_wrapper", lambda dep: _ZamanAsimiWrapper()):
+        yanit = _sorgu(uc_istemcisi)
+    assert yanit.status_code == 504
+    assert yanit.json()["detail"]["error_code"] == "DEPENDENCY_TIMEOUT"
+
+
 # ── ŞEMA VARSAYILANI 0: doğrulanmış fiyat iddiası ÜRETİLMEZ ──────────────────
 
 def test_yekdem_sifir_icin_fark_ve_dogrulanmis_iddia_URETILMEZ(db_ortami):
