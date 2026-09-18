@@ -23,6 +23,7 @@ from .extractor import extract_invoice_data, clear_extraction_cache, mask_pii, E
 from .calculator import calculate_offer
 from .validator import validate_extraction
 from .database import init_db, get_db, Customer, Offer, Invoice, Job, STORAGE_DIR, API_KEY, API_KEY_ENABLED
+from .db_read_isolation import run_read_in_isolated_session
 from .pdf_generator import generate_offer_html, generate_offer_pdf, generate_offer_pdf_bytes
 
 # ── PDF Concurrency Limiter ──────────────────────────────────────────────────
@@ -1084,10 +1085,15 @@ async def calculate_offer_endpoint(
     from .guards.dependency_wrapper import CircuitOpenError
     wrapper = _get_wrapper("db_primary")
     try:
+        # Orphan-thread × request-Session yarış izolasyonu (PR #62 deseni): db_primary
+        # wrapper zaman aşımında to_thread worker'ı iptal edilemez (orphan). Okuma
+        # request Session ile DEĞİL, engine'e bağlı kısa ömürlü izole Session'da yapılır
+        # → orphan request Session'a dokunamaz. calculate_offer sonucu (CalculationResult)
+        # tam materyalize; izole Session kapandıktan sonra detached erişim yok.
         return await wrapper.call(
             _asyncio.to_thread,
-            calculate_offer,
-            extraction, params, db=db,
+            run_read_in_isolated_session, db.get_bind(),
+            lambda s: calculate_offer(extraction, params, db=s),
             is_write=False,
         )
     except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
@@ -4587,18 +4593,24 @@ async def list_market_prices(
     from .guards.dependency_wrapper import CircuitOpenError
     wrapper = _get_wrapper("db_primary")
     try:
+        # Orphan-thread × request-Session yarış izolasyonu (PR #62 deseni): okuma
+        # engine'e bağlı kısa ömürlü izole Session'da yapılır. list_prices ORM kaydı
+        # döndürür; aşağıda YALNIZ okuma anında yüklenmiş skaler kolonlar okunur
+        # (ilişki/lazy-load YOK) → izole Session kapandıktan sonra detached erişim güvenli.
         result = await wrapper.call(
             _asyncio.to_thread,
-            service.list_prices,
-            db=db,
-            price_type=price_type,
-            status=status,
-            period_from=from_period,
-            period_to=to_period,
-            limit=page_size,
-            offset=offset,
-            sort_by=sort_by,
-            sort_order=sort_order,
+            run_read_in_isolated_session, db.get_bind(),
+            lambda s: service.list_prices(
+                db=s,
+                price_type=price_type,
+                status=status,
+                period_from=from_period,
+                period_to=to_period,
+                limit=page_size,
+                offset=offset,
+                sort_by=sort_by,
+                sort_order=sort_order,
+            ),
             is_write=False,
         )
     except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
@@ -4687,10 +4699,13 @@ async def get_price_history(
     wrapper = _get_wrapper("db_primary")
     try:
         with ptf_metrics.time_history_query():
+            # Orphan-thread × request-Session yarış izolasyonu (PR #62 deseni): okuma
+            # engine'e bağlı izole Session'da. get_history ORM listesi döndürür; aşağıda
+            # yalnız yüklenmiş skaler kolonlar okunur → detached erişim güvenli.
             history = await wrapper.call(
                 _asyncio.to_thread,
-                service.get_history,
-                db=db, period=period, price_type=price_type,
+                run_read_in_isolated_session, db.get_bind(),
+                lambda s: service.get_history(db=s, period=period, price_type=price_type),
                 is_write=False,
             )
     except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
@@ -4995,10 +5010,19 @@ async def price_approval_candidate_endpoint(
         return _onay_hatasi_yaniti(exc)
     wrapper = _get_wrapper("db_primary")
     try:
+        # Orphan-thread × request-Session yarış izolasyonu (PR #62 deseni): okuma
+        # engine'e bağlı izole Session'da. *_adayi_hazirla dict döndürür (tam
+        # materyalize) → izole Session kapandıktan sonra detached erişim yok.
         if k == KALEM_PTF:
-            aday = await wrapper.call(_asyncio.to_thread, ptf_adayi_hazirla, db, None, p, resmi=resmi)
+            aday = await wrapper.call(
+                _asyncio.to_thread,
+                run_read_in_isolated_session, db.get_bind(),
+                lambda s: ptf_adayi_hazirla(s, None, p, resmi=resmi))
         else:
-            aday = await wrapper.call(_asyncio.to_thread, yekdem_adayi_hazirla, db, None, p, seg, resmi=resmi)
+            aday = await wrapper.call(
+                _asyncio.to_thread,
+                run_read_in_isolated_session, db.get_bind(),
+                lambda s: yekdem_adayi_hazirla(s, None, p, seg, resmi=resmi))
         return aday_yaniti(aday)
     except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
         raise _map_wrapper_error_to_http(exc)
@@ -5029,7 +5053,13 @@ async def price_approval_history_endpoint(
         raise HTTPException(status_code=422, detail={"error": "gecersiz_istek", "message": "Dönem YYYY-MM olmalı."})
     wrapper = _get_wrapper("db_primary")
     try:
-        return await wrapper.call(_asyncio.to_thread, onay_gecmisi, db, p)
+        # Orphan-thread × request-Session yarış izolasyonu (PR #62 deseni): okuma
+        # engine'e bağlı izole Session'da. onay_gecmisi dict döndürür (Core .mappings(),
+        # tam materyalize) → detached erişim yok.
+        return await wrapper.call(
+            _asyncio.to_thread,
+            run_read_in_isolated_session, db.get_bind(),
+            lambda s: onay_gecmisi(s, p))
     except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
         raise _map_wrapper_error_to_http(exc)
 
@@ -5128,10 +5158,13 @@ async def get_market_price(
     from .guards.dependency_wrapper import CircuitOpenError
     wrapper = _get_wrapper("db_primary")
     try:
+        # Orphan-thread × request-Session yarış izolasyonu (PR #62 deseni): okuma
+        # engine'e bağlı izole Session'da. get_market_prices MarketPrices dataclass'ı
+        # döndürür (tam materyalize) → detached erişim yok.
         prices = await wrapper.call(
             _asyncio.to_thread,
-            get_market_prices,
-            db, period,
+            run_read_in_isolated_session, db.get_bind(),
+            lambda s: get_market_prices(s, period),
             is_write=False,
         )
     except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
@@ -5524,13 +5557,18 @@ async def import_preview(
     from .guards.dependency_wrapper import CircuitOpenError
     wrapper = _get_wrapper("db_primary")
     try:
+        # Orphan-thread × request-Session yarış izolasyonu (PR #62 deseni): okuma
+        # engine'e bağlı izole Session'da. preview ImportPreview dataclass'ı döndürür
+        # (sayaçlar/hatalar tam materyalize; ORM nesnesi kaçmaz) → detached erişim yok.
         preview = await wrapper.call(
             _asyncio.to_thread,
-            importer.preview,
-            db=db,
-            rows=rows,
-            price_type=price_type,
-            force_update=force_update,
+            run_read_in_isolated_session, db.get_bind(),
+            lambda s: importer.preview(
+                db=s,
+                rows=rows,
+                price_type=price_type,
+                force_update=force_update,
+            ),
             is_write=False,
         )
     except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
@@ -5751,12 +5789,19 @@ async def get_market_price_for_calculation(
     from .guards.dependency_wrapper import CircuitOpenError
     wrapper = _get_wrapper("db_replica")
     try:
+        # Orphan-thread × request-Session yarış izolasyonu (PR #62 deseni): db_replica
+        # de aynı DBClientWrapper (asyncio.wait_for+to_thread) mekanizmasını kullanır;
+        # zaman aşımında to_thread worker'ı iptal edilemez (orphan). Okuma engine'e bağlı
+        # izole Session'da yapılır. get_for_calculation (dataclass, error) döndürür
+        # (tam materyalize) → detached erişim yok.
         result, error = await wrapper.call(
             _asyncio.to_thread,
-            service.get_for_calculation,
-            db=db,
-            period=period,
-            price_type=price_type,
+            run_read_in_isolated_session, db.get_bind(),
+            lambda s: service.get_for_calculation(
+                db=s,
+                period=period,
+                price_type=price_type,
+            ),
             is_write=False,
         )
     except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
