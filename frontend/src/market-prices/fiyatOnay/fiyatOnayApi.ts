@@ -54,7 +54,11 @@ export async function fetchOnayGecmisi(period: string): Promise<OnayGecmisi> {
 interface HataBenzeri {
   response?: {
     status?: number;
-    data?: { detail?: ({ error?: string; message?: string; yeni_aday?: OnayAdayi }) | string };
+    data?: {
+      detail?: (
+        { error?: string; error_code?: string; sonuc?: string; message?: string; yeni_aday?: OnayAdayi }
+      ) | string;
+    };
   };
 }
 
@@ -72,6 +76,17 @@ export function onayHatasiniSiniflandir(hata: unknown): OnayHatasi {
   const nesne = typeof detay === 'object' && detay ? detay : undefined;
   const kod = nesne?.error;
   const sunucuMesaji = nesne?.message;
+
+  // Yazma zaman aşımı (504): sonuç BELİRSİZ — worker orphan olarak commit'i tamamlamış
+  // OLABİLİR (phantom-write). "Başarısız/yazılmadı" DENMEZ; onay geçmişinden uzlaştırılır.
+  // Otomatik yeniden gönderim YAPILMAZ (tekrar denemede çift yazım 409 ile engellenir).
+  if (nesne?.sonuc === 'belirsiz' || nesne?.error_code === 'DEPENDENCY_TIMEOUT') {
+    return { tur: 'belirsiz', kod: nesne?.error_code,
+      mesaj: sunucuMesaji
+        || ('Onay zaman aşımına uğradı; sonuç BELİRSİZDİR — kayıt yazılmış OLABİLİR. '
+            + 'Onay geçmişinden bu dönemin revizyonlarını kontrol ederek doğrulayın. '
+            + 'Yeniden denemede çift yazım engellenir.') };
+  }
 
   if (kod === 'approval_not_configured') {
     return { tur: 'onay_yapilandirilmamis', kod,

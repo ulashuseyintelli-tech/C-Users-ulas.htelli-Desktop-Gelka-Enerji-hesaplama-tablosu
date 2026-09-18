@@ -813,6 +813,40 @@ def yekdem_onayla(
             "kaynak_kanit_sha256": aday["kaynak_kanit_sha256"], "onaylayan_beyan": onaylayan, "onaylayan_dogrulandi": False, "dogrulanan_yetki": yetki}
 
 
+def calistir_izole(bind: Any, fn: Callable, /, *args: Any, **kwargs: Any):
+    """`fn`i request-scoped Session yerine `bind`e (engine) bağlı KISA ÖMÜRLÜ kendi
+    Session'ıyla çalıştırır; Session finally'de kapatılır.
+
+    Neden (epias_compare.kayitlari_oku_izole ile aynı gerekçe): fiyat onay/aday/geçmiş
+    uçları bu çağrıyı `_get_wrapper("db_primary")` üzerinden yapar; wrapper
+    `asyncio.wait_for(asyncio.to_thread(...), timeout)` kullanır. Zaman aşımında `to_thread`
+    worker'ı İPTAL EDİLEMEZ; TimeoutError yükselirken thread arka planda (orphan) çalışmaya
+    DEVAM eder (Python 3.13.14 ile ampirik doğrulandı). Bu orphan, get_db'nin finally'de
+    kapattığı REQUEST Session'ını kullanırsa iş parçacıkları arası Session kullanımı doğar:
+    ampirik olarak get_db close ile worker commit'i çakışıp yazmayı SESSİZCE düşürebilir
+    (belirlenimsiz sonuç). Bu sarmalayıcı ile worker YALNIZ kendi Session'ına dokunur ve onu
+    KENDİSİ kapatır; request Session'ı hiç görmez → Session paylaşımı yapısal olarak ELENİR.
+
+    `fn` tek Session içinde çalıştığından işlem ATOMİKLİĞİ ve revizyon/parmak izi
+    karşılaştır-ve-yaz denetimleri KORUNUR. `fn` düz dict döndürür (ORM detach sorunu yok).
+
+    SINIR: Bu sarmalayıcı zaman aşımı SONRASI orphan commit'ini (phantom-write) ENGELLEMEZ;
+    yalnız Session paylaşımını eler. Zaman aşımı belirsizliği uçta ayrıca ele alınır
+    (bkz. main.price_approval_endpoint → 504 "belirsiz" + approvals uzlaştırması); tekrar
+    denemede çift yazım revizyon benzersizliği + parmak izi denetimiyle engellenir.
+
+    Çağrıldığı yerler:
+    - main.price_approval_endpoint() → ptf_onayla / yekdem_onayla (is_write=True)
+    - main.price_approval_candidate_endpoint() → ptf_adayi_hazirla / yekdem_adayi_hazirla
+    - main.price_approval_history_endpoint() → onay_gecmisi
+    """
+    izole = Session(bind=bind)
+    try:
+        return fn(izole, *args, **kwargs)
+    finally:
+        izole.close()
+
+
 def _aday_yaniti(aday: dict) -> dict:
     """API yanıtı için aday (kanonik kanıt metni yerine ayrıştırılmış kanıt nesnesi)."""
     return {k: v for k, v in aday.items() if k != "kaynak_kanit_json"}

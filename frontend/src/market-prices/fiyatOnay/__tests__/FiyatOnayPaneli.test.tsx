@@ -175,6 +175,28 @@ describe('FiyatOnayPaneli — kullanıcı akışı', () => {
     expect(postMock).toHaveBeenCalledTimes(1);
   });
 
+  it('504 belirsiz: sonuç BELİRSİZ (başarısız değil); aday kalır, geçmiş tazelenir, otomatik yeniden gönderim yok', async () => {
+    adayIste(ptfAdayi());
+    postMock.mockRejectedValue(hata(504, { error_code: 'DEPENDENCY_TIMEOUT', sonuc: 'belirsiz',
+      message: 'Onay zaman aşımına uğradı; sonuç BELİRSİZDİR — kayıt yazılmış OLABİLİR.' }));
+    render(<FiyatOnayPaneli varsayilanDonem="2026-07" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Resmî adayı getir' }));
+    await screen.findByTestId('onay-adayi');
+    fireEvent.change(screen.getByLabelText('Onaylayan adı (beyan)'), { target: { value: 'Yetkili' } });
+    fireEvent.change(screen.getByLabelText('Onay gerekçesi'), { target: { value: 'g' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Yetkili onaya gönder' }));
+
+    const hataKutu = await screen.findByTestId('onay-hatasi');
+    expect(hataKutu).toHaveTextContent('BELİRSİZDİR');
+    expect(hataKutu.className).toContain('amber');   // uyarı rengi; kırmızı "hata" DEĞİL
+    expect(hataKutu.className).not.toContain('red');
+    expect(screen.getByTestId('onay-adayi')).toBeTruthy();   // aday KALIR (yeniden gönderim dayatılmaz)
+    expect(screen.queryByTestId('onay-sonucu')).toBeNull();  // "Onaylandı" DENMEZ
+    expect(postMock).toHaveBeenCalledTimes(1);               // otomatik yeniden gönderim YOK
+    await waitFor(() => expect(getMock).toHaveBeenCalledWith('/admin/market-prices/approvals',
+      { params: { period: '2026-07' } }));                   // uzlaştırma için geçmiş tazelendi
+  });
+
   it.each([
     [hata(503, { error: 'kimlik_bilgisi_eksik', message: 'm' }), 'EPİAŞ kimlik bilgisi tanımlı değil'],
     [hata(503, { error: 'feature_disabled', message: 'm' }), 'EPIAS_COMPARE_ENABLED'],
@@ -227,6 +249,7 @@ describe('onayHatasiniSiniflandir', () => {
     [hata(409, { error: 'onay_yarisi', message: 'Önce tamamlandı.' }), 'yeniden_onay'],
     [hata(422, { error: 'aday_dogrulanamadi', message: 'eksik' }), 'dogrulanamadi'],
     [hata(502, { error: 'resmi_veri_alinamadi', message: 'EPİAŞ yanıt vermedi' }), 'sunucu'],
+    [hata(504, { error_code: 'DEPENDENCY_TIMEOUT', sonuc: 'belirsiz', message: 'zaman aşımı; belirsiz' }), 'belirsiz'],
     [{ message: 'Network Error' }, 'ag'],
   ])('%#: doğru türe ayrılır', (h, tur) => {
     expect(onayHatasiniSiniflandir(h).tur).toBe(tur);

@@ -4916,6 +4916,41 @@ async def epias_compare_endpoint(
         istemci.kapat()
 
 
+def _onay_belirsiz_timeout(kalem: str, period: str, segment: Optional[str], istek) -> HTTPException:
+    """Yazma zaman aşımında BELİRSİZ sonuç + approvals uzlaştırma yönergesi (504).
+
+    db_primary wrapper `asyncio.wait_for(asyncio.to_thread(...))` kullanır; zaman aşımında
+    to_thread worker'ı iptal edilemez ve commit'i bu 504'ten SONRA tamamlanabilir
+    (phantom-write). Bu yüzden istemciye kesin "başarısız" DENMEZ; sonuç belirsizdir ve
+    onay revizyon geçmişinden doğrulanmalıdır. Tekrar denemede çift yazım revizyon
+    benzersizliği + parmak izi denetimiyle 409 olarak engellenir.
+
+    Çağrıldığı yerler:
+    - main.price_approval_endpoint() → yazma zaman aşımı dalı
+    """
+    return HTTPException(status_code=504, detail={
+        "status": "error",
+        "error_code": "DEPENDENCY_TIMEOUT",
+        "sonuc": "belirsiz",
+        "message": ("Onay zaman aşımına uğradı; sonuç BELİRSİZDİR — kayıt yazılmış OLABİLİR. "
+                    "Lütfen approvals ucundan bu dönemin revizyonlarını kontrol ederek "
+                    "doğrulayın. Yeniden denemede çift yazım engellenir (409)."),
+        "reconcile": {
+            "endpoint": "GET /admin/market-prices/approvals",
+            "period": period,
+            "kalem": kalem,
+            "segment": segment,
+            "beklenen_revision": istek.beklenen_revision,
+            "olusabilecek_revision": int(istek.beklenen_revision) + 1,
+            "aday_parmak_izi": istek.aday_parmak_izi,
+            "nasil": ("approvals yanıtında bu kalem/segment için 'olusabilecek_revision' "
+                      "değerinde ve 'aday_parmak_izi'ne karşılık gelen kaynak kanıtı taşıyan "
+                      "bir revizyon VARSA onay BAŞARILIDIR; henüz YOKSA sonuç BELİRSİZDİR "
+                      "(worker sürüyor olabilir) — 'yazılmadı' denmez, tekrar denenebilir."),
+        },
+    })
+
+
 def _onay_hatasi_yaniti(exc) -> JSONResponse:
     govde = {"error": exc.kod, "message": exc.mesaj}
     govde.update(exc.ek)
@@ -5099,7 +5134,9 @@ async def price_approval_endpoint(
     """
     import asyncio as _asyncio
     from .guards.dependency_wrapper import CircuitOpenError
-    from .price_approval import KALEM_PTF, KALEM_YEKDEM, OnayHatasi, ptf_onayla, segment_coz, yekdem_onayla
+    from .price_approval import (
+        KALEM_PTF, KALEM_YEKDEM, OnayHatasi, calistir_izole, ptf_onayla, segment_coz, yekdem_onayla,
+    )
     from .price_provenance import normalize_period
 
     p = normalize_period(istek.period)
@@ -5116,20 +5153,31 @@ async def price_approval_endpoint(
     except OnayHatasi as exc:
         return _onay_hatasi_yaniti(exc)
     wrapper = _get_wrapper("db_primary")
+    # NOT: yazma request Session ile DEĞİL, engine'e bağlı kısa-ömürlü kendi Session'ında
+    # yapılır (calistir_izole) → orphan worker request Session'a dokunmaz; işlem atomikliği
+    # ve revizyon/parmak izi denetimleri tek Session içinde korunur. (Okuma uçları PR #63'te
+    # run_read_in_isolated_session ile izole edildi; bu yazma yolu onun kapsamı DIŞINDAYDI.)
+    bind = db.get_bind()
     try:
         if k == KALEM_PTF:
             return await wrapper.call(
-                _asyncio.to_thread, ptf_onayla, db, None, period=p, aday_parmak_izi=istek.aday_parmak_izi,
+                _asyncio.to_thread, calistir_izole, bind, ptf_onayla, None, period=p,
+                aday_parmak_izi=istek.aday_parmak_izi,
                 beklenen_revision=istek.beklenen_revision,
                 beklenen_kayit_parmak_izi=str(istek.beklenen_kayit_parmak_izi or ""),
                 onaylayan_beyan=istek.onaylayan_beyan, dogrulanan_yetki=dogrulanan_yetki,
                 change_reason=istek.change_reason, resmi=resmi, is_write=True)
         return await wrapper.call(
-            _asyncio.to_thread, yekdem_onayla, db, None, period=p, segment=seg,
+            _asyncio.to_thread, calistir_izole, bind, yekdem_onayla, None, period=p, segment=seg,
             aday_parmak_izi=istek.aday_parmak_izi, beklenen_revision=istek.beklenen_revision,
             onaylayan_beyan=istek.onaylayan_beyan, dogrulanan_yetki=dogrulanan_yetki,
                 change_reason=istek.change_reason, resmi=resmi, is_write=True)
-    except (CircuitOpenError, _asyncio.TimeoutError, ConnectionError, OSError) as exc:
+    except _asyncio.TimeoutError:
+        # Yazma zaman aşımı: orphan worker commit'i BU 504'ten SONRA tamamlayabilir
+        # (phantom-write). İstemciye "başarısız" DENMEZ; sonuç BELİRSİZDİR ve approvals
+        # geçmişinden uzlaştırılmalıdır. Tekrar denemede çift yazım 409 ile engellenir.
+        raise _onay_belirsiz_timeout(k, p, seg, istek)
+    except (CircuitOpenError, ConnectionError, OSError) as exc:
         raise _map_wrapper_error_to_http(exc)
     except OnayHatasi as exc:
         return _onay_hatasi_yaniti(exc)

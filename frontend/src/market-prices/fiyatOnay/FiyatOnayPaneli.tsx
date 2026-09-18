@@ -46,6 +46,8 @@ export const ONAYLANAMAMA_NEDENLERI: Record<string, string> = {
 const HATA_RENGI: Record<string, string> = {
   aday_degisti: 'border-amber-300 bg-amber-50 text-amber-900',
   yeniden_onay: 'border-amber-300 bg-amber-50 text-amber-900',
+  // Zaman aşımı: sonuç BELİRSİZ (başarısız DEĞİL) → uyarı rengi, kırmızı "hata" değil.
+  belirsiz: 'border-amber-300 bg-amber-50 text-amber-900',
 };
 
 /** Değeri yuvarlamadan, sunucudan geldiği hassasiyetle yazar. */
@@ -190,6 +192,14 @@ export const FiyatOnayPaneli: React.FC<FiyatOnayPaneliProps> = ({ varsayilanDone
         setAday(h.yeniAday);  // yeni adayı göster; kullanıcı yeniden inceleyip onaylar
       } else if (h.tur === 'yeniden_onay') {
         setAday(null);
+      } else if (h.tur === 'belirsiz') {
+        // Sonuç belirsiz: kayıt yazılmış OLABİLİR. Otomatik yeniden gönderim YOK; adayı
+        // ekranda tut ve onay geçmişini tazele ki kullanıcı revizyondan uzlaştırabilsin.
+        try {
+          setGecmis(await fetchOnayGecmisi(aday.period));
+        } catch {
+          // Geçmiş okunamaması belirsizliği değiştirmez; kullanıcı elle "Onay geçmişi" ile bakabilir.
+        }
       }
     } finally {
       setYukleniyor(null);
