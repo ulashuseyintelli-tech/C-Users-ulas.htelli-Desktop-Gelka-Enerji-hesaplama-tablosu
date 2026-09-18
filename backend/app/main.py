@@ -6537,7 +6537,7 @@ async def list_incidents(
     }
 
 
-@app.get("/admin/incidents/{incident_id}")
+@app.get("/admin/incidents/{incident_id:int}")
 async def get_incident(
     incident_id: int,
     db: Session = Depends(get_db),
