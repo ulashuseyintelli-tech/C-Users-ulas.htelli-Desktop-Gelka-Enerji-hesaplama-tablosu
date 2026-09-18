@@ -139,6 +139,7 @@ export type OnayHataTuru =
   | 'yeniden_onay'
   | 'dogrulanamadi'
   | 'gecersiz_istek'
+  | 'belirsiz'
   | 'sunucu'
   | 'ag';
 

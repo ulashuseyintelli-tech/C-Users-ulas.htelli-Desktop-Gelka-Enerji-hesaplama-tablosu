@@ -1264,3 +1264,221 @@ class TestSegmentVeSnapshotBaglantisi:
         kod, govde = _teklif(db, segment="st", taslak=True, calc_ek=ek)
         cr = db.query(Offer).get(govde["id"]).calculation_result
         assert cr["meta_fiyat_durumu"] == "taslak" and cr["meta_price_provenance"]["verified"] is False
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 12) Orphan-thread yarışı: yazma request Session ile DEĞİL, engine'e bağlı kendi
+#     Session'ıyla yapılır (calistir_izole). Zaman aşımı 504 BELİRSİZ + uzlaştırma.
+#     Zaman aşımı SONRASI (phantom-write) tekrar denemede çift yazım engellenir.
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestOrphanIzolasyonuVeZamanAsimiUzlastirma:
+    def _dosya_oturum(self, tmp_path):
+        from sqlalchemy.orm import sessionmaker
+
+        motor = _motor(f"sqlite:///{(tmp_path / 'izole.db').as_posix()}")
+        return motor, sessionmaker(bind=motor)()
+
+    def test_calistir_izole_fn_i_bind_e_bagli_AYRI_session_da_calistirir_ve_kapatir(self, tmp_path):
+        """calistir_izole: request Session'ı DEĞİL, verilen bind'i (engine) kullanır;
+        fn'e AYRI bir Session geçirir ve finally'de kapatır."""
+        from app.price_approval import calistir_izole
+
+        motor, req = self._dosya_oturum(tmp_path)
+        try:
+            gozlem = {}
+
+            def sonda(s, isaret):
+                gozlem["gecirilen_session"] = s
+                gozlem["ayni_session_degil"] = s is not req
+                gozlem["bind_engine"] = s.get_bind() is motor
+                gozlem["isaret"] = isaret
+                return "tamam"
+
+            sonuc = calistir_izole(motor, sonda, "X")
+            assert sonuc == "tamam" and gozlem["isaret"] == "X"
+            assert gozlem["ayni_session_degil"] is True
+            assert gozlem["bind_engine"] is True
+            assert gozlem["gecirilen_session"] is not req
+        finally:
+            req.close()
+
+    def test_uc_yazma_zaman_asimi_izole_bind_ve_belirsiz_504(self, tmp_path, monkeypatch):
+        """Geciken yazma: gerçek db_primary wrapper zaman aşımına uğrar → uç 504 döner.
+
+        Kanıtlar: (1) wrapped çağrıya request Session'ın KENDİSİ DEĞİL, bind'i (engine)
+        geçirilir → orphan request Session'a dokunamaz; (2) 504 gövdesi 'belirsiz' +
+        approvals uzlaştırma alanları taşır; (3) request Session zaman aşımından sonra
+        hâlâ kullanılabilir.
+        """
+        import time
+
+        import app.guard_config as gc
+        import app.main as m
+        import app.price_approval as pa
+        from app.database import MarketReferencePrice, get_db
+
+        motor, req = self._dosya_oturum(tmp_path)
+        _referans(req)
+        aday = pa.ptf_adayi_hazirla(req, SahteEpias(), DONEM)
+        govde = {"period": DONEM, "kalem": "PTF", "aday_parmak_izi": aday["aday_parmak_izi"],
+                 "beklenen_revision": aday["beklenen_revision"],
+                 "beklenen_kayit_parmak_izi": aday["beklenen_kayit_parmak_izi"],
+                 "onaylayan_beyan": "Yetkili", "change_reason": "onay"}
+
+        gozlem = {}
+        gercek = pa.calistir_izole
+
+        def yavas_izole(bind, fn, /, *a, **k):
+            gozlem["gecirilen_bind"] = bind
+            gozlem["request_session_gecirilmedi"] = bind is not req
+            gozlem["engine_gecirildi"] = bind is motor
+            time.sleep(0.4)  # db_primary timeout'unu (0.15) aşar → gerçek TimeoutError + orphan
+            return gercek(bind, fn, *a, **k)
+
+        m.app.dependency_overrides[get_db] = lambda: req
+        monkeypatch.setattr(m, "ADMIN_API_KEY", ONAY_ANAHTARI)
+        monkeypatch.setattr(gc.GuardConfig, "get_timeout_for_dependency", lambda self, dep: 0.15)
+        monkeypatch.setattr(pa, "calistir_izole", yavas_izole)
+        try:
+            istemci = TestClient(m.app)
+            yanit = istemci.post("/admin/market-prices/approve", json=govde,
+                                 headers={"X-Admin-Key": ONAY_ANAHTARI})
+            assert yanit.status_code == 504, yanit.text
+            govde_yanit = yanit.json()["detail"]
+            assert govde_yanit["error_code"] == "DEPENDENCY_TIMEOUT"
+            assert govde_yanit["sonuc"] == "belirsiz"
+            rec = govde_yanit["reconcile"]
+            assert rec["period"] == DONEM and rec["kalem"] == "PTF"
+            assert rec["olusabilecek_revision"] == int(aday["beklenen_revision"]) + 1
+            assert rec["aday_parmak_izi"] == aday["aday_parmak_izi"]
+            assert gozlem["request_session_gecirilmedi"] is True
+            assert gozlem["engine_gecirildi"] is True
+            assert req.query(MarketReferencePrice).count() >= 1
+            time.sleep(0.6)  # orphan kendi Session'ını kapatıp bitsin
+        finally:
+            m.app.dependency_overrides.clear()
+            req.close()
+
+    def test_phantom_write_sonrasi_ayni_istek_tekrari_PTF_cift_yazmaz(self, tmp_path):
+        """Zaman aşımı sonrası orphan commit'i r1'i yazmış OLABİLİR (phantom-write). Aynı
+        istemci AYNI isteği (beklenen_revision=0) tekrarlarsa: 409 + kayıtta TEK r1 kalır."""
+        from app.price_approval import OnayHatasi, ptf_adayi_hazirla, ptf_onayla
+
+        motor, db = self._dosya_oturum(tmp_path)
+        try:
+            _referans(db)
+            aday = ptf_adayi_hazirla(db, SahteEpias(), DONEM)
+            r1 = ptf_onayla(db, SahteEpias(), period=DONEM, aday_parmak_izi=aday["aday_parmak_izi"],
+                            beklenen_revision=aday["beklenen_revision"],
+                            beklenen_kayit_parmak_izi=aday["beklenen_kayit_parmak_izi"],
+                            onaylayan_beyan="Yetkili", dogrulanan_yetki=YETKI, change_reason="onay")
+            assert r1["revision"] == 1
+            with pytest.raises(OnayHatasi) as e:
+                ptf_onayla(db, SahteEpias(), period=DONEM, aday_parmak_izi=aday["aday_parmak_izi"],
+                           beklenen_revision=aday["beklenen_revision"],
+                           beklenen_kayit_parmak_izi=aday["beklenen_kayit_parmak_izi"],
+                           onaylayan_beyan="Yetkili", dogrulanan_yetki=YETKI, change_reason="onay-tekrar")
+            assert e.value.http == 409
+            assert e.value.kod == "kayit_degisti"
+            assert _sayim(db, "ptf_onay_revizyonlari") == 1
+            assert _sayim(db, "price_change_history") == 1
+        finally:
+            db.close()
+
+    def test_phantom_write_sonrasi_ayni_istek_tekrari_YEKDEM_cift_yazmaz(self, tmp_path):
+        from app.price_approval import OnayHatasi, yekdem_adayi_hazirla, yekdem_onayla
+
+        motor, db = self._dosya_oturum(tmp_path)
+        try:
+            aday = yekdem_adayi_hazirla(db, SahteEpias(), DONEM, "st")
+            r1 = yekdem_onayla(db, SahteEpias(), period=DONEM, segment="st",
+                               aday_parmak_izi=aday["aday_parmak_izi"],
+                               beklenen_revision=aday["beklenen_revision"],
+                               onaylayan_beyan="Yetkili", dogrulanan_yetki=YETKI, change_reason="onay")
+            assert r1["revision"] == 1
+            with pytest.raises(OnayHatasi) as e:
+                yekdem_onayla(db, SahteEpias(), period=DONEM, segment="st",
+                              aday_parmak_izi=aday["aday_parmak_izi"],
+                              beklenen_revision=aday["beklenen_revision"],
+                              onaylayan_beyan="Yetkili", dogrulanan_yetki=YETKI, change_reason="onay-tekrar")
+            assert e.value.http == 409
+            assert _sayim(db, "yekdem_onay_revizyonlari") == 1
+        finally:
+            db.close()
+
+    def test_ESZAMANLI_yeniden_gonderim_ilk_worker_ucusta_PTF_tek_yazar(self, tmp_path):
+        """504 sonrası ORİJİNAL worker HÂLÂ çalışırken (commit ETMEDEN) aynı onayın YENİDEN
+        gönderilmesi (eşzamanlı) — sıralı 'ilk commit sonrası tekrar' DEĞİL.
+
+        yaris_kancasi, orijinal worker'ın okuması ile yazması ARASINA eşzamanlı yeniden
+        gönderimi sokar (ikisi de beklenen_revision=0, AYNI aday). Karşılaştır-ve-yaz +
+        (period, revision) benzersizliği: yalnız BİRİ yazar; diğeri 409. Çift yazım YOK."""
+        from sqlalchemy.orm import sessionmaker
+        from app.price_approval import OnayHatasi, ptf_adayi_hazirla, ptf_onayla
+
+        motor = _motor(f"sqlite:///{(tmp_path / 'resend_ptf.db').as_posix()}")
+        Oturum = sessionmaker(bind=motor)
+        w1, w2 = Oturum(), Oturum()  # w1: orijinal (504) worker; w2: eşzamanlı yeniden gönderim
+        try:
+            _referans(w1)
+            a1 = ptf_adayi_hazirla(w1, SahteEpias(), DONEM)
+            a2 = ptf_adayi_hazirla(w2, SahteEpias(), DONEM)  # AYNI durum: beklenen_revision=0
+
+            def eszamanli_resend():
+                # w1 okumasını yaptı; commit ETMEDEN önce yeniden gönderim (w2) araya girip tamamlar.
+                ptf_onayla(w2, SahteEpias(), period=DONEM, aday_parmak_izi=a2["aday_parmak_izi"],
+                           beklenen_revision=a2["beklenen_revision"],
+                           beklenen_kayit_parmak_izi=a2["beklenen_kayit_parmak_izi"],
+                           onaylayan_beyan="Yetkili", dogrulanan_yetki=YETKI, change_reason="resend")
+
+            with pytest.raises(OnayHatasi) as e:
+                ptf_onayla(w1, SahteEpias(), period=DONEM, aday_parmak_izi=a1["aday_parmak_izi"],
+                           beklenen_revision=a1["beklenen_revision"],
+                           beklenen_kayit_parmak_izi=a1["beklenen_kayit_parmak_izi"],
+                           onaylayan_beyan="Yetkili", dogrulanan_yetki=YETKI, change_reason="orijinal",
+                           yaris_kancasi=eszamanli_resend)
+            assert e.value.http == 409  # kaybeden taraf (compare-and-write rowcount 0 / unique)
+            c = Oturum()
+            try:
+                assert _sayim(c, "ptf_onay_revizyonlari") == 1  # eşzamanlı resend'e rağmen TEK yazma
+                assert _sayim(c, "price_change_history") == 1
+                assert c.execute(sa.text(
+                    "SELECT MAX(revision) FROM ptf_onay_revizyonlari WHERE period=:p"),
+                    {"p": DONEM}).scalar() == 1
+            finally:
+                c.close()
+        finally:
+            w1.close(); w2.close()
+
+    def test_ESZAMANLI_yeniden_gonderim_ilk_worker_ucusta_YEKDEM_tek_yazar(self, tmp_path):
+        """YEKDEM (ekle-yalnız): eşzamanlı yeniden gönderim (period, segment, revision)
+        benzersizliğiyle tek satıra iner; diğeri onay_yarisi (409)."""
+        from sqlalchemy.orm import sessionmaker
+        from app.price_approval import OnayHatasi, yekdem_adayi_hazirla, yekdem_onayla
+
+        motor = _motor(f"sqlite:///{(tmp_path / 'resend_yekdem.db').as_posix()}")
+        Oturum = sessionmaker(bind=motor)
+        w1, w2 = Oturum(), Oturum()
+        try:
+            a1 = yekdem_adayi_hazirla(w1, SahteEpias(), DONEM, "st")
+            a2 = yekdem_adayi_hazirla(w2, SahteEpias(), DONEM, "st")
+
+            def eszamanli_resend():
+                yekdem_onayla(w2, SahteEpias(), period=DONEM, segment="st",
+                              aday_parmak_izi=a2["aday_parmak_izi"], beklenen_revision=a2["beklenen_revision"],
+                              onaylayan_beyan="Yetkili", dogrulanan_yetki=YETKI, change_reason="resend")
+
+            with pytest.raises(OnayHatasi) as e:
+                yekdem_onayla(w1, SahteEpias(), period=DONEM, segment="st",
+                              aday_parmak_izi=a1["aday_parmak_izi"], beklenen_revision=a1["beklenen_revision"],
+                              onaylayan_beyan="Yetkili", dogrulanan_yetki=YETKI, change_reason="orijinal",
+                              yaris_kancasi=eszamanli_resend)
+            assert e.value.http == 409 and e.value.kod == "onay_yarisi"
+            c = Oturum()
+            try:
+                assert _sayim(c, "yekdem_onay_revizyonlari") == 1
+            finally:
+                c.close()
+        finally:
+            w1.close(); w2.close()
