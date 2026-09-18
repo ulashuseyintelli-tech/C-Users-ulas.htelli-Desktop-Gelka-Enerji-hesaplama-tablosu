@@ -183,15 +183,71 @@ def _yekdem_adayi(satirlar: list, donem: str, degerlendirme_ayi: str) -> Optiona
     return sorted(uygun, key=lambda s: s.versiyon)[-1]
 
 
+def kayitlari_oku(db: Session, donemler: list) -> tuple:
+    """PTF kayıtlarını ve dönem başına son YEKDEM geçmiş satırını OKUR (yalnız DB, YAZMA YOK).
+
+    build_comparison bunu varsayılan olarak (kayitlar verilmezse) kendisi çağırır.
+    Uç (async) ise bunu db_primary wrapper'ından geçirip çağırır; böylece karşılaştırmanın
+    DB okuması da diğer kritik-yol uçları gibi devre kesici + tutarlı hata eşlemesinden
+    geçer (kritik-yol bypass koruması).
+
+    Çağrıldığı yerler:
+    - build_comparison() (varsayılan yol)
+    - main.epias_compare_endpoint() → _get_wrapper("db_primary") ile
+    """
+    from .database import MarketReferencePrice, PriceChangeHistory
+
+    kayitlar = {k.period: k for k in db.query(MarketReferencePrice).filter(
+        MarketReferencePrice.price_type == "PTF",
+        MarketReferencePrice.period.in_(donemler)).all()}
+    yekdem_gecmisi = {}
+    for donem, kayit in kayitlar.items():
+        yekdem_gecmisi[donem] = (db.query(PriceChangeHistory)
+                                 .filter(PriceChangeHistory.price_record_id == kayit.id,
+                                         PriceChangeHistory.price_type == "YEKDEM")
+                                 .order_by(PriceChangeHistory.id.desc()).first())
+    return kayitlar, yekdem_gecmisi
+
+
+def kayitlari_oku_izole(bind: Any, donemler: list) -> tuple:
+    """kayitlari_oku, AMA request-scoped Session yerine `bind`'e (engine/connection) bağlı
+    KISA ÖMÜRLÜ kendi Session'ını açar ve finally'de kapatır.
+
+    Neden: uç bu okumayı `_get_wrapper("db_primary")` üzerinden çağırır; wrapper
+    `asyncio.wait_for(asyncio.to_thread(...), timeout)` kullanır. Zaman aşımında
+    `to_thread` worker'ı İPTAL EDİLEMEZ; TimeoutError yükselirken thread arka planda
+    (orphan) çalışmaya DEVAM eder (Python 3.13.14 ile ampirik doğrulandı). Eğer bu
+    orphan, get_db'nin finally'de kapattığı REQUEST Session'ını kullanırsa iş parçacıkları
+    arası Session kullanımı + kapalı-Session erişimi yarışı doğar. Bu sarmalayıcı ile
+    orphan YALNIZ kendi Session'ına dokunur ve onu KENDİSİ kapatır; request Session'ı
+    hiç görmez → yarış yapısal olarak ELENİR.
+
+    Dönen ORM nesneleri Session kapandığı için detached olur; build_comparison yalnız
+    okuma anında yüklenmiş sütunları (period/source/status/id/ptf_tl_per_mwh/
+    yekdem_tl_per_mwh) okur — commit/expire ve lazy-load YOK → detached erişim güvenli.
+
+    Çağrıldığı yerler:
+    - main.epias_compare_endpoint() → _get_wrapper("db_primary") + asyncio.to_thread ile
+    """
+    s = Session(bind=bind)
+    try:
+        return kayitlari_oku(s, donemler)
+    finally:
+        s.close()
+
+
 def build_comparison(db: Session, donem_baslangic: str, donem_bitis: str, client: Any,
-                     evaluated_at: Optional[date] = None, bugun: Optional[date] = None) -> dict:
+                     evaluated_at: Optional[date] = None, bugun: Optional[date] = None,
+                     *, kayitlar: Optional[dict] = None, yekdem_gecmisi: Optional[dict] = None) -> dict:
     """Kayıtları ve EPİAŞ'ı OKUR, karşılaştırma raporu üretir. HİÇBİR YAZMA YOK.
+
+    `kayitlar`/`yekdem_gecmisi` verilirse DB tekrar okunmaz (uç, DB okumasını
+    db_primary wrapper'ından geçirip önceden okur ve buraya enjekte eder). Verilmezse
+    kayitlari_oku ile doğrudan okunur (geriye uyumlu varsayılan yol).
 
     Çağrıldığı yerler:
     - main.epias_compare_endpoint() → GET /admin/market-prices/epias-compare
     """
-    from .database import MarketReferencePrice, PriceChangeHistory
-
     donemler = donem_listesi(donem_baslangic, donem_bitis)
     if len(donemler) > MAKS_DONEM:
         raise ValueError("En fazla %d dönem sorgulanabilir." % MAKS_DONEM)
@@ -207,15 +263,10 @@ def build_comparison(db: Session, donem_baslangic: str, donem_bitis: str, client
                                    "versiyonları döndürür; o tarihte hangi versiyonun bilindiği "
                                    "KANITLANAMAZ." % evaluated_at.isoformat())})
 
-    kayitlar = {k.period: k for k in db.query(MarketReferencePrice).filter(
-        MarketReferencePrice.price_type == "PTF",
-        MarketReferencePrice.period.in_(donemler)).all()}
-    yekdem_gecmisi = {}
-    for donem, kayit in kayitlar.items():
-        yekdem_gecmisi[donem] = (db.query(PriceChangeHistory)
-                                 .filter(PriceChangeHistory.price_record_id == kayit.id,
-                                         PriceChangeHistory.price_type == "YEKDEM")
-                                 .order_by(PriceChangeHistory.id.desc()).first())
+    if kayitlar is None:
+        kayitlar, yekdem_gecmisi = kayitlari_oku(db, donemler)
+    elif yekdem_gecmisi is None:
+        yekdem_gecmisi = {}
 
     try:
         yekdem_satirlari = client.fetch_unit_cost(donem_baslangic, donem_bitis)

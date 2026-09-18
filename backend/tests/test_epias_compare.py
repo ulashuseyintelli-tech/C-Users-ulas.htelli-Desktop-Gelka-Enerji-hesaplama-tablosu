@@ -324,6 +324,69 @@ def test_uc_gecersiz_aralik_ve_tarih(uc_istemcisi):
         assert genis.status_code == 422
 
 
+def test_uc_db_devre_kesici_acik_tutarli_hata_doner(uc_istemcisi):
+    """DB okuması db_primary wrapper'ından geçer: CB AÇIK iken ham 500 değil, TUTARLI 503 CIRCUIT_OPEN.
+
+    (Wrapper gerçekten kullanılmasaydı DB okuması başarılı olur, 200 dönerdi — bu test
+    metin araması değil, çalışma-zamanı davranışını doğrular.)
+    """
+    import app.main as m
+    from app.guards.dependency_wrapper import CircuitOpenError
+
+    class _AcikWrapper:
+        async def call(self, *a, **k):
+            raise CircuitOpenError("db_primary")
+
+    with patch.dict(os.environ, {"EPIAS_COMPARE_ENABLED": "true"}), \
+         patch.object(m, "_get_wrapper", lambda dep: _AcikWrapper()):
+        yanit = _sorgu(uc_istemcisi)
+    assert yanit.status_code == 503
+    assert yanit.json()["detail"]["error_code"] == "CIRCUIT_OPEN"
+
+
+def test_uc_db_gecikmesi_504_ve_request_session_izole(uc_istemcisi, db_ortami):
+    """Geciken DB okuması: gerçek db_primary wrapper (asyncio.wait_for+to_thread) zaman
+    aşımına uğrar → uç 504 DEPENDENCY_TIMEOUT döner.
+
+    Ayrıca yarış izolasyonunu doğrular: wrapper zaman aşımında to_thread worker'ı İPTAL
+    EDİLEMEZ (orphan). Uç bu okumayı REQUEST Session'ı ile DEĞİL, engine (bind) ile çağırır;
+    böylece orphan yalnız kendi kısa-ömürlü Session'ına dokunur, request Session'a
+    (get_db'nin kapattığı) dokunamaz. Test bunu 'geçirilen argüman = request Session'ın
+    bind'i (engine), request Session'ın KENDİSİ değil' diyerek kanıtlar; ve zaman
+    aşımından sonra request Session'ın hâlâ kullanılabilir olduğunu gösterir.
+    """
+    import time
+
+    import app.epias_compare as ec
+    import app.guard_config as gc
+    from app.database import MarketReferencePrice
+
+    req_session = db_ortami["db"]
+    req_engine = req_session.get_bind()
+    gozlem = {}
+    gercek_izole = ec.kayitlari_oku_izole
+
+    def yavas_izole(bind, donemler):
+        gozlem["gecirilen_bind"] = bind
+        gozlem["request_session_gecirilmedi"] = bind is not req_session
+        gozlem["engine_gecirildi"] = bind is req_engine
+        time.sleep(0.4)  # db_primary timeout'unu (0.15) aşar → gerçek TimeoutError + orphan
+        return gercek_izole(bind, donemler)
+
+    with patch.dict(os.environ, {"EPIAS_COMPARE_ENABLED": "true"}), \
+         patch.object(gc.GuardConfig, "get_timeout_for_dependency", lambda self, dep: 0.15), \
+         patch.object(ec, "kayitlari_oku_izole", yavas_izole):
+        yanit = _sorgu(uc_istemcisi)
+        assert yanit.status_code == 504
+        assert yanit.json()["detail"]["error_code"] == "DEPENDENCY_TIMEOUT"
+        # Orphan'a request Session DEĞİL, engine geçirildi → request Session'a dokunulamaz.
+        assert gozlem["request_session_gecirilmedi"] is True
+        assert gozlem["engine_gecirildi"] is True
+        # Request Session zaman aşımından sonra hâlâ sağlam/kullanılabilir.
+        assert req_session.query(MarketReferencePrice).count() >= 0
+        time.sleep(0.5)  # orphan kendi Session'ını kapatıp bitsin (request Session'a değmeden)
+
+
 # ── ŞEMA VARSAYILANI 0: doğrulanmış fiyat iddiası ÜRETİLMEZ ──────────────────
 
 def test_yekdem_sifir_icin_fark_ve_dogrulanmis_iddia_URETILMEZ(db_ortami):
